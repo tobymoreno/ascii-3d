@@ -53,7 +53,7 @@ pub fn load_obj(path: impl AsRef<Path>) -> Result<Mesh, ObjError> {
 
 pub fn parse_obj(source: &str) -> Result<Mesh, ObjError> {
     let mut vertices = Vec::new();
-    let mut faces = Vec::new();
+    let mut primitives = Vec::new();
 
     for (line_index, original_line) in source.lines().enumerate() {
         let line_number = line_index + 1;
@@ -80,29 +80,7 @@ pub fn parse_obj(source: &str) -> Result<Mesh, ObjError> {
             }
 
             "f" => {
-                let mut face = Vec::new();
-
-                for token in fields {
-                    let vertex_index_text = token.split('/').next().unwrap_or("");
-
-                    if vertex_index_text.is_empty() {
-                        return Err(ObjError::parse(
-                            line_number,
-                            format!("invalid face element '{token}'"),
-                        ));
-                    }
-
-                    let obj_index = vertex_index_text.parse::<isize>().map_err(|_| {
-                        ObjError::parse(
-                            line_number,
-                            format!("invalid vertex index '{vertex_index_text}'"),
-                        )
-                    })?;
-
-                    let resolved_index = resolve_obj_index(obj_index, vertices.len(), line_number)?;
-
-                    face.push(resolved_index);
-                }
+                let face = parse_vertex_indexes(fields, vertices.len(), line_number)?;
 
                 if face.len() < 3 {
                     return Err(ObjError::parse(
@@ -111,7 +89,26 @@ pub fn parse_obj(source: &str) -> Result<Mesh, ObjError> {
                     ));
                 }
 
-                faces.push(face);
+                primitives.push(face);
+            }
+
+            "l" => {
+                let line_indexes = parse_vertex_indexes(fields, vertices.len(), line_number)?;
+
+                if line_indexes.len() < 2 {
+                    return Err(ObjError::parse(
+                        line_number,
+                        "a line must contain at least 2 vertices",
+                    ));
+                }
+
+                // Convert an OBJ polyline into consecutive two-point
+                // primitives. This lets the existing Mesh and wireframe
+                // renderer draw line assets without introducing duplicate
+                // skinny face geometry.
+                for pair in line_indexes.windows(2) {
+                    primitives.push(vec![pair[0], pair[1]]);
+                }
             }
 
             // Supported OBJ records that this simple loader ignores.
@@ -127,7 +124,37 @@ pub fn parse_obj(source: &str) -> Result<Mesh, ObjError> {
         return Err(ObjError::parse(0, "OBJ file contains no vertices"));
     }
 
-    Ok(Mesh::new(vertices, faces))
+    Ok(Mesh::new(vertices, primitives))
+}
+
+fn parse_vertex_indexes<'a>(
+    fields: impl Iterator<Item = &'a str>,
+    vertex_count: usize,
+    line_number: usize,
+) -> Result<Vec<usize>, ObjError> {
+    let mut indexes = Vec::new();
+
+    for token in fields {
+        let vertex_index_text = token.split('/').next().unwrap_or("");
+
+        if vertex_index_text.is_empty() {
+            return Err(ObjError::parse(
+                line_number,
+                format!("invalid vertex element '{token}'"),
+            ));
+        }
+
+        let obj_index = vertex_index_text.parse::<isize>().map_err(|_| {
+            ObjError::parse(
+                line_number,
+                format!("invalid vertex index '{vertex_index_text}'"),
+            )
+        })?;
+
+        indexes.push(resolve_obj_index(obj_index, vertex_count, line_number)?);
+    }
+
+    Ok(indexes)
 }
 
 fn parse_f32(value: Option<&str>, line_number: usize, field_name: &str) -> Result<f32, ObjError> {
@@ -232,6 +259,37 @@ mod tests {
     }
 
     #[test]
+    fn parses_obj_line_as_consecutive_segments() {
+        let source = r#"
+            v 0.0 0.0 0.0
+            v 1.0 0.0 0.0
+            v 2.0 0.0 0.0
+
+            l 1 2 3
+        "#;
+
+        let mesh = parse_obj(source).expect("line indexes should parse");
+
+        assert_eq!(mesh.faces, vec![vec![0, 1], vec![1, 2]],);
+
+        assert_eq!(mesh.unique_edges(), vec![(0, 1), (1, 2)],);
+    }
+
+    #[test]
+    fn parses_line_elements_with_slashes() {
+        let source = r#"
+            v 0.0 0.0 0.0
+            v 1.0 0.0 0.0
+
+            l 1/4 2/5
+        "#;
+
+        let mesh = parse_obj(source).expect("line slash indexes should parse");
+
+        assert_eq!(mesh.faces, vec![vec![0, 1]]);
+    }
+
+    #[test]
     fn rejects_zero_index() {
         let source = r#"
             v 0.0 0.0 0.0
@@ -253,7 +311,7 @@ mod tests {
             .join("box.obj");
 
         let mesh = load_obj(&path)
-            .unwrap_or_else(|error| panic!("failed to load {}: {error}", path.display()));
+            .unwrap_or_else(|error| panic!("failed to load {}: {error}", path.display(),));
 
         assert_eq!(mesh.vertices.len(), 8);
         assert_eq!(mesh.faces.len(), 6);
@@ -261,10 +319,23 @@ mod tests {
 
         let bounds = mesh.bounds().expect("box must have bounds");
 
-        assert!((bounds.center().x).abs() <= f32::EPSILON);
-        assert!((bounds.center().y).abs() <= f32::EPSILON);
-        assert!((bounds.center().z).abs() <= f32::EPSILON);
+        assert!(bounds.center().x.abs() <= f32::EPSILON);
+        assert!(bounds.center().y.abs() <= f32::EPSILON);
+        assert!(bounds.center().z.abs() <= f32::EPSILON);
 
         assert!((bounds.largest_dimension() - 1.0).abs() <= f32::EPSILON);
+    }
+
+    #[test]
+    fn loads_cartesian_line_asset_from_disk() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("assets")
+            .join("cartesian_axes.obj");
+
+        let mesh = load_obj(&path)
+            .unwrap_or_else(|error| panic!("failed to load {}: {error}", path.display(),));
+
+        assert_eq!(mesh.vertices.len(), 13);
+        assert_eq!(mesh.unique_edges().len(), 12);
     }
 }

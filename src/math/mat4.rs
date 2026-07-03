@@ -83,6 +83,49 @@ impl Mat4 {
         ])
     }
 
+    /// Builds a right-handed camera view matrix.
+    ///
+    /// The camera is located at `eye`, aimed at `target`,
+    /// with `up` defining its approximate upward direction.
+    ///
+    /// In resulting view space:
+    ///
+    /// - camera position is `(0, 0, 0)`
+    /// - camera right is `+X`
+    /// - camera up is `+Y`
+    /// - camera forward points along `-Z`
+    ///
+    /// Returns `None` when the camera configuration is invalid.
+    pub fn look_at(eye: Vec3, target: Vec3, up: Vec3) -> Option<Self> {
+        let forward_unscaled = target - eye;
+
+        if forward_unscaled.length_squared() <= f32::EPSILON {
+            return None;
+        }
+
+        if up.length_squared() <= f32::EPSILON {
+            return None;
+        }
+
+        let forward = forward_unscaled.normalized();
+
+        let right_unscaled = forward.cross(up);
+
+        if right_unscaled.length_squared() <= f32::EPSILON {
+            return None;
+        }
+
+        let right = right_unscaled.normalized();
+        let true_up = right.cross(forward);
+
+        Some(Self::new([
+            [right.x, right.y, right.z, -right.dot(eye)],
+            [true_up.x, true_up.y, true_up.z, -true_up.dot(eye)],
+            [-forward.x, -forward.y, -forward.z, forward.dot(eye)],
+            [0.0, 0.0, 0.0, 1.0],
+        ]))
+    }
+
     pub fn transform_point(self, point: Vec3) -> Vec3 {
         let x =
             self.m[0][0] * point.x + self.m[0][1] * point.y + self.m[0][2] * point.z + self.m[0][3];
@@ -235,6 +278,59 @@ mod tests {
             Mat4::rotation_z(angle).transform_vector(vector),
             vector.rotate_z(angle),
         );
+    }
+
+    #[test]
+    fn look_at_moves_eye_to_view_origin() {
+        let eye = Vec3::new(4.0, 3.0, 6.0);
+        let target = Vec3::zero();
+        let up = Vec3::new(0.0, 1.0, 0.0);
+
+        let view = Mat4::look_at(eye, target, up).expect("camera configuration should be valid");
+
+        assert_vec3_close(view.transform_point(eye), Vec3::zero());
+    }
+
+    #[test]
+    fn look_at_places_target_on_negative_z_axis() {
+        let eye = Vec3::new(0.0, 0.0, 5.0);
+        let target = Vec3::zero();
+        let up = Vec3::new(0.0, 1.0, 0.0);
+
+        let view = Mat4::look_at(eye, target, up).expect("camera configuration should be valid");
+
+        assert_vec3_close(view.transform_point(target), Vec3::new(0.0, 0.0, -5.0));
+    }
+
+    #[test]
+    fn look_at_preserves_camera_up_direction() {
+        let eye = Vec3::new(0.0, 0.0, 5.0);
+        let target = Vec3::zero();
+        let up = Vec3::new(0.0, 1.0, 0.0);
+
+        let view = Mat4::look_at(eye, target, up).expect("camera configuration should be valid");
+
+        assert_vec3_close(view.transform_vector(up), Vec3::new(0.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn look_at_rejects_eye_equal_to_target() {
+        let point = Vec3::new(1.0, 2.0, 3.0);
+
+        assert!(Mat4::look_at(point, point, Vec3::new(0.0, 1.0, 0.0),).is_none());
+    }
+
+    #[test]
+    fn look_at_rejects_zero_up_vector() {
+        assert!(Mat4::look_at(Vec3::new(0.0, 0.0, 5.0), Vec3::zero(), Vec3::zero(),).is_none());
+    }
+
+    #[test]
+    fn look_at_rejects_parallel_up_vector() {
+        let eye = Vec3::new(0.0, 0.0, 5.0);
+        let target = Vec3::zero();
+
+        assert!(Mat4::look_at(eye, target, Vec3::new(0.0, 0.0, 1.0),).is_none());
     }
 
     #[test]

@@ -98,13 +98,17 @@ impl Canvas {
     }
 
     pub fn render(&self) -> String {
-        let mut output = String::with_capacity((self.width + 1) * self.height);
+        let mut output = String::with_capacity((self.width + 2) * self.height);
 
         for row in self.cells.chunks(self.width) {
             for character in row {
                 output.push(*character);
             }
 
+            // In raw terminal mode, '\n' may move down without returning
+            // to column zero. Emit CRLF so every rendered row starts at
+            // the left edge on macOS, Linux, and Windows terminals.
+            output.push('\r');
             output.push('\n');
         }
 

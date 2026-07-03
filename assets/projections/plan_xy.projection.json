@@ -1,0 +1,29 @@
+{
+  "name": "plan_xy_editor_projection",
+  "version": 1,
+  "units": "terminal_cells_per_world_unit",
+  "screen_origin": [
+    34,
+    14
+  ],
+  "axis_vectors": {
+    "x": [
+      12.0,
+      0.0
+    ],
+    "y": [
+      0.0,
+      -5.0
+    ],
+    "z": [
+      -2.0,
+      2.0
+    ]
+  },
+  "notes": [
+    "This preset is for editor-style XY viewing.",
+    "+X projects to the right/east.",
+    "+Y projects upward/north via negative terminal Y.",
+    "Z contributes no 2D offset, so it is pure depth in this view."
+  ]
+}

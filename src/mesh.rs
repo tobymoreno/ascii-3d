@@ -7,6 +7,13 @@ pub type Edge = (usize, usize);
 #[derive(Debug, Clone)]
 pub struct Mesh {
     pub vertices: Vec<Vec3>,
+
+    /// Polygon faces and explicit two-point line segments.
+    ///
+    /// Polygon faces contain three or more indexes. OBJ `l` records are
+    /// converted by the loader into consecutive two-index entries so the
+    /// existing wireframe renderer can draw both kinds of geometry through
+    /// the same `unique_edges()` interface.
     pub faces: Vec<Vec<usize>>,
 }
 
@@ -118,7 +125,10 @@ impl Mesh {
         true
     }
 
-    /// Derives all unique polygon boundary edges.
+    /// Derives every unique drawable edge.
+    ///
+    /// Entries with two indexes represent explicit line segments.
+    /// Entries with three or more indexes represent closed polygon faces.
     ///
     /// An edge is stored in canonical order:
     ///
@@ -128,22 +138,22 @@ impl Mesh {
     pub fn unique_edges(&self) -> Vec<Edge> {
         let mut edges = BTreeSet::new();
 
-        for face in &self.faces {
-            if face.len() < 2 {
-                continue;
-            }
-
-            for index in 0..face.len() {
-                let a = face[index];
-                let b = face[(index + 1) % face.len()];
-
-                if a == b {
-                    continue;
+        for primitive in &self.faces {
+            match primitive.as_slice() {
+                [a, b] => {
+                    insert_edge(&mut edges, *a, *b);
                 }
 
-                let edge = if a < b { (a, b) } else { (b, a) };
+                indexes if indexes.len() >= 3 => {
+                    for index in 0..indexes.len() {
+                        let a = indexes[index];
+                        let b = indexes[(index + 1) % indexes.len()];
 
-                edges.insert(edge);
+                        insert_edge(&mut edges, a, b);
+                    }
+                }
+
+                _ => {}
             }
         }
 
@@ -151,9 +161,20 @@ impl Mesh {
     }
 }
 
+fn insert_edge(edges: &mut BTreeSet<Edge>, a: usize, b: usize) {
+    if a == b {
+        return;
+    }
+
+    let edge = if a < b { (a, b) } else { (b, a) };
+
+    edges.insert(edge);
+}
+
 #[cfg(test)]
 mod tests {
     use super::Mesh;
+    use crate::math::Vec3;
 
     #[test]
     fn unit_box_has_expected_geometry() {
@@ -179,10 +200,7 @@ mod tests {
     #[test]
     fn normalization_centers_and_scales_mesh() {
         let mut mesh = Mesh::new(
-            vec![
-                crate::math::Vec3::new(10.0, 20.0, 30.0),
-                crate::math::Vec3::new(14.0, 22.0, 32.0),
-            ],
+            vec![Vec3::new(10.0, 20.0, 30.0), Vec3::new(14.0, 22.0, 32.0)],
             Vec::new(),
         );
 
@@ -196,5 +214,19 @@ mod tests {
         assert!(center.z.abs() <= f32::EPSILON);
 
         assert!((bounds.largest_dimension() - 1.0).abs() <= f32::EPSILON);
+    }
+
+    #[test]
+    fn explicit_two_point_segments_are_not_closed_again() {
+        let mesh = Mesh::new(
+            vec![
+                Vec3::zero(),
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(2.0, 0.0, 0.0),
+            ],
+            vec![vec![0, 1], vec![1, 2]],
+        );
+
+        assert_eq!(mesh.unique_edges(), vec![(0, 1), (1, 2)],);
     }
 }
