@@ -67,6 +67,17 @@ impl Vec3 {
             -self.x * sine + self.z * cosine,
         )
     }
+
+    pub fn rotate_z(self, angle_radians: f32) -> Self {
+        let cosine = angle_radians.cos();
+        let sine = angle_radians.sin();
+
+        Self::new(
+            self.x * cosine - self.y * sine,
+            self.x * sine + self.y * cosine,
+            self.z,
+        )
+    }
 }
 
 impl Add for Vec3 {
@@ -149,5 +160,43 @@ mod tests {
         let y = Vec3::new(0.0, 1.0, 0.0);
 
         assert_eq!(x.cross(y), Vec3::new(0.0, 0.0, 1.0));
+    }
+
+    #[test]
+    fn rotates_around_x_axis() {
+        let rotated = Vec3::new(0.0, 1.0, 0.0).rotate_x(90.0_f32.to_radians());
+
+        assert!(approximately_equal(rotated.x, 0.0));
+        assert!(approximately_equal(rotated.y, 0.0));
+        assert!(approximately_equal(rotated.z, 1.0));
+    }
+
+    #[test]
+    fn rotates_around_y_axis() {
+        let rotated = Vec3::new(0.0, 0.0, 1.0).rotate_y(90.0_f32.to_radians());
+
+        assert!(approximately_equal(rotated.x, 1.0));
+        assert!(approximately_equal(rotated.y, 0.0));
+        assert!(approximately_equal(rotated.z, 0.0));
+    }
+
+    #[test]
+    fn rotates_around_z_axis() {
+        let rotated = Vec3::new(1.0, 0.0, 0.0).rotate_z(90.0_f32.to_radians());
+
+        assert!(approximately_equal(rotated.x, 0.0));
+        assert!(approximately_equal(rotated.y, 1.0));
+        assert!(approximately_equal(rotated.z, 0.0));
+    }
+
+    #[test]
+    fn rotation_preserves_length() {
+        let vector = Vec3::new(2.0, 1.0, 1.0);
+        let rotated = vector
+            .rotate_x(45.0_f32.to_radians())
+            .rotate_y(30.0_f32.to_radians())
+            .rotate_z(15.0_f32.to_radians());
+
+        assert!(approximately_equal(vector.length(), rotated.length(),));
     }
 }

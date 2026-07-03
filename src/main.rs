@@ -1,11 +1,15 @@
 mod canvas;
 mod geometry2d;
 mod math;
+mod mesh;
+mod mesh_renderer;
+mod obj;
 mod projection;
 
 use std::{
     io::{self, Write, stdout},
-    time::Duration,
+    path::Path,
+    time::{Duration, Instant},
 };
 
 use canvas::Canvas;
@@ -20,11 +24,18 @@ use crossterm::{
 };
 use geometry2d::Point2;
 use math::Vec3;
+use mesh::Mesh;
+use mesh_renderer::{MeshTransform, draw_wireframe};
+use obj::load_obj;
 use projection::ObliqueProjector;
 
 const CANVAS_WIDTH: usize = 80;
 const CANVAS_HEIGHT: usize = 28;
-const SCENE_COUNT: usize = 4;
+const SCENE_COUNT: usize = 8;
+
+const FULL_ROTATION_DEGREES: f32 = 360.0;
+const ROTATION_SPEED_DEGREES_PER_SECOND: f32 = 30.0;
+const FRAME_DURATION: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
 struct TerminalGuard;
 
@@ -118,11 +129,9 @@ fn scene_cross_positive_z(canvas: &mut Canvas, projector: &ObliqueProjector) {
 
     let origin = Vec3::zero();
 
-    // Both vectors lie in the XY plane.
     let vector_a = Vec3::new(3.0, 1.0, 0.0);
     let vector_b = Vec3::new(1.0, 2.0, 0.0);
 
-    // A x B = (0, 0, 5), which points along +Z.
     let cross = vector_a.cross(vector_b);
     let displayed_cross = cross.normalized() * 3.0;
 
@@ -166,9 +175,6 @@ fn scene_cross_negative_z(canvas: &mut Canvas, projector: &ObliqueProjector) {
     let vector_a = Vec3::new(3.0, 1.0, 0.0);
     let vector_b = Vec3::new(1.0, 2.0, 0.0);
 
-    // Reversing the order reverses the normal:
-    //
-    // B x A = -(A x B) = (0, 0, -5)
     let cross = vector_b.cross(vector_a);
     let displayed_cross = cross.normalized() * 3.0;
 
@@ -200,16 +206,180 @@ fn scene_cross_negative_z(canvas: &mut Canvas, projector: &ObliqueProjector) {
     );
 }
 
-fn render_scene(scene_index: usize) -> io::Result<()> {
+#[derive(Clone, Copy)]
+enum RotationAxis {
+    X,
+    Y,
+    Z,
+}
+
+impl RotationAxis {
+    fn name(self) -> &'static str {
+        match self {
+            Self::X => "X",
+            Self::Y => "Y",
+            Self::Z => "Z",
+        }
+    }
+
+    fn rotate(self, vector: Vec3, angle_radians: f32) -> Vec3 {
+        match self {
+            Self::X => vector.rotate_x(angle_radians),
+            Self::Y => vector.rotate_y(angle_radians),
+            Self::Z => vector.rotate_z(angle_radians),
+        }
+    }
+}
+
+fn scene_rotation(
+    canvas: &mut Canvas,
+    projector: &ObliqueProjector,
+    axis: RotationAxis,
+    angle_degrees: f32,
+) {
+    let origin = Vec3::zero();
+
+    let base_x = Vec3::new(4.0, 0.0, 0.0);
+    let base_y = Vec3::new(0.0, 3.0, 0.0);
+    let base_z = Vec3::new(0.0, 0.0, 4.0);
+
+    let angle_radians = angle_degrees.to_radians();
+
+    let rotated_x = axis.rotate(base_x, angle_radians);
+    let rotated_y = axis.rotate(base_y, angle_radians);
+    let rotated_z = axis.rotate(base_z, angle_radians);
+
+    let origin_2d = projector.project(origin);
+    let x_2d = projector.project(rotated_x);
+    let y_2d = projector.project(rotated_y);
+    let z_2d = projector.project(rotated_z);
+
+    canvas.draw_arrow_auto(origin_2d, x_2d, '>');
+    canvas.draw_arrow_auto(origin_2d, y_2d, '^');
+    canvas.draw_arrow_auto(origin_2d, z_2d, 'v');
+
+    canvas.set(origin_2d, 'O');
+
+    canvas.draw_text(Point2::new(x_2d.x + 2, x_2d.y), "+X");
+
+    canvas.draw_text(Point2::new(y_2d.x + 2, y_2d.y), "+Y");
+
+    canvas.draw_text(Point2::new(z_2d.x + 2, z_2d.y), "+Z");
+
+    canvas.draw_text(
+        Point2::new(2, 1),
+        &format!(
+            "Rotate Cartesian axes around {}: {:06.1} / {:.1} degrees",
+            axis.name(),
+            angle_degrees,
+            FULL_ROTATION_DEGREES,
+        ),
+    );
+
+    canvas.draw_text(Point2::new(2, 24), "Origin O = (0, 0, 0)");
+
+    canvas.draw_text(
+        Point2::new(2, 25),
+        &format!(
+            "Rotating around {} leaves the {} axis unchanged.",
+            axis.name(),
+            axis.name(),
+        ),
+    );
+
+    canvas.draw_text(Point2::new(2, 26), "The other two axes sweep around it.");
+}
+
+fn scene_obj_box(
+    canvas: &mut Canvas,
+    projector: &ObliqueProjector,
+    mesh: &Mesh,
+    angle_degrees: f32,
+) -> io::Result<()> {
+    draw_axes(canvas, projector, true);
+
+    let angle_radians = angle_degrees.to_radians();
+
+    let transform = MeshTransform {
+        rotation_x: angle_radians * 0.7,
+        rotation_y: angle_radians,
+        rotation_z: angle_radians * 0.35,
+        scale: 3.0,
+        translation: Vec3::zero(),
+    };
+
+    draw_wireframe(canvas, projector, mesh, transform).map_err(io::Error::other)?;
+
+    canvas.draw_text(
+        Point2::new(2, 1),
+        &format!(
+            "Scene 8: rotating OBJ wireframe box  angle={:06.1}",
+            angle_degrees,
+        ),
+    );
+
+    canvas.draw_text(
+        Point2::new(2, 24),
+        &format!(
+            "vertices={}  faces={}  unique edges={}",
+            mesh.vertices.len(),
+            mesh.faces.len(),
+            mesh.unique_edges().len(),
+        ),
+    );
+
+    canvas.draw_text(Point2::new(2, 25), "Source: assets/box.obj");
+
+    canvas.draw_text(
+        Point2::new(2, 26),
+        "Centered at origin; largest dimension normalized to 1.0",
+    );
+
+    Ok(())
+}
+
+fn render_scene(
+    scene_index: usize,
+    rotation_angle_degrees: f32,
+    box_angle_degrees: f32,
+    box_mesh: &Mesh,
+) -> io::Result<()> {
     let mut canvas = Canvas::new(CANVAS_WIDTH, CANVAS_HEIGHT);
 
     let projector = ObliqueProjector::new(Point2::new(34, 14));
 
     match scene_index {
         0 => scene_axes(&mut canvas, &projector),
+
         1 => scene_arbitrary_vector(&mut canvas, &projector),
+
         2 => scene_cross_positive_z(&mut canvas, &projector),
+
         3 => scene_cross_negative_z(&mut canvas, &projector),
+
+        4 => scene_rotation(
+            &mut canvas,
+            &projector,
+            RotationAxis::X,
+            rotation_angle_degrees,
+        ),
+
+        5 => scene_rotation(
+            &mut canvas,
+            &projector,
+            RotationAxis::Y,
+            rotation_angle_degrees,
+        ),
+
+        6 => scene_rotation(
+            &mut canvas,
+            &projector,
+            RotationAxis::Z,
+            rotation_angle_degrees,
+        ),
+
+        7 => scene_obj_box(&mut canvas, &projector, box_mesh, box_angle_degrees)?,
+
         _ => unreachable!("invalid scene index"),
     }
 
@@ -224,20 +394,80 @@ fn render_scene(scene_index: usize) -> io::Result<()> {
 
     let mut output = stdout();
 
-    execute!(output, MoveTo(0, 0), Clear(ClearType::All),)?;
+    execute!(output, MoveTo(0, 0))?;
 
     write!(output, "{}", canvas.render())?;
     output.flush()
 }
 
+fn is_rotation_scene(scene_index: usize) -> bool {
+    matches!(scene_index, 4..=6)
+}
+
+fn is_box_scene(scene_index: usize) -> bool {
+    scene_index == 7
+}
+
 fn main() -> io::Result<()> {
+    let box_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("assets")
+        .join("box.obj");
+
+    let mut box_mesh = load_obj(&box_path).map_err(io::Error::other)?;
+
+    if !box_mesh.normalize_to_size(1.0) {
+        return Err(io::Error::other(format!(
+            "could not normalize OBJ mesh: {}",
+            box_path.display(),
+        )));
+    }
+
     let _terminal = TerminalGuard::enter()?;
 
     let mut scene_index = 0;
-    render_scene(scene_index)?;
+    let mut rotation_angle_degrees = 0.0_f32;
+    let mut box_angle_degrees = 0.0_f32;
+    let mut previous_time = Instant::now();
+
+    render_scene(
+        scene_index,
+        rotation_angle_degrees,
+        box_angle_degrees,
+        &box_mesh,
+    )?;
 
     loop {
-        if !event::poll(Duration::from_millis(250))? {
+        let now = Instant::now();
+        let elapsed = now.duration_since(previous_time);
+        previous_time = now;
+
+        let mut redraw = false;
+
+        if is_rotation_scene(scene_index) {
+            rotation_angle_degrees += elapsed.as_secs_f32() * ROTATION_SPEED_DEGREES_PER_SECOND;
+
+            rotation_angle_degrees %= FULL_ROTATION_DEGREES;
+
+            redraw = true;
+        }
+
+        if is_box_scene(scene_index) {
+            box_angle_degrees += elapsed.as_secs_f32() * ROTATION_SPEED_DEGREES_PER_SECOND;
+
+            box_angle_degrees %= 360.0;
+            redraw = true;
+        }
+
+        if redraw {
+            render_scene(
+                scene_index,
+                rotation_angle_degrees,
+                box_angle_degrees,
+                &box_mesh,
+            )?;
+        }
+
+        if !event::poll(FRAME_DURATION)? {
             continue;
         }
 
@@ -253,7 +483,16 @@ fn main() -> io::Result<()> {
             KeyCode::Char(' ') | KeyCode::Right | KeyCode::Enter => {
                 scene_index = (scene_index + 1) % SCENE_COUNT;
 
-                render_scene(scene_index)?;
+                rotation_angle_degrees = 0.0;
+                box_angle_degrees = 0.0;
+                previous_time = Instant::now();
+
+                render_scene(
+                    scene_index,
+                    rotation_angle_degrees,
+                    box_angle_degrees,
+                    &box_mesh,
+                )?;
             }
 
             KeyCode::Left => {
@@ -263,7 +502,16 @@ fn main() -> io::Result<()> {
                     scene_index - 1
                 };
 
-                render_scene(scene_index)?;
+                rotation_angle_degrees = 0.0;
+                box_angle_degrees = 0.0;
+                previous_time = Instant::now();
+
+                render_scene(
+                    scene_index,
+                    rotation_angle_degrees,
+                    box_angle_degrees,
+                    &box_mesh,
+                )?;
             }
 
             KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => break,
