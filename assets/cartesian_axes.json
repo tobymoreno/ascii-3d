@@ -1,0 +1,128 @@
+{
+  "name": "cartesian_axes",
+  "version": 1,
+  "units": "world",
+  "geometry_asset": "cartesian_axes.obj",
+  "origin": {
+    "position": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "label": "",
+    "group": "origin_marker"
+  },
+  "axes": [
+    {
+      "id": "x",
+      "group_shaft": "x_axis",
+      "group_arrow": "x_axis",
+      "positive_direction": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "negative_direction": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "length": 1.25,
+      "positive_endpoint": [
+        1.25,
+        0.0,
+        0.0
+      ],
+      "positive_label": "+X",
+      "negative_label": "-X",
+      "positive_label_position": [
+        1.42,
+        0.0,
+        0.0
+      ],
+      "negative_label_position": [
+        -0.3,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": "y",
+      "group_shaft": "y_axis",
+      "group_arrow": "y_axis",
+      "positive_direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "negative_direction": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "length": 1.25,
+      "positive_endpoint": [
+        0.0,
+        1.25,
+        0.0
+      ],
+      "positive_label": "+Y",
+      "negative_label": "-Y",
+      "positive_label_position": [
+        0.0,
+        1.42,
+        0.0
+      ],
+      "negative_label_position": [
+        0.0,
+        -0.3,
+        0.0
+      ]
+    },
+    {
+      "id": "z",
+      "group_shaft": "z_axis",
+      "group_arrow": "z_axis",
+      "positive_direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "negative_direction": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "length": 1.25,
+      "positive_endpoint": [
+        0.0,
+        0.0,
+        1.25
+      ],
+      "positive_label": "+Z",
+      "negative_label": "-Z",
+      "positive_label_position": [
+        0.0,
+        0.0,
+        1.42
+      ],
+      "negative_label_position": [
+        0.0,
+        0.0,
+        -0.3
+      ]
+    }
+  ],
+  "display": {
+    "show_origin": true,
+    "show_positive_labels": true,
+    "show_negative_labels": false,
+    "default_axis_length": 1.25,
+    "arrowhead_length": 0.19999999999999996,
+    "label_strategy": "sidecar_metadata",
+    "notes": [
+      "Shorter axis legs for the current 80x28 terminal canvas.",
+      "Labels remain asset-configurable through this sidecar."
+    ]
+  }
+}

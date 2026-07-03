@@ -52,6 +52,11 @@ impl fmt::Display for MeshRenderError {
 
 impl Error for MeshRenderError {}
 
+/// Draws every unique edge exposed by the mesh.
+///
+/// Polygon faces contribute their closed boundary edges. Explicit OBJ
+/// `l` records are converted by the loader into two-point primitives and
+/// therefore pass through this same rendering path.
 pub fn draw_wireframe(
     canvas: &mut Canvas,
     projector: &ObliqueProjector,
@@ -99,7 +104,9 @@ mod tests {
         let transformed = MeshTransform::default().transform_vertex(vertex);
 
         assert!((transformed.x - vertex.x).abs() <= f32::EPSILON);
+
         assert!((transformed.y - vertex.y).abs() <= f32::EPSILON);
+
         assert!((transformed.z - vertex.z).abs() <= f32::EPSILON);
     }
 
