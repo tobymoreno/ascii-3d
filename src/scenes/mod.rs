@@ -10,6 +10,7 @@ mod cross_product;
 mod obj_box;
 mod quad4;
 mod rotation;
+mod single_p;
 
 pub use arbitrary_vector::render as render_arbitrary_vector;
 pub use asset_axes::render as render_asset_axes;
@@ -25,9 +26,11 @@ pub use cross_product::{
 pub use obj_box::render as render_obj_box;
 pub use quad4::render as render_quad4;
 pub use rotation::{RotationAxis, render as render_rotation};
+pub use single_p::render as render_single_p;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scene {
+    SingleP,
     BezierAxes,
     AssetAxesRotateX,
     AssetAxesRotateY,
@@ -48,7 +51,8 @@ pub enum Scene {
 
 impl Scene {
     /// Scenes are ordered newest-first.
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
+        Self::SingleP,
         Self::BezierAxes,
         Self::AssetAxesRotateX,
         Self::AssetAxesRotateY,
@@ -69,6 +73,7 @@ impl Scene {
 
     pub const fn title(self) -> &'static str {
         match self {
+            Self::SingleP => "single_p word parent with P glyph",
             Self::BezierAxes => "Bezier curve child of Cartesian axes",
             Self::AssetAxesRotateX => "asset Cartesian axes rotating around X",
             Self::AssetAxesRotateY => "asset Cartesian axes rotating around Y",
@@ -109,20 +114,21 @@ mod tests {
     use super::Scene;
 
     #[test]
-    fn newest_scene_is_bezier_axes() {
-        assert_eq!(Scene::ALL.first(), Some(&Scene::BezierAxes));
+    fn newest_scene_is_single_p() {
+        assert_eq!(Scene::ALL.first(), Some(&Scene::SingleP));
     }
 
     #[test]
-    fn asset_axes_rotation_scenes_follow_bezier_scene() {
-        assert_eq!(Scene::ALL[1], Scene::AssetAxesRotateX);
-        assert_eq!(Scene::ALL[2], Scene::AssetAxesRotateY);
-        assert_eq!(Scene::ALL[3], Scene::AssetAxesRotateZ);
+    fn bezier_and_asset_axes_scenes_follow_single_p() {
+        assert_eq!(Scene::ALL[1], Scene::BezierAxes);
+        assert_eq!(Scene::ALL[2], Scene::AssetAxesRotateX);
+        assert_eq!(Scene::ALL[3], Scene::AssetAxesRotateY);
+        assert_eq!(Scene::ALL[4], Scene::AssetAxesRotateZ);
     }
 
     #[test]
-    fn quad4_is_fifth() {
-        assert_eq!(Scene::ALL[4], Scene::Quad4);
+    fn quad4_is_sixth() {
+        assert_eq!(Scene::ALL[5], Scene::Quad4);
     }
 
     #[test]
@@ -131,12 +137,13 @@ mod tests {
     }
 
     #[test]
-    fn scene_count_is_sixteen() {
-        assert_eq!(Scene::ALL.len(), 16);
+    fn scene_count_is_seventeen() {
+        assert_eq!(Scene::ALL.len(), 17);
     }
 
     #[test]
     fn animated_scenes_are_identified() {
+        assert!(!Scene::SingleP.is_animated());
         assert!(!Scene::BezierAxes.is_animated());
 
         assert!(Scene::AssetAxesRotateX.is_animated());

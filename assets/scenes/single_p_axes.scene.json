@@ -1,0 +1,74 @@
+{
+  "name": "single_p_axes_scene",
+  "version": 1,
+  "units": "world",
+  "description": "Scene hierarchy with Cartesian axes as the parent, a word parent named single_p, and one glyph child P.",
+  "projection_preset": "assets/projections/plan_xy.projection.json",
+  "nodes": [
+    {
+      "id": "axes_root",
+      "type": "cartesian_axes",
+      "geometry_asset": "assets/cartesian_axes.obj",
+      "metadata_asset": "assets/cartesian_axes.json",
+      "parent": null,
+      "local_transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation_degrees": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "display": {
+        "visible": true,
+        "show_labels": true
+      }
+    },
+    {
+      "id": "word_single_p",
+      "type": "bezier_word",
+      "word_asset": "assets/words/single_p.word.json",
+      "metadata_asset": "assets/words/single_p.metadata.json",
+      "parent": "axes_root",
+      "local_transform": {
+        "translation": [
+          0.45,
+          0.35,
+          0.0
+        ],
+        "rotation_degrees": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.55,
+          1.55,
+          1.55
+        ]
+      },
+      "display": {
+        "visible": true,
+        "show_word_bounds": true,
+        "show_glyphs": true
+      }
+    }
+  ],
+  "hierarchy": {
+    "axes_root": [
+      "word_single_p"
+    ],
+    "word_single_p": [
+      "glyph_P_0"
+    ]
+  }
+}

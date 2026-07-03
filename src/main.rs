@@ -3,6 +3,7 @@ mod axis_metadata;
 mod canvas;
 mod curves;
 mod geometry2d;
+mod glyphs;
 mod math;
 mod mesh;
 mod mesh_renderer;
