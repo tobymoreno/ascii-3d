@@ -2,6 +2,7 @@ mod arbitrary_vector;
 mod asset_axes;
 mod asset_axes_rotation;
 mod axes;
+mod bezier_axes;
 mod camera;
 mod camera_motion;
 mod camera_turntable;
@@ -14,6 +15,7 @@ pub use arbitrary_vector::render as render_arbitrary_vector;
 pub use asset_axes::render as render_asset_axes;
 pub use asset_axes_rotation::render as render_asset_axes_rotation;
 pub use axes::{draw_axes, render as render_axes};
+pub use bezier_axes::render as render_bezier_axes;
 pub use camera::render as render_camera;
 pub use camera_motion::render as render_camera_motion;
 pub use camera_turntable::render as render_camera_turntable;
@@ -26,6 +28,7 @@ pub use rotation::{RotationAxis, render as render_rotation};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scene {
+    BezierAxes,
     AssetAxesRotateX,
     AssetAxesRotateY,
     AssetAxesRotateZ,
@@ -45,7 +48,8 @@ pub enum Scene {
 
 impl Scene {
     /// Scenes are ordered newest-first.
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
+        Self::BezierAxes,
         Self::AssetAxesRotateX,
         Self::AssetAxesRotateY,
         Self::AssetAxesRotateZ,
@@ -65,6 +69,7 @@ impl Scene {
 
     pub const fn title(self) -> &'static str {
         match self {
+            Self::BezierAxes => "Bezier curve child of Cartesian axes",
             Self::AssetAxesRotateX => "asset Cartesian axes rotating around X",
             Self::AssetAxesRotateY => "asset Cartesian axes rotating around Y",
             Self::AssetAxesRotateZ => "asset Cartesian axes rotating around Z",
@@ -104,20 +109,20 @@ mod tests {
     use super::Scene;
 
     #[test]
-    fn newest_scene_is_asset_axes_x_rotation() {
-        assert_eq!(Scene::ALL.first(), Some(&Scene::AssetAxesRotateX),);
+    fn newest_scene_is_bezier_axes() {
+        assert_eq!(Scene::ALL.first(), Some(&Scene::BezierAxes));
     }
 
     #[test]
-    fn asset_axes_rotation_scenes_are_first_three() {
-        assert_eq!(Scene::ALL[0], Scene::AssetAxesRotateX);
-        assert_eq!(Scene::ALL[1], Scene::AssetAxesRotateY);
-        assert_eq!(Scene::ALL[2], Scene::AssetAxesRotateZ);
+    fn asset_axes_rotation_scenes_follow_bezier_scene() {
+        assert_eq!(Scene::ALL[1], Scene::AssetAxesRotateX);
+        assert_eq!(Scene::ALL[2], Scene::AssetAxesRotateY);
+        assert_eq!(Scene::ALL[3], Scene::AssetAxesRotateZ);
     }
 
     #[test]
-    fn quad4_is_fourth() {
-        assert_eq!(Scene::ALL[3], Scene::Quad4);
+    fn quad4_is_fifth() {
+        assert_eq!(Scene::ALL[4], Scene::Quad4);
     }
 
     #[test]
@@ -126,12 +131,14 @@ mod tests {
     }
 
     #[test]
-    fn scene_count_is_fifteen() {
-        assert_eq!(Scene::ALL.len(), 15);
+    fn scene_count_is_sixteen() {
+        assert_eq!(Scene::ALL.len(), 16);
     }
 
     #[test]
     fn animated_scenes_are_identified() {
+        assert!(!Scene::BezierAxes.is_animated());
+
         assert!(Scene::AssetAxesRotateX.is_animated());
         assert!(Scene::AssetAxesRotateY.is_animated());
         assert!(Scene::AssetAxesRotateZ.is_animated());

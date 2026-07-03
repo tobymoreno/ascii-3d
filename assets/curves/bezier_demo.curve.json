@@ -1,0 +1,41 @@
+{
+  "name": "bezier_demo_curve",
+  "version": 1,
+  "type": "cubic_bezier_3d",
+  "units": "world",
+  "control_points": {
+    "p0": [
+      -1.25,
+      -0.5,
+      0.0
+    ],
+    "p1": [
+      -0.5,
+      1.25,
+      0.0
+    ],
+    "p2": [
+      0.5,
+      1.25,
+      0.0
+    ],
+    "p3": [
+      1.25,
+      -0.5,
+      0.0
+    ]
+  },
+  "parameter_range": {
+    "start_t": 0.0,
+    "end_t": 1.0
+  },
+  "sampling": {
+    "default_segments": 32,
+    "minimum_segments": 1,
+    "notes": [
+      "Sampling is a renderer choice. The curve itself is mathematical and continuous.",
+      "ASCII renderers can sample into line segments.",
+      "A future GUI renderer can draw this as a native curve/path."
+    ]
+  }
+}

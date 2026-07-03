@@ -1,0 +1,31 @@
+{
+  "name": "bezier_demo_curve_metadata",
+  "version": 1,
+  "curve_asset": "bezier_demo.curve.json",
+  "display": {
+    "show_curve": true,
+    "show_control_points": true,
+    "show_control_polygon": true,
+    "show_tangent_markers": false,
+    "curve_character": "*",
+    "control_polygon_character": "-",
+    "control_point_labels": {
+      "p0": "P0",
+      "p1": "P1",
+      "p2": "P2",
+      "p3": "P3"
+    },
+    "sample_label_strategy": "none"
+  },
+  "semantic_roles": {
+    "p0": "curve_start",
+    "p1": "first_control_handle",
+    "p2": "second_control_handle",
+    "p3": "curve_end"
+  },
+  "notes": [
+    "This metadata describes how to display the mathematical curve asset.",
+    "The control polygon is not the curve; it is a helper showing the handles.",
+    "The smooth curve is generated from the cubic Bezier equation at render time."
+  ]
+}

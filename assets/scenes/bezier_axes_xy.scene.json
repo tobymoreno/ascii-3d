@@ -1,0 +1,82 @@
+{
+  "name": "bezier_axes_xy_editor_view",
+  "version": 1,
+  "units": "world",
+  "description": "Scene hierarchy with Cartesian axes as the parent and a cubic Bezier curve as the child, viewed in an XY editor-style projection.",
+  "projection_preset": "assets/projections/plan_xy.projection.json",
+  "nodes": [
+    {
+      "id": "axes_root",
+      "type": "cartesian_axes",
+      "geometry_asset": "assets/cartesian_axes.obj",
+      "metadata_asset": "assets/cartesian_axes.json",
+      "parent": null,
+      "local_transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation_degrees": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "display": {
+        "visible": true,
+        "show_labels": true
+      }
+    },
+    {
+      "id": "bezier_child",
+      "type": "cubic_bezier_curve",
+      "curve_asset": "assets/curves/bezier_demo.curve.json",
+      "metadata_asset": "assets/curves/bezier_demo.metadata.json",
+      "parent": "axes_root",
+      "local_transform": {
+        "translation": [
+          0.625,
+          0.625,
+          0.0
+        ],
+        "rotation_degrees": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          0.25,
+          0.25,
+          0.25
+        ]
+      },
+      "display": {
+        "visible": true,
+        "show_curve": true,
+        "show_control_polygon": true,
+        "show_control_points": true,
+        "show_labels": true
+      }
+    }
+  ],
+  "conventions": {
+    "handedness": "right_handed",
+    "screen_axes": {
+      "x": "east_right",
+      "y": "north_up"
+    },
+    "depth_axis": {
+      "z": "into_or_out_of_screen",
+      "notes": [
+        "In this plan-XY preset, Z does not get a diagonal screen offset.",
+        "This makes the view easier for curve editing, but hides depth separation."
+      ]
+    }
+  }
+}

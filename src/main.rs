@@ -1,6 +1,7 @@
 mod app;
 mod axis_metadata;
 mod canvas;
+mod curves;
 mod geometry2d;
 mod math;
 mod mesh;

@@ -24,8 +24,9 @@ use crate::{
     scene_config::{Quad4SceneConfig, load_quad4_scene_config},
     scenes::{
         RotationAxis, Scene, render_arbitrary_vector, render_asset_axes_rotation, render_axes,
-        render_camera, render_camera_motion, render_camera_turntable, render_cross_negative_z,
-        render_cross_positive_z, render_obj_box, render_quad4, render_rotation,
+        render_bezier_axes, render_camera, render_camera_motion, render_camera_turntable,
+        render_cross_negative_z, render_cross_positive_z, render_obj_box, render_quad4,
+        render_rotation,
     },
 };
 
@@ -234,6 +235,10 @@ fn render_scene(state: &AppState, assets: &SceneAssets) -> io::Result<()> {
     let projector = projector_from_config(&assets.projection_config);
 
     match state.current_scene() {
+        Scene::BezierAxes => {
+            render_bezier_axes(&mut canvas)?;
+        }
+
         Scene::AssetAxesRotateX => {
             render_asset_axes_rotation(
                 &mut canvas,
@@ -422,19 +427,19 @@ mod tests {
     use crate::scenes::Scene;
 
     #[test]
-    fn application_starts_on_asset_axes_x_rotation() {
+    fn application_starts_on_bezier_axes_scene() {
         let state = AppState::new();
 
-        assert_eq!(state.current_scene(), Scene::AssetAxesRotateX);
+        assert_eq!(state.current_scene(), Scene::BezierAxes);
     }
 
     #[test]
-    fn next_scene_moves_to_asset_axes_y_rotation() {
+    fn next_scene_moves_to_asset_axes_x_rotation() {
         let mut state = AppState::new();
 
         state.next_scene();
 
-        assert_eq!(state.current_scene(), Scene::AssetAxesRotateY);
+        assert_eq!(state.current_scene(), Scene::AssetAxesRotateX);
     }
 
     #[test]
