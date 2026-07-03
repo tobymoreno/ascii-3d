@@ -1,0 +1,32 @@
+{
+  "name": "default_ascii_axis_vector_projection",
+  "version": 1,
+  "units": "terminal_cells_per_world_unit",
+  "screen_origin": [
+    34,
+    14
+  ],
+  "axis_vectors": {
+    "x": [
+      8.0,
+      0.0
+    ],
+    "y": [
+      0.0,
+      -3.0
+    ],
+    "z": [
+      -2.0,
+      2.0
+    ]
+  },
+  "notes": [
+    "Terminal X increases to the right/east.",
+    "Terminal Y increases downward/south, so upward/north movement uses a negative Y component.",
+    "Positive X appears east/right.",
+    "Positive Y appears north/up.",
+    "Positive Z appears southwest/down-left, approximately 7:30 on a clock.",
+    "Negative Z therefore appears northeast/up-right, approximately 1:30 on a clock.",
+    "These are projection vectors, not 3D rotation vectors."
+  ]
+}

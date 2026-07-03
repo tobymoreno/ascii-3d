@@ -34,14 +34,14 @@
         0.0
       ],
       "positive_label": "+X",
-      "negative_label": "-X",
+      "negative_label": "",
       "positive_label_position": [
         1.42,
         0.0,
         0.0
       ],
       "negative_label_position": [
-        -0.3,
+        0.0,
         0.0,
         0.0
       ]
@@ -67,7 +67,7 @@
         0.0
       ],
       "positive_label": "+Y",
-      "negative_label": "-Y",
+      "negative_label": "",
       "positive_label_position": [
         0.0,
         1.42,
@@ -75,14 +75,14 @@
       ],
       "negative_label_position": [
         0.0,
-        -0.3,
+        0.0,
         0.0
       ]
     },
     {
       "id": "z",
-      "group_shaft": "z_axis",
-      "group_arrow": "z_axis",
+      "group_shaft": "z_axis,negative_z_axis",
+      "group_arrow": "z_axis,negative_z_axis",
       "positive_direction": [
         0.0,
         0.0,
@@ -109,20 +109,21 @@
       "negative_label_position": [
         0.0,
         0.0,
-        -0.3
+        -1.42
       ]
     }
   ],
   "display": {
     "show_origin": true,
     "show_positive_labels": true,
-    "show_negative_labels": false,
+    "show_negative_labels": true,
     "default_axis_length": 1.25,
-    "arrowhead_length": 0.19999999999999996,
+    "arrowhead_length": 0.2,
     "label_strategy": "sidecar_metadata",
     "notes": [
-      "Shorter axis legs for the current 80x28 terminal canvas.",
-      "Labels remain asset-configurable through this sidecar."
+      "Positive Z projects down-left with the configured projection.default.json.",
+      "Negative Z is modeled as real OBJ line geometry so asset-driven axes show both depth directions.",
+      "Only the Z axis displays a negative label; X and Y negative labels are intentionally empty."
     ]
   }
 }

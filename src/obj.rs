@@ -335,7 +335,7 @@ mod tests {
         let mesh = load_obj(&path)
             .unwrap_or_else(|error| panic!("failed to load {}: {error}", path.display(),));
 
-        assert_eq!(mesh.vertices.len(), 10);
-        assert_eq!(mesh.unique_edges().len(), 9);
+        assert_eq!(mesh.vertices.len(), 13);
+        assert_eq!(mesh.unique_edges().len(), 12);
     }
 }

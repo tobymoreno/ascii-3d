@@ -1,0 +1,21 @@
+{
+  "name": "camera_bound_fov_frustum_planes",
+  "mesh_asset": "quad4.obj",
+  "camera": {
+    "position": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "pitch_amplitude_degrees": 45.0
+  },
+  "frustum": {
+    "vertical_fov_degrees": 60.0,
+    "aspect_ratio": 1.77778,
+    "near_distance": 0.25,
+    "far_distance": 0.75
+  },
+  "display": {
+    "world_scale": 3.0
+  }
+}

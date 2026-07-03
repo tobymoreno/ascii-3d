@@ -1,40 +1,40 @@
-# cartesian_axes.obj
-# Shorter line-based Cartesian axes for the current shared scene scale.
-# Geometry remains fully asset-driven.
+# Asset-driven Cartesian axes.
+# Positive X, positive Y, and bidirectional Z are modeled as OBJ line primitives.
+# The JSON sidecar controls labels and semantic metadata.
 
 o cartesian_axes
 
-# Shared origin
+g origin_marker
 v 0.0 0.0 0.0
 
-# Positive axis endpoints
-v 1.25 0.0 0.0
-v 0.0 1.25 0.0
-v 0.0 0.0 1.25
-
-# X arrowhead points
-v 1.05  0.08 0.0
-v 1.05 -0.08 0.0
-
-# Y arrowhead points
-v  0.08 1.05 0.0
-v -0.08 1.05 0.0
-
-# Z arrowhead points
-v  0.08 0.0 1.05
-v -0.08 0.0 1.05
-
 g x_axis
+v 1.25 0.0 0.0
+v 1.05 0.08 0.0
+v 1.05 -0.08 0.0
 l 1 2
-l 2 5
-l 2 6
+l 2 3
+l 2 4
 
 g y_axis
-l 1 3
-l 3 7
-l 3 8
+v 0.0 1.25 0.0
+v 0.08 1.05 0.0
+v -0.08 1.05 0.0
+l 1 5
+l 5 6
+l 5 7
 
 g z_axis
-l 1 4
-l 4 9
-l 4 10
+v 0.0 0.0 1.25
+v 0.08 0.0 1.05
+v -0.08 0.0 1.05
+l 1 8
+l 8 9
+l 8 10
+
+g negative_z_axis
+v 0.0 0.0 -1.25
+v 0.08 0.0 -1.05
+v -0.08 0.0 -1.05
+l 1 11
+l 11 12
+l 11 13

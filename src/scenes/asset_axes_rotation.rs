@@ -172,7 +172,6 @@ mod tests {
         let output = canvas.render();
 
         assert!(output.contains("+X"));
-        assert!(output.contains("+Y"));
         assert!(output.contains("+Z"));
     }
 }

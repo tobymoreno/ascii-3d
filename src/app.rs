@@ -20,6 +20,8 @@ use crate::{
     mesh::Mesh,
     obj::load_obj,
     projection::ObliqueProjector,
+    projection_config::{ProjectionConfig, load_projection_config},
+    scene_config::{Quad4SceneConfig, load_quad4_scene_config},
     scenes::{
         RotationAxis, Scene, render_arbitrary_vector, render_asset_axes_rotation, render_axes,
         render_camera, render_camera_motion, render_camera_turntable, render_cross_negative_z,
@@ -101,6 +103,7 @@ impl AppState {
             Scene::AssetAxesRotateX
             | Scene::AssetAxesRotateY
             | Scene::AssetAxesRotateZ
+            | Scene::Quad4
             | Scene::CameraMotion
             | Scene::CameraTurntable
             | Scene::RotateAxesX
@@ -125,6 +128,8 @@ impl AppState {
 struct SceneAssets {
     box_mesh: Mesh,
     quad4_mesh: Mesh,
+    quad4_scene_config: Quad4SceneConfig,
+    projection_config: ProjectionConfig,
     cartesian_axes_mesh: Mesh,
     cartesian_axes_metadata: crate::axis_metadata::CartesianAxesMetadata,
 }
@@ -148,13 +153,24 @@ fn load_mesh_asset(filename: &str) -> io::Result<Mesh> {
 }
 
 fn load_scene_assets() -> io::Result<SceneAssets> {
+    let projection_config = load_projection_config(asset_path("projection.default.json"))?;
+
     let mut box_mesh = load_mesh_asset("box.obj")?;
 
     if !box_mesh.normalize_to_size(1.0) {
         return Err(io::Error::other("could not normalize assets/box.obj"));
     }
 
-    let quad4_mesh = load_mesh_asset("quad4.obj")?;
+    let quad4_scene_config = load_quad4_scene_config(asset_path("quad4.scene.json"))?;
+
+    if quad4_scene_config.mesh_asset != "quad4.obj" {
+        return Err(io::Error::other(format!(
+            "quad4.scene.json references unexpected mesh asset '{}'",
+            quad4_scene_config.mesh_asset,
+        )));
+    }
+
+    let quad4_mesh = load_mesh_asset(&quad4_scene_config.mesh_asset)?;
 
     if quad4_mesh.vertices.len() != 4 {
         return Err(io::Error::other(format!(
@@ -197,14 +213,25 @@ fn load_scene_assets() -> io::Result<SceneAssets> {
     Ok(SceneAssets {
         box_mesh,
         quad4_mesh,
+        quad4_scene_config,
+        projection_config,
         cartesian_axes_mesh,
         cartesian_axes_metadata,
     })
 }
 
+fn projector_from_config(config: &ProjectionConfig) -> ObliqueProjector {
+    ObliqueProjector::from_axis_vectors(
+        Point2::new(config.screen_origin[0], config.screen_origin[1]),
+        config.axis_vectors.x,
+        config.axis_vectors.y,
+        config.axis_vectors.z,
+    )
+}
+
 fn render_scene(state: &AppState, assets: &SceneAssets) -> io::Result<()> {
     let mut canvas = Canvas::new(CANVAS_WIDTH, CANVAS_HEIGHT);
-    let projector = ObliqueProjector::new(Point2::new(34, 14));
+    let projector = projector_from_config(&assets.projection_config);
 
     match state.current_scene() {
         Scene::AssetAxesRotateX => {
@@ -247,6 +274,8 @@ fn render_scene(state: &AppState, assets: &SceneAssets) -> io::Result<()> {
                 &assets.quad4_mesh,
                 &assets.cartesian_axes_mesh,
                 &assets.cartesian_axes_metadata,
+                &assets.quad4_scene_config,
+                state.animation_angle_degrees,
             )?;
         }
 
@@ -433,6 +462,16 @@ mod tests {
     #[test]
     fn quad4_asset_exists() {
         assert!(asset_path("quad4.obj").is_file());
+    }
+
+    #[test]
+    fn quad4_scene_config_exists() {
+        assert!(asset_path("quad4.scene.json").is_file());
+    }
+
+    #[test]
+    fn projection_config_exists() {
+        assert!(asset_path("projection.default.json").is_file());
     }
 
     #[test]

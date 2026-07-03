@@ -1,6 +1,11 @@
 use std::{error::Error, fmt};
 
-use crate::{canvas::Canvas, math::Vec3, mesh::Mesh, projection::ObliqueProjector};
+use crate::{
+    canvas::Canvas,
+    math::{Mat4, Vec3},
+    mesh::Mesh,
+    projection::ObliqueProjector,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct MeshTransform {
@@ -24,13 +29,16 @@ impl Default for MeshTransform {
 }
 
 impl MeshTransform {
-    pub fn transform_vertex(self, vertex: Vec3) -> Vec3 {
-        let rotated = vertex
-            .rotate_x(self.rotation_x)
-            .rotate_y(self.rotation_y)
-            .rotate_z(self.rotation_z);
+    pub fn model_matrix(self) -> Mat4 {
+        Mat4::translation_vec3(self.translation)
+            * Mat4::rotation_z(self.rotation_z)
+            * Mat4::rotation_y(self.rotation_y)
+            * Mat4::rotation_x(self.rotation_x)
+            * Mat4::uniform_scale(self.scale)
+    }
 
-        rotated * self.scale + self.translation
+    pub fn transform_vertex(self, vertex: Vec3) -> Vec3 {
+        self.model_matrix().transform_point(vertex)
     }
 }
 
@@ -52,22 +60,33 @@ impl fmt::Display for MeshRenderError {
 
 impl Error for MeshRenderError {}
 
-/// Draws every unique edge exposed by the mesh.
-///
-/// Polygon faces contribute their closed boundary edges. Explicit OBJ
-/// `l` records are converted by the loader into two-point primitives and
-/// therefore pass through this same rendering path.
+/// Draws every unique edge exposed by the mesh using a conventional
+/// scale/rotation/translation transform.
 pub fn draw_wireframe(
     canvas: &mut Canvas,
     projector: &ObliqueProjector,
     mesh: &Mesh,
     transform: MeshTransform,
 ) -> Result<(), MeshRenderError> {
+    draw_wireframe_matrix(canvas, projector, mesh, transform.model_matrix())
+}
+
+/// Draws every unique edge exposed by the mesh using an arbitrary model matrix.
+///
+/// This is useful for parent-child transforms such as:
+///
+/// `camera_world * near_plane_local`
+pub fn draw_wireframe_matrix(
+    canvas: &mut Canvas,
+    projector: &ObliqueProjector,
+    mesh: &Mesh,
+    model_matrix: Mat4,
+) -> Result<(), MeshRenderError> {
     let transformed_vertices: Vec<Vec3> = mesh
         .vertices
         .iter()
         .copied()
-        .map(|vertex| transform.transform_vertex(vertex))
+        .map(|vertex| model_matrix.transform_point(vertex))
         .collect();
 
     for (start_index, end_index) in mesh.unique_edges() {
@@ -96,18 +115,22 @@ pub fn draw_wireframe(
 #[cfg(test)]
 mod tests {
     use super::MeshTransform;
-    use crate::math::Vec3;
+    use crate::math::{Mat4, Vec3};
+
+    const EPSILON: f32 = 0.000_01;
+
+    fn assert_vec3_close(actual: Vec3, expected: Vec3) {
+        assert!((actual.x - expected.x).abs() <= EPSILON);
+        assert!((actual.y - expected.y).abs() <= EPSILON);
+        assert!((actual.z - expected.z).abs() <= EPSILON);
+    }
 
     #[test]
     fn default_transform_leaves_vertex_unchanged() {
         let vertex = Vec3::new(1.0, 2.0, 3.0);
         let transformed = MeshTransform::default().transform_vertex(vertex);
 
-        assert!((transformed.x - vertex.x).abs() <= f32::EPSILON);
-
-        assert!((transformed.y - vertex.y).abs() <= f32::EPSILON);
-
-        assert!((transformed.z - vertex.z).abs() <= f32::EPSILON);
+        assert_vec3_close(transformed, vertex);
     }
 
     #[test]
@@ -120,8 +143,16 @@ mod tests {
 
         let transformed = transform.transform_vertex(Vec3::new(1.0, 2.0, 3.0));
 
-        assert!((transformed.x - 12.0).abs() <= f32::EPSILON);
-        assert!((transformed.y - 24.0).abs() <= f32::EPSILON);
-        assert!((transformed.z - 36.0).abs() <= f32::EPSILON);
+        assert_vec3_close(transformed, Vec3::new(12.0, 24.0, 36.0));
+    }
+
+    #[test]
+    fn parent_child_matrix_rotates_local_translation_with_parent() {
+        let parent = Mat4::rotation_x(90.0_f32.to_radians());
+        let child = Mat4::translation(0.0, 0.0, -0.25);
+
+        let center = (parent * child).transform_point(Vec3::zero());
+
+        assert_vec3_close(center, Vec3::new(0.0, 0.25, 0.0));
     }
 }
