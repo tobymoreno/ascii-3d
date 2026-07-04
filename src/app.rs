@@ -16,8 +16,12 @@ use crossterm::{
 
 use crate::{
     canvas::{Canvas, ClipRect},
+    curves::CubicBezier3,
     geometry2d::Point2,
-    math::Vec3,
+    glyphs::{
+        GlyphAsset, GlyphMetadata, GlyphSegment, WordAsset, read_json, transform_matrix, vec3,
+    },
+    math::{Mat4, Vec3},
     mesh::Mesh,
     obj::load_obj,
     projection::ObliqueProjector,
@@ -34,7 +38,7 @@ use crate::{
 };
 
 const CANVAS_WIDTH: usize = 80;
-const CANVAS_HEIGHT: usize = 34;
+const CANVAS_HEIGHT: usize = 46;
 
 #[derive(Debug, Clone, Copy)]
 struct ViewportRect {
@@ -57,10 +61,10 @@ const CAMERA_VIEWPORT: ViewportRect = ViewportRect {
     x: 0,
     y: 24,
     width: CANVAS_WIDTH,
-    height: 7,
+    height: 18,
 };
 
-const FOOTER_ROW: i32 = 32;
+const FOOTER_ROW: i32 = 43;
 
 const ROTATION_SPEED_DEGREES_PER_SECOND: f32 = 30.0;
 const FULL_ROTATION_DEGREES: f32 = 360.0;
@@ -94,6 +98,13 @@ impl Drop for TerminalGuard {
 }
 
 const CAMERA_MOVE_STEP: f32 = 0.10;
+
+const SINGLE_P_WORD_ASSET: &str = "assets/words/single_p.word.json";
+
+const P_WORD_WORLD_X: f32 = 0.35;
+const P_WORD_WORLD_Y: f32 = 0.10;
+const P_WORD_WORLD_Z: f32 = -1.80;
+const P_WORD_WORLD_SCALE: f32 = 1.35;
 
 fn vec3_cross(a: Vec3, b: Vec3) -> Vec3 {
     Vec3::new(
@@ -133,6 +144,16 @@ fn camera_forward_from_yaw_pitch(yaw_degrees: f32, pitch_degrees: f32) -> Vec3 {
     ))
 }
 
+fn yaw_pitch_toward(from: Vec3, to: Vec3) -> (f32, f32) {
+    let direction = vec3_normalize(Vec3::new(to.x - from.x, to.y - from.y, to.z - from.z));
+
+    let yaw_degrees = direction.x.atan2(direction.z).to_degrees();
+    let horizontal_length = (direction.x * direction.x + direction.z * direction.z).sqrt();
+    let pitch_degrees = direction.y.atan2(horizontal_length).to_degrees();
+
+    (yaw_degrees, pitch_degrees)
+}
+
 fn camera_right_from_forward(forward: Vec3) -> Vec3 {
     vec3_normalize(vec3_cross(Vec3::new(0.0, 1.0, 0.0), forward))
 }
@@ -166,15 +187,20 @@ struct AppState {
 
 impl AppState {
     fn new() -> Self {
+        let world_camera_position = Vec3::new(0.65, 0.55, 0.35);
+        let p_word_position = Vec3::new(P_WORD_WORLD_X, P_WORD_WORLD_Y, P_WORD_WORLD_Z);
+        let (world_camera_yaw_degrees, world_camera_pitch_degrees) =
+            yaw_pitch_toward(world_camera_position, p_word_position);
+
         Self {
             scene_position: 0,
             animation_angle_degrees: 0.0,
             box_angle_degrees: 0.0,
             glyph_stroke_index: DEFAULT_GLYPH_STROKE_INDEX,
             control_mode: ControlMode::Scene,
-            world_camera_position: Vec3::new(0.65, 0.55, 0.35),
-            world_camera_yaw_degrees: 0.0,
-            world_camera_pitch_degrees: 0.0,
+            world_camera_position,
+            world_camera_yaw_degrees,
+            world_camera_pitch_degrees,
         }
     }
 
@@ -405,32 +431,20 @@ fn projector_from_config(config: &ProjectionConfig) -> ObliqueProjector {
     )
 }
 
-fn write_full_frame(output: &mut impl Write, frame: &str) -> io::Result<()> {
-    execute!(output, MoveTo(0, 0))?;
-    write!(output, "{frame}")?;
-    output.flush()
-}
-
-fn write_diff_frame(
-    output: &mut impl Write,
-    previous_frame: Option<&str>,
-    current_frame: &str,
-) -> io::Result<()> {
-    let Some(previous_frame) = previous_frame else {
-        return write_full_frame(output, current_frame);
-    };
-
-    for (row_index, (previous_row, current_row)) in previous_frame
-        .split("\r\n")
-        .zip(current_frame.split("\r\n"))
+fn write_frame(output: &mut impl Write, frame: &str) -> io::Result<()> {
+    for (row_index, row) in frame
+        .split(
+            "
+",
+        )
         .enumerate()
     {
-        if previous_row == current_row {
-            continue;
-        }
-
-        execute!(output, MoveTo(0, row_index as u16))?;
-        write!(output, "{current_row}")?;
+        execute!(
+            output,
+            MoveTo(0, row_index as u16),
+            Clear(ClearType::CurrentLine)
+        )?;
+        write!(output, "{row}")?;
     }
 
     output.flush()
@@ -444,7 +458,155 @@ fn draw_horizontal_span(canvas: &mut Canvas, y: i32, character: char) {
     );
 }
 
-fn draw_camera_viewport_placeholder(canvas: &mut Canvas, state: &AppState) {
+fn camera_viewport_content_rect() -> ClipRect {
+    // Protect the title row and status row inside the viewport.
+    //
+    // Layout:
+    //   top border
+    //   title row
+    //   camera-render content rows
+    //   status row
+    //   bottom border
+    ClipRect {
+        x: CAMERA_VIEWPORT.x + 1,
+        y: CAMERA_VIEWPORT.y + 2,
+        width: CAMERA_VIEWPORT.width.saturating_sub(2),
+        height: CAMERA_VIEWPORT.height.saturating_sub(4),
+    }
+}
+
+fn project_camera_space_to_viewport(camera_space: Vec3, inner: ClipRect) -> Option<Point2> {
+    // Mat4::look_at uses the conventional right-handed camera space:
+    // +X = camera right, +Y = camera up, and camera forward points along -Z.
+    if camera_space.z >= -0.01 {
+        return None;
+    }
+
+    let center_x = inner.x + inner.width as i32 / 2;
+    let center_y = inner.y + inner.height as i32 / 2;
+    let depth = -camera_space.z;
+
+    let perspective = 22.0 / depth;
+    let screen_x = center_x + (camera_space.x * perspective).round() as i32;
+    let screen_y = center_y - (camera_space.y * perspective).round() as i32;
+
+    Some(Point2::new(screen_x, screen_y))
+}
+
+fn world_to_camera_space(state: &AppState, point: Vec3) -> Option<Vec3> {
+    let forward = camera_forward_from_yaw_pitch(
+        state.world_camera_yaw_degrees,
+        state.world_camera_pitch_degrees,
+    );
+
+    let target = state.world_camera_position + forward;
+
+    Mat4::look_at(
+        state.world_camera_position,
+        target,
+        Vec3::new(0.0, 1.0, 0.0),
+    )
+    .map(|view| view.transform_point(point))
+}
+
+fn draw_camera_viewport_line(
+    canvas: &mut Canvas,
+    state: &AppState,
+    inner: ClipRect,
+    from_world: Vec3,
+    to_world: Vec3,
+    character: char,
+) {
+    let Some(from_camera) = world_to_camera_space(state, from_world) else {
+        return;
+    };
+    let Some(to_camera) = world_to_camera_space(state, to_world) else {
+        return;
+    };
+
+    let Some(from_screen) = project_camera_space_to_viewport(from_camera, inner) else {
+        return;
+    };
+    let Some(to_screen) = project_camera_space_to_viewport(to_camera, inner) else {
+        return;
+    };
+
+    canvas.draw_line(from_screen, to_screen, character);
+}
+
+fn draw_single_p_in_camera_viewport(
+    canvas: &mut Canvas,
+    state: &AppState,
+    inner: ClipRect,
+    stroke_character: char,
+) -> io::Result<()> {
+    let word: WordAsset = read_json(SINGLE_P_WORD_ASSET)?;
+    let word_world = Mat4::translation(P_WORD_WORLD_X, P_WORD_WORLD_Y, P_WORD_WORLD_Z)
+        * Mat4::uniform_scale(P_WORD_WORLD_SCALE);
+
+    for child in &word.children {
+        let glyph: GlyphAsset = read_json(&child.glyph_asset)?;
+        let glyph_metadata: GlyphMetadata = read_json(&child.metadata_asset)?;
+        let child_world = word_world * transform_matrix(child.local_transform);
+        let display = &glyph_metadata.display;
+        let stroke_character = if display.show_strokes {
+            stroke_character
+        } else {
+            display.stroke_character
+        };
+
+        for path in &glyph.paths {
+            for segment in &path.segments {
+                match segment {
+                    GlyphSegment::Line { from, to } => {
+                        if !display.show_strokes {
+                            continue;
+                        }
+
+                        let from_world = child_world.transform_point(vec3(*from));
+                        let to_world = child_world.transform_point(vec3(*to));
+
+                        draw_camera_viewport_line(
+                            canvas,
+                            state,
+                            inner,
+                            from_world,
+                            to_world,
+                            stroke_character,
+                        );
+                    }
+
+                    GlyphSegment::CubicBezier { p0, p1, p2, p3 } => {
+                        if !display.show_strokes {
+                            continue;
+                        }
+
+                        let curve = CubicBezier3::new(vec3(*p0), vec3(*p1), vec3(*p2), vec3(*p3));
+                        let sampled = curve.sample(glyph.sampling.default_segments_per_curve);
+
+                        for (start, end) in sampled.line_segments() {
+                            let start_world = child_world.transform_point(start);
+                            let end_world = child_world.transform_point(end);
+
+                            draw_camera_viewport_line(
+                                canvas,
+                                state,
+                                inner,
+                                start_world,
+                                end_world,
+                                stroke_character,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn draw_camera_viewport(canvas: &mut Canvas, state: &AppState) -> io::Result<()> {
     let left = CAMERA_VIEWPORT.x;
     let right = CAMERA_VIEWPORT.x + CAMERA_VIEWPORT.width as i32 - 1;
     let top = CAMERA_VIEWPORT.y;
@@ -462,10 +624,16 @@ fn draw_camera_viewport_placeholder(canvas: &mut Canvas, state: &AppState) {
     canvas.set(Point2::new(right, bottom), '+');
 
     canvas.draw_text(Point2::new(left + 2, top + 1), "Camera3D viewport");
+
+    let inner = camera_viewport_content_rect();
+    canvas.with_clip_rect(inner, |canvas| {
+        draw_single_p_in_camera_viewport(canvas, state, inner, state.glyph_stroke_character())
+    })?;
+
     canvas.draw_text(
-        Point2::new(left + 2, top + 4),
+        Point2::new(left + 2, bottom - 1),
         &format!(
-            "placeholder | pos [{:.2}, {:.2}, {:.2}] | yaw {:.1} pitch {:.1}",
+            "pos [{:.2},{:.2},{:.2}] yaw {:.1} pitch {:.1}",
             state.world_camera_position.x,
             state.world_camera_position.y,
             state.world_camera_position.z,
@@ -473,10 +641,8 @@ fn draw_camera_viewport_placeholder(canvas: &mut Canvas, state: &AppState) {
             state.world_camera_pitch_degrees,
         ),
     );
-    canvas.draw_text(
-        Point2::new(left + 2, top + 3),
-        "next: render actual Camera3D projection into this clipped region",
-    );
+
+    Ok(())
 }
 
 fn render_scene_frame(state: &AppState, assets: &SceneAssets) -> io::Result<String> {
@@ -645,19 +811,16 @@ fn render_scene_frame(state: &AppState, assets: &SceneAssets) -> io::Result<Stri
 
     canvas.draw_text(Point2::new(2, HEADER_ROW), "Scene: WorldSpace3D + Camera3D");
 
-    draw_camera_viewport_placeholder(&mut canvas, state);
+    draw_camera_viewport(&mut canvas, state)?;
 
     canvas.draw_text(
         Point2::new(2, FOOTER_ROW),
         &format!(
-            "[Scene {}/{}] {} | Mode: {} | Glyph '{}' [{}/{}] | Tab: mode | Scene: Space/Backspace/Left/Right | Camera: W/S z, A/D x, Q/E world-Y, Arrows rotate | Esc: quit",
+            "[{}/{}] world+Camera3D | Mode: {} | Glyph '{}' | Tab mode | R reset | Esc quit",
             state.scene_position + 1,
             Scene::ALL.len(),
-            state.current_scene().title(),
             state.control_mode.label(),
             state.glyph_stroke_character(),
-            state.glyph_stroke_position(),
-            state.glyph_stroke_character_count(),
         ),
     );
 
@@ -672,7 +835,7 @@ fn render_scene(
     let frame = render_scene_frame(state, assets)?;
 
     let mut output = stdout();
-    write_diff_frame(&mut output, previous_frame.as_deref(), &frame)?;
+    write_frame(&mut output, &frame)?;
 
     *previous_frame = Some(frame);
 
