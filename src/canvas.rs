@@ -9,7 +9,7 @@ pub struct ClipRect {
 }
 
 impl ClipRect {
-    fn contains(self, point: Point2) -> bool {
+    pub fn contains(self, point: Point2) -> bool {
         let right = self.x + self.width as i32;
         let bottom = self.y + self.height as i32;
 
