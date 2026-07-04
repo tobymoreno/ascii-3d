@@ -390,6 +390,7 @@ fn render_scene(state: &AppState, assets: &SceneAssets) -> io::Result<()> {
                 state.world_camera_position,
                 state.world_camera_yaw_degrees,
                 state.world_camera_pitch_degrees,
+                Some(state.glyph_stroke_character()),
             )?;
         }
 

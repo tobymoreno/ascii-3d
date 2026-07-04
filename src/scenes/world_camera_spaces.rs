@@ -8,7 +8,8 @@ use crate::{
     camera3d::{Camera3D, CameraProjection},
     canvas::Canvas,
     geometry2d::Point2,
-    math::Vec3,
+    glyphs::{WordAsset, WordMetadata, read_json, render_word_with_stroke_character},
+    math::{Mat4, Vec3},
     mesh::Mesh,
     mesh_renderer::MeshTransform,
     obj::load_obj,
@@ -22,15 +23,23 @@ use super::render_asset_axes;
 const PROJECTION_ASSET: &str = "assets/projections/plan_xy.projection.json";
 const AXES_ASSET: &str = "assets/cartesian_axes.obj";
 const AXES_METADATA_ASSET: &str = "assets/cartesian_axes.json";
+const SINGLE_P_WORD_ASSET: &str = "assets/words/single_p.word.json";
+const SINGLE_P_WORD_METADATA_ASSET: &str = "assets/words/single_p.metadata.json";
 
-const WORLD_AXES_SCALE: f32 = 2.0;
+const WORLD_AXES_SCALE: f32 = 2.8;
 const CAMERA_GIZMO_SCREEN_LEG: f32 = 3.0;
 
 // Screen-only framing for the debug/world view.
 // This does not change 3D world coordinates. It only moves the projected
 // universe on the terminal so +X has more visible room.
 const WORLD_DEBUG_SCREEN_OFFSET_X: i32 = -18;
-const WORLD_DEBUG_SCREEN_OFFSET_Y: i32 = 0;
+const WORLD_DEBUG_SCREEN_OFFSET_Y: i32 = 8;
+
+// World placement for the actual P object.
+const P_WORD_WORLD_X: f32 = 0.35;
+const P_WORD_WORLD_Y: f32 = 0.10;
+const P_WORD_WORLD_Z: f32 = -1.80;
+const P_WORD_WORLD_SCALE: f32 = 1.35;
 
 fn asset_path(relative_path: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(relative_path)
@@ -62,6 +71,39 @@ fn load_projector() -> io::Result<ObliqueProjector> {
     ))
 }
 
+fn load_single_p_word_assets() -> io::Result<(WordAsset, WordMetadata)> {
+    let word: WordAsset = read_json(SINGLE_P_WORD_ASSET)?;
+    let metadata: WordMetadata = read_json(SINGLE_P_WORD_METADATA_ASSET)?;
+
+    Ok((word, metadata))
+}
+
+fn vec3_subtract(a: Vec3, b: Vec3) -> Vec3 {
+    Vec3::new(a.x - b.x, a.y - b.y, a.z - b.z)
+}
+
+fn vec3_cross(a: Vec3, b: Vec3) -> Vec3 {
+    Vec3::new(
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x,
+    )
+}
+
+fn vec3_length(value: Vec3) -> f32 {
+    (value.x * value.x + value.y * value.y + value.z * value.z).sqrt()
+}
+
+fn vec3_normalize(value: Vec3) -> Vec3 {
+    let length = vec3_length(value);
+
+    if length <= f32::EPSILON {
+        Vec3::zero()
+    } else {
+        Vec3::new(value.x / length, value.y / length, value.z / length)
+    }
+}
+
 fn camera_direction_from_yaw_pitch(yaw_degrees: f32, pitch_degrees: f32) -> Vec3 {
     let yaw = yaw_degrees.to_radians();
     let pitch = pitch_degrees.to_radians();
@@ -90,32 +132,6 @@ fn camera_for_debug(position: Vec3, yaw_degrees: f32, pitch_degrees: f32) -> Cam
         0.1,
         100.0,
     )
-}
-
-fn vec3_subtract(a: Vec3, b: Vec3) -> Vec3 {
-    Vec3::new(a.x - b.x, a.y - b.y, a.z - b.z)
-}
-
-fn vec3_cross(a: Vec3, b: Vec3) -> Vec3 {
-    Vec3::new(
-        a.y * b.z - a.z * b.y,
-        a.z * b.x - a.x * b.z,
-        a.x * b.y - a.y * b.x,
-    )
-}
-
-fn vec3_length(value: Vec3) -> f32 {
-    (value.x * value.x + value.y * value.y + value.z * value.z).sqrt()
-}
-
-fn vec3_normalize(value: Vec3) -> Vec3 {
-    let length = vec3_length(value);
-
-    if length <= f32::EPSILON {
-        Vec3::zero()
-    } else {
-        Vec3::new(value.x / length, value.y / length, value.z / length)
-    }
 }
 
 fn fixed_screen_direction(
@@ -161,8 +177,6 @@ fn draw_world_axes(
 fn draw_camera_gizmo(canvas: &mut Canvas, projector: &ObliqueProjector, camera: Camera3D) {
     let origin_world = camera.position;
 
-    // Orientation comes from Camera3D vectors.
-    // The leg length below is fixed in terminal cells, not world units.
     let z_direction = vec3_normalize(vec3_subtract(camera.target, camera.position));
     let x_direction = vec3_normalize(vec3_cross(camera.up, z_direction));
     let y_direction = vec3_normalize(vec3_cross(z_direction, x_direction));
@@ -182,23 +196,48 @@ fn draw_camera_gizmo(canvas: &mut Canvas, projector: &ObliqueProjector, camera: 
     canvas.set(z_2d, 'z');
 }
 
+fn draw_single_p_in_world(
+    canvas: &mut Canvas,
+    projector: &ObliqueProjector,
+    stroke_character: Option<char>,
+) -> io::Result<()> {
+    let (word, metadata) = load_single_p_word_assets()?;
+
+    let word_world = Mat4::translation(P_WORD_WORLD_X, P_WORD_WORLD_Y, P_WORD_WORLD_Z)
+        * Mat4::uniform_scale(P_WORD_WORLD_SCALE);
+
+    render_word_with_stroke_character(
+        canvas,
+        projector,
+        &word,
+        &metadata,
+        word_world,
+        stroke_character,
+    )?;
+
+    Ok(())
+}
+
 fn draw_metadata(
     canvas: &mut Canvas,
     world: WorldSpace3D,
     camera: Camera3D,
     yaw_degrees: f32,
     pitch_degrees: f32,
+    stroke_character: Option<char>,
 ) {
+    let stroke = stroke_character.unwrap_or('*');
+
     canvas.draw_text(
         Point2::new(2, 1),
-        "Scene: WorldSpace3D axes with small Camera3D xyz gizmo",
+        "Scene: WorldSpace3D axes with camera gizmo and real single_p asset",
     );
     canvas.draw_text(
         Point2::new(2, 2),
-        "Big XYZ = world axes shifted left for +X room. Small */x/y/z = fixed-size camera gizmo.",
+        "Big XYZ = world axes reframed for camera/object space. Small */x/y/z = camera gizmo.",
     );
     canvas.draw_text(
-        Point2::new(2, 25),
+        Point2::new(2, 24),
         &format!(
             "world axis_length {:.1} | camera pos [{:.2}, {:.2}, {:.2}] | yaw {:.1} pitch {:.1}",
             world.axis_length,
@@ -210,8 +249,15 @@ fn draw_metadata(
         ),
     );
     canvas.draw_text(
+        Point2::new(2, 25),
+        &format!(
+            "single_p at [{:.2}, {:.2}, {:.2}] scale {:.2} | stroke '{}'",
+            P_WORD_WORLD_X, P_WORD_WORLD_Y, P_WORD_WORLD_Z, P_WORD_WORLD_SCALE, stroke
+        ),
+    );
+    canvas.draw_text(
         Point2::new(2, 26),
-        "Camera gizmo uses an orthogonal x/y/z basis; legs stay fixed screen length.",
+        "Camera gizmo uses an orthogonal x/y/z basis; P is a real world-space word object.",
     );
 }
 
@@ -220,6 +266,7 @@ pub fn render(
     camera_position: Vec3,
     camera_yaw_degrees: f32,
     camera_pitch_degrees: f32,
+    stroke_character: Option<char>,
 ) -> io::Result<()> {
     let world = WorldSpace3D::default_world();
     let camera = camera_for_debug(camera_position, camera_yaw_degrees, camera_pitch_degrees);
@@ -234,8 +281,10 @@ pub fn render(
         camera,
         camera_yaw_degrees,
         camera_pitch_degrees,
+        stroke_character,
     );
     draw_world_axes(canvas, &projector, &axes_mesh, &axes_metadata)?;
+    draw_single_p_in_world(canvas, &projector, stroke_character)?;
     draw_camera_gizmo(canvas, &projector, camera);
 
     Ok(())
@@ -244,9 +293,17 @@ pub fn render(
 #[cfg(test)]
 mod tests {
     use super::{
-        CAMERA_GIZMO_SCREEN_LEG, camera_for_debug, vec3_length, vec3_normalize, vec3_subtract,
+        CAMERA_GIZMO_SCREEN_LEG, camera_for_debug, vec3_cross, vec3_length, vec3_normalize,
+        vec3_subtract,
     };
-    use crate::math::Vec3;
+    use crate::{
+        glyphs::{WordAsset, read_json},
+        math::Vec3,
+    };
+
+    fn vec3_dot(a: Vec3, b: Vec3) -> f32 {
+        a.x * b.x + a.y * b.y + a.z * b.z
+    }
 
     #[test]
     fn camera_debug_target_defines_a_direction() {
@@ -267,10 +324,6 @@ mod tests {
         let direction = vec3_normalize(vec3_subtract(camera.target, camera.position));
 
         assert!((vec3_length(direction) - 1.0).abs() < 0.000_01);
-    }
-
-    fn vec3_dot(a: Vec3, b: Vec3) -> f32 {
-        a.x * b.x + a.y * b.y + a.z * b.z
     }
 
     #[test]
@@ -297,5 +350,13 @@ mod tests {
         assert!(vec3_dot(x, y).abs() < 0.000_01);
         assert!(vec3_dot(y, z).abs() < 0.000_01);
         assert!(vec3_dot(z, x).abs() < 0.000_01);
+    }
+
+    #[test]
+    fn single_p_word_asset_loads() {
+        let word: WordAsset =
+            read_json("assets/words/single_p.word.json").expect("single_p word asset should load");
+
+        assert_eq!(word.children.len(), 1);
     }
 }
