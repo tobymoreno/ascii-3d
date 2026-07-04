@@ -34,7 +34,7 @@ use crate::{
 };
 
 const CANVAS_WIDTH: usize = 80;
-const CANVAS_HEIGHT: usize = 28;
+const CANVAS_HEIGHT: usize = 34;
 
 #[derive(Debug, Clone, Copy)]
 struct ViewportRect {
@@ -44,21 +44,23 @@ struct ViewportRect {
     height: usize,
 }
 
+const HEADER_ROW: i32 = 1;
+
 const WORLD_DEBUG_VIEWPORT: ClipRect = ClipRect {
     x: 0,
-    y: 0,
+    y: 2,
     width: CANVAS_WIDTH,
-    height: 20,
+    height: 22,
 };
 
 const CAMERA_VIEWPORT: ViewportRect = ViewportRect {
     x: 0,
-    y: 20,
+    y: 24,
     width: CANVAS_WIDTH,
-    height: 6,
+    height: 7,
 };
 
-const FOOTER_ROW: i32 = 27;
+const FOOTER_ROW: i32 = 32;
 
 const ROTATION_SPEED_DEGREES_PER_SECOND: f32 = 30.0;
 const FULL_ROTATION_DEGREES: f32 = 360.0;
@@ -459,9 +461,9 @@ fn draw_camera_viewport_placeholder(canvas: &mut Canvas, state: &AppState) {
     canvas.set(Point2::new(left, bottom), '+');
     canvas.set(Point2::new(right, bottom), '+');
 
-    canvas.draw_text(Point2::new(left + 2, top), " Camera3D viewport ");
+    canvas.draw_text(Point2::new(left + 2, top + 1), "Camera3D viewport");
     canvas.draw_text(
-        Point2::new(left + 2, top + 2),
+        Point2::new(left + 2, top + 4),
         &format!(
             "placeholder | pos [{:.2}, {:.2}, {:.2}] | yaw {:.1} pitch {:.1}",
             state.world_camera_position.x,
@@ -483,7 +485,7 @@ fn render_scene_frame(state: &AppState, assets: &SceneAssets) -> io::Result<Stri
 
     match state.current_scene() {
         Scene::WorldCameraSpaces => {
-            canvas.with_clip_rect(WORLD_DEBUG_VIEWPORT, |canvas| {
+            canvas.with_viewport(WORLD_DEBUG_VIEWPORT, |canvas| {
                 render_world_camera_spaces(
                     canvas,
                     state.world_camera_position,
@@ -640,6 +642,8 @@ fn render_scene_frame(state: &AppState, assets: &SceneAssets) -> io::Result<Stri
             render_axes(&mut canvas, &projector);
         }
     }
+
+    canvas.draw_text(Point2::new(2, HEADER_ROW), "Scene: WorldSpace3D + Camera3D");
 
     draw_camera_viewport_placeholder(&mut canvas, state);
 

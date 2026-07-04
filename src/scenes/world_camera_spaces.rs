@@ -18,8 +18,6 @@ use crate::{
     world_space::WorldSpace3D,
 };
 
-use super::render_asset_axes;
-
 const PROJECTION_ASSET: &str = "assets/projections/plan_xy.projection.json";
 const AXES_ASSET: &str = "assets/cartesian_axes.obj";
 const AXES_METADATA_ASSET: &str = "assets/cartesian_axes.json";
@@ -33,7 +31,7 @@ const CAMERA_GIZMO_SCREEN_LEG: f32 = 3.0;
 // This does not change 3D world coordinates. It only moves the projected
 // universe on the terminal so +X has more visible room.
 const WORLD_DEBUG_SCREEN_OFFSET_X: i32 = -18;
-const WORLD_DEBUG_SCREEN_OFFSET_Y: i32 = 8;
+const WORLD_DEBUG_SCREEN_OFFSET_Y: i32 = 6;
 
 // World placement for the actual P object.
 const P_WORD_WORLD_X: f32 = 0.35;
@@ -160,10 +158,40 @@ fn fixed_screen_direction(
     }
 }
 
+fn vec3_from_array(values: [f32; 3]) -> Vec3 {
+    Vec3::new(values[0], values[1], values[2])
+}
+
+fn draw_axis_line(
+    canvas: &mut Canvas,
+    projector: &ObliqueProjector,
+    transform: MeshTransform,
+    from: Vec3,
+    to: Vec3,
+    character: char,
+) -> Point2 {
+    let from_screen = projector.project(transform.transform_vertex(from));
+    let to_screen = projector.project(transform.transform_vertex(to));
+
+    canvas.draw_line(from_screen, to_screen, character);
+
+    to_screen
+}
+
+fn world_axis_label_position(axis_id: &str, endpoint_screen: Point2, negative: bool) -> Point2 {
+    match (axis_id, negative) {
+        ("x", false) => Point2::new(endpoint_screen.x + 1, endpoint_screen.y),
+        ("y", false) => Point2::new(endpoint_screen.x - 1, endpoint_screen.y - 1),
+        ("z", false) => Point2::new(endpoint_screen.x - 2, endpoint_screen.y),
+        ("z", true) => Point2::new(endpoint_screen.x + 1, endpoint_screen.y),
+        _ => Point2::new(endpoint_screen.x + 1, endpoint_screen.y),
+    }
+}
+
 fn draw_world_axes(
     canvas: &mut Canvas,
     projector: &ObliqueProjector,
-    axes_mesh: &Mesh,
+    _axes_mesh: &Mesh,
     axes_metadata: &CartesianAxesMetadata,
 ) -> io::Result<()> {
     let transform = MeshTransform {
@@ -171,7 +199,61 @@ fn draw_world_axes(
         ..MeshTransform::default()
     };
 
-    render_asset_axes(canvas, projector, axes_mesh, axes_metadata, transform)
+    let origin = vec3_from_array(axes_metadata.origin.position);
+
+    for axis in &axes_metadata.axes {
+        let positive_endpoint = vec3_from_array(axis.positive_endpoint);
+
+        let character = match axis.id.as_str() {
+            "x" => '-',
+            "y" => '|',
+            "z" => '/',
+            _ => '.',
+        };
+
+        let positive_endpoint_screen = draw_axis_line(
+            canvas,
+            projector,
+            transform,
+            origin,
+            positive_endpoint,
+            character,
+        );
+
+        if axes_metadata.display.show_positive_labels {
+            let label_screen =
+                world_axis_label_position(axis.id.as_str(), positive_endpoint_screen, false);
+            canvas.draw_text(label_screen, &axis.positive_label);
+        }
+
+        if axes_metadata.display.show_negative_labels && !axis.negative_label.trim().is_empty() {
+            let negative_endpoint = Vec3::new(
+                origin.x - positive_endpoint.x,
+                origin.y - positive_endpoint.y,
+                origin.z - positive_endpoint.z,
+            );
+
+            let negative_endpoint_screen = draw_axis_line(
+                canvas,
+                projector,
+                transform,
+                origin,
+                negative_endpoint,
+                character,
+            );
+
+            let label_screen =
+                world_axis_label_position(axis.id.as_str(), negative_endpoint_screen, true);
+            canvas.draw_text(label_screen, &axis.negative_label);
+        }
+    }
+
+    if axes_metadata.display.show_origin {
+        let origin_screen = projector.project(transform.transform_vertex(origin));
+        canvas.set(origin_screen, 'O');
+    }
+
+    Ok(())
 }
 
 fn draw_camera_gizmo(canvas: &mut Canvas, projector: &ObliqueProjector, camera: Camera3D) {
@@ -219,46 +301,13 @@ fn draw_single_p_in_world(
 }
 
 fn draw_metadata(
-    canvas: &mut Canvas,
-    world: WorldSpace3D,
-    camera: Camera3D,
-    yaw_degrees: f32,
-    pitch_degrees: f32,
-    stroke_character: Option<char>,
+    _canvas: &mut Canvas,
+    _world: WorldSpace3D,
+    _camera: Camera3D,
+    _yaw_degrees: f32,
+    _pitch_degrees: f32,
+    _stroke_character: Option<char>,
 ) {
-    let stroke = stroke_character.unwrap_or('*');
-
-    canvas.draw_text(
-        Point2::new(2, 1),
-        "Scene: WorldSpace3D axes with camera gizmo and real single_p asset",
-    );
-    canvas.draw_text(
-        Point2::new(2, 2),
-        "Big XYZ = world axes reframed for camera/object space. Small */x/y/z = camera gizmo.",
-    );
-    canvas.draw_text(
-        Point2::new(2, 3),
-        &format!(
-            "world axis_length {:.1} | camera pos [{:.2}, {:.2}, {:.2}] | yaw {:.1} pitch {:.1}",
-            world.axis_length,
-            camera.position.x,
-            camera.position.y,
-            camera.position.z,
-            yaw_degrees,
-            pitch_degrees
-        ),
-    );
-    canvas.draw_text(
-        Point2::new(2, 4),
-        &format!(
-            "single_p at [{:.2}, {:.2}, {:.2}] scale {:.2} | stroke '{}'",
-            P_WORD_WORLD_X, P_WORD_WORLD_Y, P_WORD_WORLD_Z, P_WORD_WORLD_SCALE, stroke
-        ),
-    );
-    canvas.draw_text(
-        Point2::new(2, 5),
-        "Camera gizmo uses an orthogonal x/y/z basis; P is a real world-space word object.",
-    );
 }
 
 pub fn render(

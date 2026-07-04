@@ -21,6 +21,7 @@ pub struct Canvas {
     width: usize,
     height: usize,
     clip_rect: Option<ClipRect>,
+    origin_offset: Point2,
     cells: Vec<char>,
 }
 
@@ -30,6 +31,7 @@ impl Canvas {
             width,
             height,
             clip_rect: None,
+            origin_offset: Point2::new(0, 0),
             cells: vec![' '; width * height],
         }
     }
@@ -52,7 +54,30 @@ impl Canvas {
         result
     }
 
+    pub fn with_viewport<R>(&mut self, viewport: ClipRect, draw: impl FnOnce(&mut Self) -> R) -> R {
+        let previous_clip_rect = self.clip_rect;
+        let previous_origin_offset = self.origin_offset;
+
+        self.clip_rect = Some(viewport);
+        self.origin_offset = Point2::new(
+            previous_origin_offset.x + viewport.x,
+            previous_origin_offset.y + viewport.y,
+        );
+
+        let result = draw(self);
+
+        self.origin_offset = previous_origin_offset;
+        self.clip_rect = previous_clip_rect;
+
+        result
+    }
+
     pub fn set(&mut self, point: Point2, character: char) {
+        let point = Point2::new(
+            point.x + self.origin_offset.x,
+            point.y + self.origin_offset.y,
+        );
+
         if let Some(clip_rect) = self.clip_rect {
             if !clip_rect.contains(point) {
                 return;
