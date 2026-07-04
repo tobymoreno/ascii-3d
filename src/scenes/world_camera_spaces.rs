@@ -237,7 +237,7 @@ fn draw_metadata(
         "Big XYZ = world axes reframed for camera/object space. Small */x/y/z = camera gizmo.",
     );
     canvas.draw_text(
-        Point2::new(2, 24),
+        Point2::new(2, 3),
         &format!(
             "world axis_length {:.1} | camera pos [{:.2}, {:.2}, {:.2}] | yaw {:.1} pitch {:.1}",
             world.axis_length,
@@ -249,14 +249,14 @@ fn draw_metadata(
         ),
     );
     canvas.draw_text(
-        Point2::new(2, 25),
+        Point2::new(2, 4),
         &format!(
             "single_p at [{:.2}, {:.2}, {:.2}] scale {:.2} | stroke '{}'",
             P_WORD_WORLD_X, P_WORD_WORLD_Y, P_WORD_WORLD_Z, P_WORD_WORLD_SCALE, stroke
         ),
     );
     canvas.draw_text(
-        Point2::new(2, 26),
+        Point2::new(2, 5),
         "Camera gizmo uses an orthogonal x/y/z basis; P is a real world-space word object.",
     );
 }

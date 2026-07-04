@@ -1,8 +1,26 @@
 use crate::geometry2d::Point2;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClipRect {
+    pub x: i32,
+    pub y: i32,
+    pub width: usize,
+    pub height: usize,
+}
+
+impl ClipRect {
+    fn contains(self, point: Point2) -> bool {
+        let right = self.x + self.width as i32;
+        let bottom = self.y + self.height as i32;
+
+        point.x >= self.x && point.x < right && point.y >= self.y && point.y < bottom
+    }
+}
+
 pub struct Canvas {
     width: usize,
     height: usize,
+    clip_rect: Option<ClipRect>,
     cells: Vec<char>,
 }
 
@@ -11,6 +29,7 @@ impl Canvas {
         Self {
             width,
             height,
+            clip_rect: None,
             cells: vec![' '; width * height],
         }
     }
@@ -19,7 +38,27 @@ impl Canvas {
         self.cells.fill(' ');
     }
 
+    pub fn with_clip_rect<R>(
+        &mut self,
+        clip_rect: ClipRect,
+        draw: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let previous_clip_rect = self.clip_rect;
+
+        self.clip_rect = Some(clip_rect);
+        let result = draw(self);
+        self.clip_rect = previous_clip_rect;
+
+        result
+    }
+
     pub fn set(&mut self, point: Point2, character: char) {
+        if let Some(clip_rect) = self.clip_rect {
+            if !clip_rect.contains(point) {
+                return;
+            }
+        }
+
         if point.x < 0 || point.y < 0 {
             return;
         }
@@ -113,5 +152,38 @@ impl Canvas {
         }
 
         output
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Canvas, ClipRect};
+    use crate::geometry2d::Point2;
+
+    #[test]
+    fn clip_rect_prevents_drawing_outside_region() {
+        let mut canvas = Canvas::new(8, 4);
+
+        canvas.with_clip_rect(
+            ClipRect {
+                x: 2,
+                y: 1,
+                width: 3,
+                height: 2,
+            },
+            |canvas| {
+                canvas.set(Point2::new(1, 1), 'A');
+                canvas.set(Point2::new(2, 1), 'B');
+                canvas.set(Point2::new(4, 2), 'C');
+                canvas.set(Point2::new(5, 2), 'D');
+            },
+        );
+
+        let rendered = canvas.render();
+
+        assert!(!rendered.contains('A'));
+        assert!(rendered.contains('B'));
+        assert!(rendered.contains('C'));
+        assert!(!rendered.contains('D'));
     }
 }

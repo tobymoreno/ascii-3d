@@ -15,7 +15,7 @@ use crossterm::{
 };
 
 use crate::{
-    canvas::Canvas,
+    canvas::{Canvas, ClipRect},
     geometry2d::Point2,
     math::Vec3,
     mesh::Mesh,
@@ -35,6 +35,30 @@ use crate::{
 
 const CANVAS_WIDTH: usize = 80;
 const CANVAS_HEIGHT: usize = 28;
+
+#[derive(Debug, Clone, Copy)]
+struct ViewportRect {
+    x: i32,
+    y: i32,
+    width: usize,
+    height: usize,
+}
+
+const WORLD_DEBUG_VIEWPORT: ClipRect = ClipRect {
+    x: 0,
+    y: 0,
+    width: CANVAS_WIDTH,
+    height: 20,
+};
+
+const CAMERA_VIEWPORT: ViewportRect = ViewportRect {
+    x: 0,
+    y: 20,
+    width: CANVAS_WIDTH,
+    height: 6,
+};
+
+const FOOTER_ROW: i32 = 27;
 
 const ROTATION_SPEED_DEGREES_PER_SECOND: f32 = 30.0;
 const FULL_ROTATION_DEGREES: f32 = 360.0;
@@ -410,19 +434,64 @@ fn write_diff_frame(
     output.flush()
 }
 
+fn draw_horizontal_span(canvas: &mut Canvas, y: i32, character: char) {
+    canvas.draw_line(
+        Point2::new(CAMERA_VIEWPORT.x, y),
+        Point2::new(CAMERA_VIEWPORT.x + CAMERA_VIEWPORT.width as i32 - 1, y),
+        character,
+    );
+}
+
+fn draw_camera_viewport_placeholder(canvas: &mut Canvas, state: &AppState) {
+    let left = CAMERA_VIEWPORT.x;
+    let right = CAMERA_VIEWPORT.x + CAMERA_VIEWPORT.width as i32 - 1;
+    let top = CAMERA_VIEWPORT.y;
+    let bottom = CAMERA_VIEWPORT.y + CAMERA_VIEWPORT.height as i32 - 1;
+
+    draw_horizontal_span(canvas, top, '=');
+    draw_horizontal_span(canvas, bottom, '=');
+
+    canvas.draw_line(Point2::new(left, top), Point2::new(left, bottom), '|');
+    canvas.draw_line(Point2::new(right, top), Point2::new(right, bottom), '|');
+
+    canvas.set(Point2::new(left, top), '+');
+    canvas.set(Point2::new(right, top), '+');
+    canvas.set(Point2::new(left, bottom), '+');
+    canvas.set(Point2::new(right, bottom), '+');
+
+    canvas.draw_text(Point2::new(left + 2, top), " Camera3D viewport ");
+    canvas.draw_text(
+        Point2::new(left + 2, top + 2),
+        &format!(
+            "placeholder | pos [{:.2}, {:.2}, {:.2}] | yaw {:.1} pitch {:.1}",
+            state.world_camera_position.x,
+            state.world_camera_position.y,
+            state.world_camera_position.z,
+            state.world_camera_yaw_degrees,
+            state.world_camera_pitch_degrees,
+        ),
+    );
+    canvas.draw_text(
+        Point2::new(left + 2, top + 3),
+        "next: render actual Camera3D projection into this clipped region",
+    );
+}
+
 fn render_scene_frame(state: &AppState, assets: &SceneAssets) -> io::Result<String> {
     let mut canvas = Canvas::new(CANVAS_WIDTH, CANVAS_HEIGHT);
     let projector = projector_from_config(&assets.projection_config);
 
     match state.current_scene() {
         Scene::WorldCameraSpaces => {
-            render_world_camera_spaces(
-                &mut canvas,
-                state.world_camera_position,
-                state.world_camera_yaw_degrees,
-                state.world_camera_pitch_degrees,
-                Some(state.glyph_stroke_character()),
-            )?;
+            canvas.with_clip_rect(WORLD_DEBUG_VIEWPORT, |canvas| {
+                render_world_camera_spaces(
+                    canvas,
+                    state.world_camera_position,
+                    state.world_camera_yaw_degrees,
+                    state.world_camera_pitch_degrees,
+                    Some(state.glyph_stroke_character()),
+                )
+            })?;
         }
 
         Scene::PittCrew => {
@@ -572,8 +641,10 @@ fn render_scene_frame(state: &AppState, assets: &SceneAssets) -> io::Result<Stri
         }
     }
 
+    draw_camera_viewport_placeholder(&mut canvas, state);
+
     canvas.draw_text(
-        Point2::new(2, 27),
+        Point2::new(2, FOOTER_ROW),
         &format!(
             "[Scene {}/{}] {} | Mode: {} | Glyph '{}' [{}/{}] | Tab: mode | Scene: Space/Backspace/Left/Right | Camera: W/S z, A/D x, Q/E world-Y, Arrows rotate | Esc: quit",
             state.scene_position + 1,
