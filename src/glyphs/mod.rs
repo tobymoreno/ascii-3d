@@ -360,7 +360,7 @@ pub fn render_word_with_stroke_character(
         )?;
 
         if metadata.display.show_child_labels {
-            let label_position = child_transform.transform_point(Vec3::new(0.0, 1.1, 0.0));
+            let label_position = child_transform.transform_point(Vec3::new(0.0, 1.25, 0.0));
             let label = format!("{}:{}", child.character, child.id);
 
             canvas.draw_text(projector.project(label_position), &label);

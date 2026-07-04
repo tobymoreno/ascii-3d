@@ -19,10 +19,10 @@ use crate::{
 
 use super::render_asset_axes;
 
-const SCENE_ASSET: &str = "assets/scenes/single_p_axes.scene.json";
+const SCENE_ASSET: &str = "assets/scenes/pitt_axes.scene.json";
 
 #[derive(Debug, Clone, Deserialize)]
-struct SinglePSceneAsset {
+struct PittSceneAsset {
     name: String,
     version: u32,
     projection_preset: String,
@@ -58,7 +58,7 @@ fn load_axes_metadata(relative_path: &str) -> io::Result<CartesianAxesMetadata> 
 }
 
 fn load_scene_assets() -> io::Result<(
-    SinglePSceneAsset,
+    PittSceneAsset,
     SceneNode,
     SceneNode,
     Mesh,
@@ -67,11 +67,11 @@ fn load_scene_assets() -> io::Result<(
     WordMetadata,
     ObliqueProjector,
 )> {
-    let scene: SinglePSceneAsset = read_json(SCENE_ASSET)?;
+    let scene: PittSceneAsset = read_json(SCENE_ASSET)?;
 
     if scene.version != 1 {
         return Err(io::Error::other(format!(
-            "unsupported single_p scene version {}",
+            "unsupported pitt scene version {}",
             scene.version,
         )));
     }
@@ -80,19 +80,19 @@ fn load_scene_assets() -> io::Result<(
         .nodes
         .iter()
         .find(|node| node.node_type == "cartesian_axes")
-        .ok_or_else(|| io::Error::other("single_p scene is missing cartesian_axes node"))?
+        .ok_or_else(|| io::Error::other("pitt scene is missing cartesian_axes node"))?
         .clone();
 
     let word_node = scene
         .nodes
         .iter()
         .find(|node| node.node_type == "bezier_word")
-        .ok_or_else(|| io::Error::other("single_p scene is missing bezier_word node"))?
+        .ok_or_else(|| io::Error::other("pitt scene is missing bezier_word node"))?
         .clone();
 
     if word_node.parent.as_deref() != Some(&axes_node.id) {
         return Err(io::Error::other(
-            "single_p word node must be parented to the Cartesian axes node",
+            "pitt word node must be parented to the Cartesian axes node",
         ));
     }
 
@@ -117,7 +117,7 @@ fn load_scene_assets() -> io::Result<(
             .ok_or_else(|| io::Error::other("word node missing word_asset"))?,
     )?;
 
-    let word_metadata: WordMetadata = read_json("assets/words/single_p.metadata.json")?;
+    let word_metadata: WordMetadata = read_json("assets/words/pitt.metadata.json")?;
 
     let projection = load_projection_config(asset_path(&scene.projection_preset))?;
 
@@ -172,19 +172,19 @@ pub fn render(canvas: &mut Canvas, stroke_character: Option<char>) -> io::Result
         stroke_character,
     )?;
 
-    canvas.draw_text(Point2::new(2, 1), "Scene: single_p word parent");
+    canvas.draw_text(Point2::new(2, 1), "Scene: pitt word parent");
     canvas.draw_text(Point2::new(2, 2), &format!("Asset: {}", scene.name));
     canvas.draw_text(
         Point2::new(2, 24),
-        "Hierarchy: axes_root -> word_single_p -> glyph_P_0",
+        "Hierarchy: axes_root -> word_pitt -> glyph_P_0 -> glyph_I_1 -> glyph_T_2 -> glyph_T_3",
     );
     canvas.draw_text(
         Point2::new(2, 25),
-        "Glyph P uses proportional 0..1 local space",
+        "PITT uses four monospace 0..1 glyph boxes",
     );
     canvas.draw_text(
         Point2::new(2, 26),
-        "Lines and cubic Bezier strokes render with '*'",
+        "Runtime stroke character cycling applies to all PITT glyphs",
     );
 
     Ok(())
@@ -192,12 +192,12 @@ pub fn render(canvas: &mut Canvas, stroke_character: Option<char>) -> io::Result
 
 #[cfg(test)]
 mod tests {
-    use super::{SinglePSceneAsset, read_json};
+    use super::{PittSceneAsset, read_json};
 
     #[test]
-    fn single_p_scene_asset_loads() {
-        let scene: SinglePSceneAsset =
-            read_json("assets/scenes/single_p_axes.scene.json").expect("scene should load");
+    fn pitt_scene_asset_loads() {
+        let scene: PittSceneAsset =
+            read_json("assets/scenes/pitt_axes.scene.json").expect("scene should load");
 
         assert_eq!(scene.version, 1);
         assert_eq!(scene.nodes.len(), 2);

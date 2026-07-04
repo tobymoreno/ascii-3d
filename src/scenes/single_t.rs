@@ -7,7 +7,8 @@ use crate::{
     canvas::Canvas,
     geometry2d::Point2,
     glyphs::{
-        TransformConfig, WordAsset, WordMetadata, read_json, render_word, transform_matrix, vec3,
+        TransformConfig, WordAsset, WordMetadata, read_json, render_word_with_stroke_character,
+        transform_matrix, vec3,
     },
     mesh::Mesh,
     mesh_renderer::MeshTransform,
@@ -139,7 +140,7 @@ fn load_scene_assets() -> io::Result<(
     ))
 }
 
-pub fn render(canvas: &mut Canvas) -> io::Result<()> {
+pub fn render(canvas: &mut Canvas, stroke_character: Option<char>) -> io::Result<()> {
     let (scene, axes_node, word_node, axes_mesh, axes_metadata, word, word_metadata, projector) =
         load_scene_assets()?;
 
@@ -162,7 +163,14 @@ pub fn render(canvas: &mut Canvas) -> io::Result<()> {
         axes_transform,
     )?;
 
-    render_word(canvas, &projector, &word, &word_metadata, word_world)?;
+    render_word_with_stroke_character(
+        canvas,
+        &projector,
+        &word,
+        &word_metadata,
+        word_world,
+        stroke_character,
+    )?;
 
     canvas.draw_text(Point2::new(2, 1), "Scene: single_t word parent");
     canvas.draw_text(Point2::new(2, 2), &format!("Asset: {}", scene.name));

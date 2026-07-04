@@ -1,0 +1,124 @@
+{
+  "name": "pitt",
+  "version": 1,
+  "type": "bezier_word_3d",
+  "units": "relative_word_space",
+  "children": [
+    {
+      "id": "glyph_P_0",
+      "type": "bezier_glyph",
+      "glyph_asset": "assets/glyphs/P.simple.glyph.json",
+      "metadata_asset": "assets/glyphs/P.simple.metadata.json",
+      "character": "P",
+      "parent": "pitt",
+      "local_transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation_degrees": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "layout": {
+        "advance_width": 1.0,
+        "kerning_after": 0.0
+      }
+    },
+    {
+      "id": "glyph_I_1",
+      "type": "bezier_glyph",
+      "glyph_asset": "assets/glyphs/I.simple.glyph.json",
+      "metadata_asset": "assets/glyphs/I.simple.metadata.json",
+      "character": "I",
+      "parent": "pitt",
+      "local_transform": {
+        "translation": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "rotation_degrees": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "layout": {
+        "advance_width": 1.0,
+        "kerning_after": 0.0
+      }
+    },
+    {
+      "id": "glyph_T_2",
+      "type": "bezier_glyph",
+      "glyph_asset": "assets/glyphs/T.simple.glyph.json",
+      "metadata_asset": "assets/glyphs/T.simple.metadata.json",
+      "character": "T",
+      "parent": "pitt",
+      "local_transform": {
+        "translation": [
+          2.0,
+          0.0,
+          0.0
+        ],
+        "rotation_degrees": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "layout": {
+        "advance_width": 1.0,
+        "kerning_after": 0.0
+      }
+    },
+    {
+      "id": "glyph_T_3",
+      "type": "bezier_glyph",
+      "glyph_asset": "assets/glyphs/T.simple.glyph.json",
+      "metadata_asset": "assets/glyphs/T.simple.metadata.json",
+      "character": "T",
+      "parent": "pitt",
+      "local_transform": {
+        "translation": [
+          3.0,
+          0.0,
+          0.0
+        ],
+        "rotation_degrees": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "layout": {
+        "advance_width": 1.0,
+        "kerning_after": 0.0
+      }
+    }
+  ]
+}

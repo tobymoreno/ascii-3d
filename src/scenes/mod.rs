@@ -8,6 +8,7 @@ mod camera_motion;
 mod camera_turntable;
 mod cross_product;
 mod obj_box;
+mod pitt;
 mod quad4;
 mod rotation;
 mod single_c;
@@ -30,6 +31,7 @@ pub use cross_product::{
     render_negative_z as render_cross_negative_z, render_positive_z as render_cross_positive_z,
 };
 pub use obj_box::render as render_obj_box;
+pub use pitt::render as render_pitt;
 pub use quad4::render as render_quad4;
 pub use rotation::{RotationAxis, render as render_rotation};
 pub use single_c::render as render_single_c;
@@ -42,6 +44,7 @@ pub use single_w::render as render_single_w;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scene {
+    Pitt,
     SingleE,
     SingleW,
     SingleC,
@@ -69,7 +72,8 @@ pub enum Scene {
 
 impl Scene {
     /// Scenes are ordered newest-first.
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 24] = [
+        Self::Pitt,
         Self::SingleE,
         Self::SingleW,
         Self::SingleC,
@@ -97,6 +101,7 @@ impl Scene {
 
     pub const fn title(self) -> &'static str {
         match self {
+            Self::Pitt => "PITT word parent with P/I/T/T glyphs",
             Self::SingleE => "single_e word parent with E glyph",
             Self::SingleW => "single_w word parent with W glyph",
             Self::SingleC => "single_c word parent with C glyph",
@@ -144,19 +149,13 @@ mod tests {
     use super::Scene;
 
     #[test]
-    fn newest_scene_is_single_e() {
-        assert_eq!(Scene::ALL.first(), Some(&Scene::SingleE));
+    fn newest_scene_is_pitt() {
+        assert_eq!(Scene::ALL.first(), Some(&Scene::Pitt));
     }
 
     #[test]
-    fn single_w_single_c_single_r_single_t_single_i_single_p_and_bezier_scenes_follow_single_e() {
-        assert_eq!(Scene::ALL[1], Scene::SingleW);
-        assert_eq!(Scene::ALL[2], Scene::SingleC);
-        assert_eq!(Scene::ALL[3], Scene::SingleR);
-        assert_eq!(Scene::ALL[4], Scene::SingleT);
-        assert_eq!(Scene::ALL[5], Scene::SingleI);
-        assert_eq!(Scene::ALL[6], Scene::SingleP);
-        assert_eq!(Scene::ALL[7], Scene::BezierAxes);
+    fn next_scene_after_pitt_is_singlee() {
+        assert_eq!(Scene::ALL[1], Scene::SingleE);
     }
 
     #[test]
@@ -170,12 +169,13 @@ mod tests {
     }
 
     #[test]
-    fn scene_count_is_twenty_one() {
-        assert_eq!(Scene::ALL.len(), 21);
+    fn scene_count_matches_scene_all() {
+        assert_eq!(Scene::ALL.len(), 24);
     }
 
     #[test]
     fn animated_scenes_are_identified() {
+        assert!(!Scene::Pitt.is_animated());
         assert!(!Scene::SingleE.is_animated());
         assert!(!Scene::SingleW.is_animated());
         assert!(!Scene::SingleC.is_animated());
