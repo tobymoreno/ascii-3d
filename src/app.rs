@@ -26,7 +26,7 @@ use crate::{
         RotationAxis, Scene, render_arbitrary_vector, render_asset_axes_rotation, render_axes,
         render_bezier_axes, render_camera, render_camera_motion, render_camera_turntable,
         render_cross_negative_z, render_cross_positive_z, render_obj_box, render_quad4,
-        render_rotation, render_single_i, render_single_p,
+        render_rotation, render_single_i, render_single_p, render_single_t,
     },
 };
 
@@ -235,6 +235,9 @@ fn render_scene(state: &AppState, assets: &SceneAssets) -> io::Result<()> {
     let projector = projector_from_config(&assets.projection_config);
 
     match state.current_scene() {
+        Scene::SingleT => {
+            render_single_t(&mut canvas)?;
+        }
         Scene::SingleI => {
             render_single_i(&mut canvas)?;
         }
@@ -437,16 +440,16 @@ mod tests {
     fn application_starts_on_single_p_scene() {
         let state = AppState::new();
 
-        assert_eq!(state.current_scene(), Scene::SingleI);
+        assert_eq!(state.current_scene(), Scene::SingleT);
     }
 
     #[test]
-    fn next_scene_moves_to_single_p_scene() {
+    fn next_scene_moves_to_single_i_scene() {
         let mut state = AppState::new();
 
         state.next_scene();
 
-        assert_eq!(state.current_scene(), Scene::SingleP);
+        assert_eq!(state.current_scene(), Scene::SingleI);
     }
 
     #[test]
