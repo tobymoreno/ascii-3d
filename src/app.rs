@@ -379,7 +379,38 @@ fn projector_from_config(config: &ProjectionConfig) -> ObliqueProjector {
     )
 }
 
-fn render_scene(state: &AppState, assets: &SceneAssets) -> io::Result<()> {
+fn write_full_frame(output: &mut impl Write, frame: &str) -> io::Result<()> {
+    execute!(output, MoveTo(0, 0))?;
+    write!(output, "{frame}")?;
+    output.flush()
+}
+
+fn write_diff_frame(
+    output: &mut impl Write,
+    previous_frame: Option<&str>,
+    current_frame: &str,
+) -> io::Result<()> {
+    let Some(previous_frame) = previous_frame else {
+        return write_full_frame(output, current_frame);
+    };
+
+    for (row_index, (previous_row, current_row)) in previous_frame
+        .split("\r\n")
+        .zip(current_frame.split("\r\n"))
+        .enumerate()
+    {
+        if previous_row == current_row {
+            continue;
+        }
+
+        execute!(output, MoveTo(0, row_index as u16))?;
+        write!(output, "{current_row}")?;
+    }
+
+    output.flush()
+}
+
+fn render_scene_frame(state: &AppState, assets: &SceneAssets) -> io::Result<String> {
     let mut canvas = Canvas::new(CANVAS_WIDTH, CANVAS_HEIGHT);
     let projector = projector_from_config(&assets.projection_config);
 
@@ -555,12 +586,22 @@ fn render_scene(state: &AppState, assets: &SceneAssets) -> io::Result<()> {
         ),
     );
 
+    Ok(canvas.render())
+}
+
+fn render_scene(
+    state: &AppState,
+    assets: &SceneAssets,
+    previous_frame: &mut Option<String>,
+) -> io::Result<()> {
+    let frame = render_scene_frame(state, assets)?;
+
     let mut output = stdout();
+    write_diff_frame(&mut output, previous_frame.as_deref(), &frame)?;
 
-    execute!(output, MoveTo(0, 0))?;
+    *previous_frame = Some(frame);
 
-    write!(output, "{}", canvas.render())?;
-    output.flush()
+    Ok(())
 }
 
 pub fn run() -> io::Result<()> {
@@ -569,8 +610,9 @@ pub fn run() -> io::Result<()> {
 
     let mut state = AppState::new();
     let mut previous_time = Instant::now();
+    let mut previous_frame: Option<String> = None;
 
-    render_scene(&state, &assets)?;
+    render_scene(&state, &assets, &mut previous_frame)?;
 
     loop {
         let now = Instant::now();
@@ -578,7 +620,7 @@ pub fn run() -> io::Result<()> {
         previous_time = now;
 
         if state.update(elapsed) {
-            render_scene(&state, &assets)?;
+            render_scene(&state, &assets, &mut previous_frame)?;
         }
 
         if !event::poll(FRAME_DURATION)? {
@@ -601,29 +643,29 @@ pub fn run() -> io::Result<()> {
             ControlMode::Scene => match key.code {
                 KeyCode::Tab => {
                     state.toggle_control_mode();
-                    render_scene(&state, &assets)?;
+                    render_scene(&state, &assets, &mut previous_frame)?;
                 }
 
                 KeyCode::Char(' ') => {
                     state.next_glyph_stroke_character();
-                    render_scene(&state, &assets)?;
+                    render_scene(&state, &assets, &mut previous_frame)?;
                 }
 
                 KeyCode::Backspace => {
                     state.previous_glyph_stroke_character();
-                    render_scene(&state, &assets)?;
+                    render_scene(&state, &assets, &mut previous_frame)?;
                 }
 
                 KeyCode::Right | KeyCode::Enter => {
                     state.next_scene();
                     previous_time = Instant::now();
-                    render_scene(&state, &assets)?;
+                    render_scene(&state, &assets, &mut previous_frame)?;
                 }
 
                 KeyCode::Left => {
                     state.previous_scene();
                     previous_time = Instant::now();
-                    render_scene(&state, &assets)?;
+                    render_scene(&state, &assets, &mut previous_frame)?;
                 }
 
                 KeyCode::Char('q') | KeyCode::Char('Q') => {
@@ -636,57 +678,57 @@ pub fn run() -> io::Result<()> {
             ControlMode::Camera => match key.code {
                 KeyCode::Tab => {
                     state.toggle_control_mode();
-                    render_scene(&state, &assets)?;
+                    render_scene(&state, &assets, &mut previous_frame)?;
                 }
 
                 KeyCode::Char('w') | KeyCode::Char('W') => {
                     state.move_world_camera_forward(CAMERA_MOVE_STEP);
-                    render_scene(&state, &assets)?;
+                    render_scene(&state, &assets, &mut previous_frame)?;
                 }
 
                 KeyCode::Char('s') | KeyCode::Char('S') => {
                     state.move_world_camera_forward(-CAMERA_MOVE_STEP);
-                    render_scene(&state, &assets)?;
+                    render_scene(&state, &assets, &mut previous_frame)?;
                 }
 
                 KeyCode::Char('a') | KeyCode::Char('A') => {
                     state.move_world_camera_right(-CAMERA_MOVE_STEP);
-                    render_scene(&state, &assets)?;
+                    render_scene(&state, &assets, &mut previous_frame)?;
                 }
 
                 KeyCode::Char('d') | KeyCode::Char('D') => {
                     state.move_world_camera_right(CAMERA_MOVE_STEP);
-                    render_scene(&state, &assets)?;
+                    render_scene(&state, &assets, &mut previous_frame)?;
                 }
 
                 KeyCode::Char('q') | KeyCode::Char('Q') => {
                     state.move_world_camera_up(-CAMERA_MOVE_STEP);
-                    render_scene(&state, &assets)?;
+                    render_scene(&state, &assets, &mut previous_frame)?;
                 }
 
                 KeyCode::Char('e') | KeyCode::Char('E') => {
                     state.move_world_camera_up(CAMERA_MOVE_STEP);
-                    render_scene(&state, &assets)?;
+                    render_scene(&state, &assets, &mut previous_frame)?;
                 }
 
                 KeyCode::Left => {
                     state.rotate_world_camera(-5.0, 0.0);
-                    render_scene(&state, &assets)?;
+                    render_scene(&state, &assets, &mut previous_frame)?;
                 }
 
                 KeyCode::Right => {
                     state.rotate_world_camera(5.0, 0.0);
-                    render_scene(&state, &assets)?;
+                    render_scene(&state, &assets, &mut previous_frame)?;
                 }
 
                 KeyCode::Up => {
                     state.rotate_world_camera(0.0, 5.0);
-                    render_scene(&state, &assets)?;
+                    render_scene(&state, &assets, &mut previous_frame)?;
                 }
 
                 KeyCode::Down => {
                     state.rotate_world_camera(0.0, -5.0);
-                    render_scene(&state, &assets)?;
+                    render_scene(&state, &assets, &mut previous_frame)?;
                 }
 
                 _ => {}
