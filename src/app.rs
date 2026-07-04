@@ -17,6 +17,7 @@ use crossterm::{
 use crate::{
     canvas::Canvas,
     geometry2d::Point2,
+    math::Vec3,
     mesh::Mesh,
     obj::load_obj,
     projection::ObliqueProjector,
@@ -66,12 +67,75 @@ impl Drop for TerminalGuard {
     }
 }
 
+const CAMERA_MOVE_STEP: f32 = 0.10;
+
+fn vec3_cross(a: Vec3, b: Vec3) -> Vec3 {
+    Vec3::new(
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x,
+    )
+}
+
+fn vec3_length(value: Vec3) -> f32 {
+    (value.x * value.x + value.y * value.y + value.z * value.z).sqrt()
+}
+
+fn vec3_normalize(value: Vec3) -> Vec3 {
+    let length = vec3_length(value);
+
+    if length <= f32::EPSILON {
+        Vec3::zero()
+    } else {
+        Vec3::new(value.x / length, value.y / length, value.z / length)
+    }
+}
+
+fn vec3_scale(value: Vec3, scale: f32) -> Vec3 {
+    Vec3::new(value.x * scale, value.y * scale, value.z * scale)
+}
+
+fn camera_forward_from_yaw_pitch(yaw_degrees: f32, pitch_degrees: f32) -> Vec3 {
+    let yaw = yaw_degrees.to_radians();
+    let pitch = pitch_degrees.to_radians();
+    let horizontal = pitch.cos();
+
+    vec3_normalize(Vec3::new(
+        yaw.sin() * horizontal,
+        pitch.sin(),
+        yaw.cos() * horizontal,
+    ))
+}
+
+fn camera_right_from_forward(forward: Vec3) -> Vec3 {
+    vec3_normalize(vec3_cross(Vec3::new(0.0, 1.0, 0.0), forward))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ControlMode {
+    Scene,
+    Camera,
+}
+
+impl ControlMode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Scene => "Scene",
+            Self::Camera => "Camera",
+        }
+    }
+}
+
 #[derive(Debug)]
 struct AppState {
     scene_position: usize,
     animation_angle_degrees: f32,
     box_angle_degrees: f32,
     glyph_stroke_index: usize,
+    control_mode: ControlMode,
+    world_camera_position: Vec3,
+    world_camera_yaw_degrees: f32,
+    world_camera_pitch_degrees: f32,
 }
 
 impl AppState {
@@ -81,6 +145,10 @@ impl AppState {
             animation_angle_degrees: 0.0,
             box_angle_degrees: 0.0,
             glyph_stroke_index: DEFAULT_GLYPH_STROKE_INDEX,
+            control_mode: ControlMode::Scene,
+            world_camera_position: Vec3::new(0.65, 0.55, 0.35),
+            world_camera_yaw_degrees: 0.0,
+            world_camera_pitch_degrees: 0.0,
         }
     }
 
@@ -130,6 +198,52 @@ impl AppState {
         } else {
             self.glyph_stroke_index - 1
         };
+    }
+
+    fn toggle_control_mode(&mut self) {
+        self.control_mode = match self.control_mode {
+            ControlMode::Scene => ControlMode::Camera,
+            ControlMode::Camera => ControlMode::Scene,
+        };
+    }
+
+    fn move_world_camera(&mut self, delta: Vec3) {
+        self.world_camera_position = Vec3::new(
+            self.world_camera_position.x + delta.x,
+            self.world_camera_position.y + delta.y,
+            self.world_camera_position.z + delta.z,
+        );
+    }
+
+    fn camera_forward(&self) -> Vec3 {
+        camera_forward_from_yaw_pitch(
+            self.world_camera_yaw_degrees,
+            self.world_camera_pitch_degrees,
+        )
+    }
+
+    fn camera_right(&self) -> Vec3 {
+        camera_right_from_forward(self.camera_forward())
+    }
+
+    fn move_world_camera_forward(&mut self, amount: f32) {
+        self.move_world_camera(vec3_scale(self.camera_forward(), amount));
+    }
+
+    fn move_world_camera_right(&mut self, amount: f32) {
+        self.move_world_camera(vec3_scale(self.camera_right(), amount));
+    }
+
+    fn move_world_camera_up(&mut self, amount: f32) {
+        self.move_world_camera(Vec3::new(0.0, amount, 0.0));
+    }
+
+    fn rotate_world_camera(&mut self, yaw_delta_degrees: f32, pitch_delta_degrees: f32) {
+        self.world_camera_yaw_degrees += yaw_delta_degrees;
+        self.world_camera_yaw_degrees %= FULL_ROTATION_DEGREES;
+
+        self.world_camera_pitch_degrees =
+            (self.world_camera_pitch_degrees + pitch_delta_degrees).clamp(-80.0, 80.0);
     }
 
     fn update(&mut self, elapsed: Duration) -> bool {
@@ -271,7 +385,12 @@ fn render_scene(state: &AppState, assets: &SceneAssets) -> io::Result<()> {
 
     match state.current_scene() {
         Scene::WorldCameraSpaces => {
-            render_world_camera_spaces(&mut canvas)?;
+            render_world_camera_spaces(
+                &mut canvas,
+                state.world_camera_position,
+                state.world_camera_yaw_degrees,
+                state.world_camera_pitch_degrees,
+            )?;
         }
 
         Scene::PittCrew => {
@@ -424,10 +543,11 @@ fn render_scene(state: &AppState, assets: &SceneAssets) -> io::Result<()> {
     canvas.draw_text(
         Point2::new(2, 27),
         &format!(
-            "[Scene {}/{}] {} | Glyph '{}' [{}/{}]  Space: next char  Backspace: prev char  Right/Enter: older  Left: newer  Q/Esc: quit",
+            "[Scene {}/{}] {} | Mode: {} | Glyph '{}' [{}/{}] | Tab: mode | Scene: Space/Backspace/Left/Right | Camera: W/S z, A/D x, Q/E world-Y, Arrows rotate | Esc: quit",
             state.scene_position + 1,
             Scene::ALL.len(),
             state.current_scene().title(),
+            state.control_mode.label(),
             state.glyph_stroke_character(),
             state.glyph_stroke_position(),
             state.glyph_stroke_character_count(),
@@ -472,34 +592,104 @@ pub fn run() -> io::Result<()> {
             continue;
         }
 
-        match key.code {
-            KeyCode::Char(' ') => {
-                state.next_glyph_stroke_character();
-                render_scene(&state, &assets)?;
-            }
+        if key.code == KeyCode::Esc {
+            break;
+        }
 
-            KeyCode::Backspace => {
-                state.previous_glyph_stroke_character();
-                render_scene(&state, &assets)?;
-            }
+        match state.control_mode {
+            ControlMode::Scene => match key.code {
+                KeyCode::Tab => {
+                    state.toggle_control_mode();
+                    render_scene(&state, &assets)?;
+                }
 
-            KeyCode::Right | KeyCode::Enter => {
-                state.next_scene();
-                previous_time = Instant::now();
-                render_scene(&state, &assets)?;
-            }
+                KeyCode::Char(' ') => {
+                    state.next_glyph_stroke_character();
+                    render_scene(&state, &assets)?;
+                }
 
-            KeyCode::Left => {
-                state.previous_scene();
-                previous_time = Instant::now();
-                render_scene(&state, &assets)?;
-            }
+                KeyCode::Backspace => {
+                    state.previous_glyph_stroke_character();
+                    render_scene(&state, &assets)?;
+                }
 
-            KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => {
-                break;
-            }
+                KeyCode::Right | KeyCode::Enter => {
+                    state.next_scene();
+                    previous_time = Instant::now();
+                    render_scene(&state, &assets)?;
+                }
 
-            _ => {}
+                KeyCode::Left => {
+                    state.previous_scene();
+                    previous_time = Instant::now();
+                    render_scene(&state, &assets)?;
+                }
+
+                KeyCode::Char('q') | KeyCode::Char('Q') => {
+                    break;
+                }
+
+                _ => {}
+            },
+
+            ControlMode::Camera => match key.code {
+                KeyCode::Tab => {
+                    state.toggle_control_mode();
+                    render_scene(&state, &assets)?;
+                }
+
+                KeyCode::Char('w') | KeyCode::Char('W') => {
+                    state.move_world_camera_forward(CAMERA_MOVE_STEP);
+                    render_scene(&state, &assets)?;
+                }
+
+                KeyCode::Char('s') | KeyCode::Char('S') => {
+                    state.move_world_camera_forward(-CAMERA_MOVE_STEP);
+                    render_scene(&state, &assets)?;
+                }
+
+                KeyCode::Char('a') | KeyCode::Char('A') => {
+                    state.move_world_camera_right(-CAMERA_MOVE_STEP);
+                    render_scene(&state, &assets)?;
+                }
+
+                KeyCode::Char('d') | KeyCode::Char('D') => {
+                    state.move_world_camera_right(CAMERA_MOVE_STEP);
+                    render_scene(&state, &assets)?;
+                }
+
+                KeyCode::Char('q') | KeyCode::Char('Q') => {
+                    state.move_world_camera_up(-CAMERA_MOVE_STEP);
+                    render_scene(&state, &assets)?;
+                }
+
+                KeyCode::Char('e') | KeyCode::Char('E') => {
+                    state.move_world_camera_up(CAMERA_MOVE_STEP);
+                    render_scene(&state, &assets)?;
+                }
+
+                KeyCode::Left => {
+                    state.rotate_world_camera(-5.0, 0.0);
+                    render_scene(&state, &assets)?;
+                }
+
+                KeyCode::Right => {
+                    state.rotate_world_camera(5.0, 0.0);
+                    render_scene(&state, &assets)?;
+                }
+
+                KeyCode::Up => {
+                    state.rotate_world_camera(0.0, 5.0);
+                    render_scene(&state, &assets)?;
+                }
+
+                KeyCode::Down => {
+                    state.rotate_world_camera(0.0, -5.0);
+                    render_scene(&state, &assets)?;
+                }
+
+                _ => {}
+            },
         }
     }
 
