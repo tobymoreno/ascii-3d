@@ -160,7 +160,9 @@ fn yaw_pitch_toward(from: Vec3, to: Vec3) -> (f32, f32) {
 }
 
 fn camera_right_from_forward(forward: Vec3) -> Vec3 {
-    vec3_normalize(vec3_cross(Vec3::new(0.0, 1.0, 0.0), forward))
+    // Match Mat4::look_at:
+    // right = forward.cross(world_up)
+    vec3_normalize(vec3_cross(forward, Vec3::new(0.0, 1.0, 0.0)))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -509,6 +511,47 @@ fn project_camera_space_to_viewport(camera_space: Vec3, inner: ClipRect) -> Opti
     Some(Point2::new(screen_x, screen_y))
 }
 
+fn project_camera_space_to_viewport_with_depth(
+    camera_space: Vec3,
+    inner: ClipRect,
+) -> Option<(Point2, f32)> {
+    let point = project_camera_space_to_viewport(camera_space, inner)?;
+    let depth = -camera_space.z;
+
+    Some((point, depth))
+}
+
+struct CameraViewportDepthBuffer {
+    rect: ClipRect,
+    depths: Vec<f32>,
+}
+
+impl CameraViewportDepthBuffer {
+    fn new(rect: ClipRect) -> Self {
+        Self {
+            rect,
+            depths: vec![f32::INFINITY; rect.width * rect.height],
+        }
+    }
+
+    fn try_update(&mut self, point: Point2, depth: f32) -> bool {
+        if !self.rect.contains(point) {
+            return false;
+        }
+
+        let x = (point.x - self.rect.x) as usize;
+        let y = (point.y - self.rect.y) as usize;
+        let index = y * self.rect.width + x;
+
+        if depth >= self.depths[index] {
+            return false;
+        }
+
+        self.depths[index] = depth;
+        true
+    }
+}
+
 fn world_to_camera_space(state: &AppState, point: Vec3) -> Option<Vec3> {
     let forward = camera_forward_from_yaw_pitch(
         state.world_camera_yaw_degrees,
@@ -525,8 +568,9 @@ fn world_to_camera_space(state: &AppState, point: Vec3) -> Option<Vec3> {
     .map(|view| view.transform_point(point))
 }
 
-fn draw_camera_viewport_line(
+fn draw_camera_viewport_depth_line(
     canvas: &mut Canvas,
+    depth_buffer: &mut CameraViewportDepthBuffer,
     state: &AppState,
     inner: ClipRect,
     from_world: Vec3,
@@ -540,18 +584,63 @@ fn draw_camera_viewport_line(
         return;
     };
 
-    let Some(from_screen) = project_camera_space_to_viewport(from_camera, inner) else {
+    let Some((from_screen, from_depth)) =
+        project_camera_space_to_viewport_with_depth(from_camera, inner)
+    else {
         return;
     };
-    let Some(to_screen) = project_camera_space_to_viewport(to_camera, inner) else {
+    let Some((to_screen, to_depth)) = project_camera_space_to_viewport_with_depth(to_camera, inner)
+    else {
         return;
     };
 
-    canvas.draw_line(from_screen, to_screen, character);
+    let mut x0 = from_screen.x;
+    let mut y0 = from_screen.y;
+    let x1 = to_screen.x;
+    let y1 = to_screen.y;
+
+    let dx = (x1 - x0).abs();
+    let sx = if x0 < x1 { 1 } else { -1 };
+
+    let dy = -(y1 - y0).abs();
+    let sy = if y0 < y1 { 1 } else { -1 };
+
+    let mut error = dx + dy;
+    let steps = dx.max(-dy).max(1);
+    let mut step_index = 0;
+
+    loop {
+        let t = step_index as f32 / steps as f32;
+        let depth = from_depth + (to_depth - from_depth) * t;
+        let point = Point2::new(x0, y0);
+
+        if depth_buffer.try_update(point, depth) {
+            canvas.set(point, character);
+        }
+
+        if x0 == x1 && y0 == y1 {
+            break;
+        }
+
+        let doubled_error = 2 * error;
+
+        if doubled_error >= dy {
+            error += dy;
+            x0 += sx;
+        }
+
+        if doubled_error <= dx {
+            error += dx;
+            y0 += sy;
+        }
+
+        step_index += 1;
+    }
 }
 
 fn draw_single_p_at_camera_viewport(
     canvas: &mut Canvas,
+    depth_buffer: &mut CameraViewportDepthBuffer,
     state: &AppState,
     inner: ClipRect,
     position: Vec3,
@@ -583,8 +672,9 @@ fn draw_single_p_at_camera_viewport(
                         let from_world = child_world.transform_point(vec3(*from));
                         let to_world = child_world.transform_point(vec3(*to));
 
-                        draw_camera_viewport_line(
+                        draw_camera_viewport_depth_line(
                             canvas,
+                            depth_buffer,
                             state,
                             inner,
                             from_world,
@@ -605,8 +695,9 @@ fn draw_single_p_at_camera_viewport(
                             let start_world = child_world.transform_point(start);
                             let end_world = child_world.transform_point(end);
 
-                            draw_camera_viewport_line(
+                            draw_camera_viewport_depth_line(
                                 canvas,
+                                depth_buffer,
                                 state,
                                 inner,
                                 start_world,
@@ -643,9 +734,12 @@ fn draw_camera_viewport(canvas: &mut Canvas, state: &AppState) -> io::Result<()>
     canvas.draw_text(Point2::new(left + 2, top + 1), "Camera3D viewport");
 
     let inner = camera_viewport_content_rect();
+    let mut depth_buffer = CameraViewportDepthBuffer::new(inner);
+
     canvas.with_clip_rect(inner, |canvas| {
         draw_single_p_at_camera_viewport(
             canvas,
+            &mut depth_buffer,
             state,
             inner,
             Vec3::new(P2_WORD_WORLD_X, P2_WORD_WORLD_Y, P2_WORD_WORLD_Z),
@@ -654,6 +748,7 @@ fn draw_camera_viewport(canvas: &mut Canvas, state: &AppState) -> io::Result<()>
 
         draw_single_p_at_camera_viewport(
             canvas,
+            &mut depth_buffer,
             state,
             inner,
             Vec3::new(P_WORD_WORLD_X, P_WORD_WORLD_Y, P_WORD_WORLD_Z),

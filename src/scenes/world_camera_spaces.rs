@@ -25,7 +25,9 @@ const SINGLE_P_WORD_ASSET: &str = "assets/words/single_p.word.json";
 const SINGLE_P_WORD_METADATA_ASSET: &str = "assets/words/single_p.metadata.json";
 
 const WORLD_AXES_SCALE: f32 = 2.8;
-const CAMERA_GIZMO_SCREEN_LEG: f32 = 3.0;
+const CAMERA_GIZMO_SCREEN_LEG: f32 = 10.0;
+const CAMERA_DEBUG_NEAR_DISTANCE: f32 = 1.20;
+const CAMERA_DEBUG_NEAR_HALF_WIDTH: f32 = 0.35;
 
 // Screen-only framing for the debug/world view.
 // This does not change 3D world coordinates. It only moves the projected
@@ -137,32 +139,6 @@ fn camera_for_debug(position: Vec3, yaw_degrees: f32, pitch_degrees: f32) -> Cam
     )
 }
 
-fn fixed_screen_direction(
-    projector: &ObliqueProjector,
-    origin_world: Vec3,
-    direction_world: Vec3,
-) -> Point2 {
-    let origin_2d = projector.project(origin_world);
-    let tip_2d = projector.project(Vec3::new(
-        origin_world.x + direction_world.x,
-        origin_world.y + direction_world.y,
-        origin_world.z + direction_world.z,
-    ));
-
-    let dx = (tip_2d.x - origin_2d.x) as f32;
-    let dy = (tip_2d.y - origin_2d.y) as f32;
-    let length = (dx * dx + dy * dy).sqrt();
-
-    if length <= f32::EPSILON {
-        origin_2d
-    } else {
-        Point2::new(
-            origin_2d.x + (dx / length * CAMERA_GIZMO_SCREEN_LEG).round() as i32,
-            origin_2d.y + (dy / length * CAMERA_GIZMO_SCREEN_LEG).round() as i32,
-        )
-    }
-}
-
 fn vec3_from_array(values: [f32; 3]) -> Vec3 {
     Vec3::new(values[0], values[1], values[2])
 }
@@ -262,25 +238,43 @@ fn draw_world_axes(
 }
 
 fn draw_camera_gizmo(canvas: &mut Canvas, projector: &ObliqueProjector, camera: Camera3D) {
-    let origin_world = camera.position;
+    let eye_world = camera.position;
+    let forward = vec3_normalize(vec3_subtract(camera.target, camera.position));
 
-    let z_direction = vec3_normalize(vec3_subtract(camera.target, camera.position));
-    let x_direction = vec3_normalize(vec3_cross(camera.up, z_direction));
-    let y_direction = vec3_normalize(vec3_cross(z_direction, x_direction));
+    // Match Mat4::look_at basis for the near-plane horizontal direction.
+    let right = vec3_normalize(vec3_cross(forward, camera.up));
 
-    let origin_2d = projector.project(origin_world);
-    let x_2d = fixed_screen_direction(projector, origin_world, x_direction);
-    let y_2d = fixed_screen_direction(projector, origin_world, y_direction);
-    let z_2d = fixed_screen_direction(projector, origin_world, z_direction);
+    let near_center_world = Vec3::new(
+        eye_world.x + forward.x * CAMERA_DEBUG_NEAR_DISTANCE,
+        eye_world.y + forward.y * CAMERA_DEBUG_NEAR_DISTANCE,
+        eye_world.z + forward.z * CAMERA_DEBUG_NEAR_DISTANCE,
+    );
 
-    canvas.draw_line(origin_2d, x_2d, '-');
-    canvas.draw_line(origin_2d, y_2d, '|');
-    canvas.draw_line(origin_2d, z_2d, '/');
+    let near_left_world = Vec3::new(
+        near_center_world.x - right.x * CAMERA_DEBUG_NEAR_HALF_WIDTH,
+        near_center_world.y - right.y * CAMERA_DEBUG_NEAR_HALF_WIDTH,
+        near_center_world.z - right.z * CAMERA_DEBUG_NEAR_HALF_WIDTH,
+    );
 
-    canvas.set(origin_2d, '*');
-    canvas.set(x_2d, 'x');
-    canvas.set(y_2d, 'y');
-    canvas.set(z_2d, 'z');
+    let near_right_world = Vec3::new(
+        near_center_world.x + right.x * CAMERA_DEBUG_NEAR_HALF_WIDTH,
+        near_center_world.y + right.y * CAMERA_DEBUG_NEAR_HALF_WIDTH,
+        near_center_world.z + right.z * CAMERA_DEBUG_NEAR_HALF_WIDTH,
+    );
+
+    let eye_2d = projector.project(eye_world);
+    let near_center_2d = projector.project(near_center_world);
+    let near_left_2d = projector.project(near_left_world);
+    let near_right_2d = projector.project(near_right_world);
+
+    // Eye-to-near-plane vector. This is the camera look direction in world/debug view.
+    canvas.draw_line_auto(eye_2d, near_center_2d);
+
+    // Small near-plane bar.
+    canvas.draw_line_auto(near_left_2d, near_right_2d);
+
+    canvas.set(eye_2d, 'E');
+    canvas.set(near_center_2d, 'N');
 }
 
 fn draw_single_p_at_world_position(
@@ -381,7 +375,7 @@ mod tests {
 
     #[test]
     fn camera_gizmo_screen_leg_is_fixed_visual_length() {
-        assert_eq!(CAMERA_GIZMO_SCREEN_LEG, 3.0);
+        assert_eq!(CAMERA_GIZMO_SCREEN_LEG, 10.0);
     }
 
     #[test]
