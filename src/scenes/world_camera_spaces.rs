@@ -37,6 +37,11 @@ const WORLD_DEBUG_SCREEN_OFFSET_Y: i32 = 6;
 const P_WORD_WORLD_X: f32 = 0.35;
 const P_WORD_WORLD_Y: f32 = 0.10;
 const P_WORD_WORLD_Z: f32 = -1.80;
+
+const P2_WORD_WORLD_X: f32 = 0.55;
+const P2_WORD_WORLD_Y: f32 = 0.10;
+const P2_WORD_WORLD_Z: f32 = -3.20;
+
 const P_WORD_WORLD_SCALE: f32 = 1.35;
 
 fn asset_path(relative_path: &str) -> PathBuf {
@@ -278,14 +283,15 @@ fn draw_camera_gizmo(canvas: &mut Canvas, projector: &ObliqueProjector, camera: 
     canvas.set(z_2d, 'z');
 }
 
-fn draw_single_p_in_world(
+fn draw_single_p_at_world_position(
     canvas: &mut Canvas,
     projector: &ObliqueProjector,
+    position: Vec3,
     stroke_character: Option<char>,
 ) -> io::Result<()> {
     let (word, metadata) = load_single_p_word_assets()?;
 
-    let word_world = Mat4::translation(P_WORD_WORLD_X, P_WORD_WORLD_Y, P_WORD_WORLD_Z)
+    let word_world = Mat4::translation(position.x, position.y, position.z)
         * Mat4::uniform_scale(P_WORD_WORLD_SCALE);
 
     render_word_with_stroke_character(
@@ -333,7 +339,18 @@ pub fn render(
         stroke_character,
     );
     draw_world_axes(canvas, &projector, &axes_mesh, &axes_metadata)?;
-    draw_single_p_in_world(canvas, &projector, stroke_character)?;
+    draw_single_p_at_world_position(
+        canvas,
+        &projector,
+        Vec3::new(P2_WORD_WORLD_X, P2_WORD_WORLD_Y, P2_WORD_WORLD_Z),
+        stroke_character,
+    )?;
+    draw_single_p_at_world_position(
+        canvas,
+        &projector,
+        Vec3::new(P_WORD_WORLD_X, P_WORD_WORLD_Y, P_WORD_WORLD_Z),
+        stroke_character,
+    )?;
     draw_camera_gizmo(canvas, &projector, camera);
 
     Ok(())

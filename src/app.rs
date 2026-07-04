@@ -104,6 +104,11 @@ const SINGLE_P_WORD_ASSET: &str = "assets/words/single_p.word.json";
 const P_WORD_WORLD_X: f32 = 0.35;
 const P_WORD_WORLD_Y: f32 = 0.10;
 const P_WORD_WORLD_Z: f32 = -1.80;
+
+const P2_WORD_WORLD_X: f32 = 0.55;
+const P2_WORD_WORLD_Y: f32 = 0.10;
+const P2_WORD_WORLD_Z: f32 = -3.20;
+
 const P_WORD_WORLD_SCALE: f32 = 1.35;
 
 fn vec3_cross(a: Vec3, b: Vec3) -> Vec3 {
@@ -545,14 +550,15 @@ fn draw_camera_viewport_line(
     canvas.draw_line(from_screen, to_screen, character);
 }
 
-fn draw_single_p_in_camera_viewport(
+fn draw_single_p_at_camera_viewport(
     canvas: &mut Canvas,
     state: &AppState,
     inner: ClipRect,
+    position: Vec3,
     stroke_character: char,
 ) -> io::Result<()> {
     let word: WordAsset = read_json(SINGLE_P_WORD_ASSET)?;
-    let word_world = Mat4::translation(P_WORD_WORLD_X, P_WORD_WORLD_Y, P_WORD_WORLD_Z)
+    let word_world = Mat4::translation(position.x, position.y, position.z)
         * Mat4::uniform_scale(P_WORD_WORLD_SCALE);
 
     for child in &word.children {
@@ -638,13 +644,27 @@ fn draw_camera_viewport(canvas: &mut Canvas, state: &AppState) -> io::Result<()>
 
     let inner = camera_viewport_content_rect();
     canvas.with_clip_rect(inner, |canvas| {
-        draw_single_p_in_camera_viewport(canvas, state, inner, state.glyph_stroke_character())
+        draw_single_p_at_camera_viewport(
+            canvas,
+            state,
+            inner,
+            Vec3::new(P2_WORD_WORLD_X, P2_WORD_WORLD_Y, P2_WORD_WORLD_Z),
+            state.glyph_stroke_character(),
+        )?;
+
+        draw_single_p_at_camera_viewport(
+            canvas,
+            state,
+            inner,
+            Vec3::new(P_WORD_WORLD_X, P_WORD_WORLD_Y, P_WORD_WORLD_Z),
+            state.glyph_stroke_character(),
+        )
     })?;
 
     canvas.draw_text(
         Point2::new(left + 2, bottom - 1),
         &format!(
-            "pos [{:.2},{:.2},{:.2}] yaw {:.1} pitch {:.1}",
+            "pos [{:.2},{:.2},{:.2}] yaw {:.1} pitch {:.1} | P2 depth test",
             state.world_camera_position.x,
             state.world_camera_position.y,
             state.world_camera_position.z,
