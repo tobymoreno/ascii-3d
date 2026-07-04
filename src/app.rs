@@ -28,6 +28,7 @@ use crate::{
         render_crew, render_cross_negative_z, render_cross_positive_z, render_obj_box, render_pitt,
         render_pitt_crew, render_quad4, render_rotation, render_single_c, render_single_e,
         render_single_i, render_single_p, render_single_r, render_single_t, render_single_w,
+        render_world_camera_spaces,
     },
 };
 
@@ -269,6 +270,10 @@ fn render_scene(state: &AppState, assets: &SceneAssets) -> io::Result<()> {
     let projector = projector_from_config(&assets.projection_config);
 
     match state.current_scene() {
+        Scene::WorldCameraSpaces => {
+            render_world_camera_spaces(&mut canvas)?;
+        }
+
         Scene::PittCrew => {
             render_pitt_crew(&mut canvas, Some(state.glyph_stroke_character()))?;
         }
@@ -510,16 +515,16 @@ mod tests {
     fn application_starts_on_single_p_scene() {
         let state = AppState::new();
 
-        assert_eq!(state.current_scene(), Scene::PittCrew);
+        assert_eq!(state.current_scene(), Scene::WorldCameraSpaces);
     }
 
     #[test]
-    fn next_scene_moves_to_crew_scene() {
+    fn next_scene_moves_to_pittcrew_scene() {
         let mut state = AppState::new();
 
         state.next_scene();
 
-        assert_eq!(state.current_scene(), Scene::Crew);
+        assert_eq!(state.current_scene(), Scene::PittCrew);
     }
 
     #[test]

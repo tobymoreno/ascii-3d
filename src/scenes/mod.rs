@@ -20,6 +20,7 @@ mod single_p;
 mod single_r;
 mod single_t;
 mod single_w;
+mod world_camera_spaces;
 
 pub use arbitrary_vector::render as render_arbitrary_vector;
 pub use asset_axes::render as render_asset_axes;
@@ -45,9 +46,11 @@ pub use single_p::render as render_single_p;
 pub use single_r::render as render_single_r;
 pub use single_t::render as render_single_t;
 pub use single_w::render as render_single_w;
+pub use world_camera_spaces::render as render_world_camera_spaces;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scene {
+    WorldCameraSpaces,
     PittCrew,
     Crew,
     Pitt,
@@ -78,7 +81,8 @@ pub enum Scene {
 
 impl Scene {
     /// Scenes are ordered newest-first.
-    pub const ALL: [Self; 26] = [
+    pub const ALL: [Self; 27] = [
+        Self::WorldCameraSpaces,
         Self::PittCrew,
         Self::Crew,
         Self::Pitt,
@@ -109,6 +113,7 @@ impl Scene {
 
     pub const fn title(self) -> &'static str {
         match self {
+            Self::WorldCameraSpaces => "world space and Camera3D foundation",
             Self::PittCrew => "PITT CREW word parent with P/I/T/T SPACE C/R/E/W glyphs",
             Self::Crew => "CREW word parent with C/R/E/W glyphs",
             Self::Pitt => "PITT word parent with P/I/T/T glyphs",
@@ -159,13 +164,13 @@ mod tests {
     use super::Scene;
 
     #[test]
-    fn newest_scene_is_pitt_crew() {
-        assert_eq!(Scene::ALL.first(), Some(&Scene::PittCrew));
+    fn newest_scene_is_world_camera_spaces() {
+        assert_eq!(Scene::ALL.first(), Some(&Scene::WorldCameraSpaces));
     }
 
     #[test]
-    fn next_scene_after_pitt_crew_is_crew() {
-        assert_eq!(Scene::ALL[1], Scene::Crew);
+    fn next_scene_after_world_camera_spaces_is_pittcrew() {
+        assert_eq!(Scene::ALL[1], Scene::PittCrew);
     }
 
     #[test]
@@ -185,11 +190,12 @@ mod tests {
 
     #[test]
     fn scene_count_matches_scene_all() {
-        assert_eq!(Scene::ALL.len(), 26);
+        assert_eq!(Scene::ALL.len(), 27);
     }
 
     #[test]
     fn animated_scenes_are_identified() {
+        assert!(!Scene::WorldCameraSpaces.is_animated());
         assert!(!Scene::PittCrew.is_animated());
         assert!(!Scene::Crew.is_animated());
         assert!(!Scene::Pitt.is_animated());
