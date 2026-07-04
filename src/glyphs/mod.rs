@@ -170,6 +170,7 @@ fn draw_glyph(
     glyph: &GlyphAsset,
     metadata: &GlyphMetadata,
     transform: Mat4,
+    stroke_character_override: Option<char>,
 ) -> io::Result<()> {
     if glyph.version != 1 || glyph.glyph_type != "bezier_glyph_3d" {
         return Err(io::Error::other(format!(
@@ -179,6 +180,7 @@ fn draw_glyph(
     }
 
     let display = &metadata.display;
+    let stroke_character = stroke_character_override.unwrap_or(display.stroke_character);
 
     for path in &glyph.paths {
         for segment in &path.segments {
@@ -191,7 +193,7 @@ fn draw_glyph(
                             transform,
                             vec3(*from),
                             vec3(*to),
-                            display.stroke_character,
+                            stroke_character,
                         );
                     }
 
@@ -244,7 +246,7 @@ fn draw_glyph(
                                 transform,
                                 start,
                                 end,
-                                display.stroke_character,
+                                stroke_character,
                             );
                         }
                     }
@@ -322,6 +324,17 @@ pub fn render_word(
     metadata: &WordMetadata,
     word_transform: Mat4,
 ) -> io::Result<()> {
+    render_word_with_stroke_character(canvas, projector, word, metadata, word_transform, None)
+}
+
+pub fn render_word_with_stroke_character(
+    canvas: &mut Canvas,
+    projector: &ObliqueProjector,
+    word: &WordAsset,
+    metadata: &WordMetadata,
+    word_transform: Mat4,
+    stroke_character_override: Option<char>,
+) -> io::Result<()> {
     if word.version != 1 || word.word_type != "bezier_word_3d" {
         return Err(io::Error::other(format!(
             "unsupported word '{}' version {} type {}",
@@ -337,7 +350,14 @@ pub fn render_word(
 
         let child_transform = word_transform * transform_matrix(child.local_transform);
 
-        draw_glyph(canvas, projector, &glyph, &glyph_metadata, child_transform)?;
+        draw_glyph(
+            canvas,
+            projector,
+            &glyph,
+            &glyph_metadata,
+            child_transform,
+            stroke_character_override,
+        )?;
 
         if metadata.display.show_child_labels {
             let label_position = child_transform.transform_point(Vec3::new(0.0, 1.1, 0.0));

@@ -1,0 +1,17 @@
+{
+  "name": "single_w_metadata",
+  "version": 1,
+  "word_asset": "single_w.word.json",
+  "display": {
+    "stroke_character": "*",
+    "show_word_bounds": true,
+    "word_bounds_character": ".",
+    "show_glyph_bounds": false,
+    "glyph_bounds_character": ":",
+    "show_baseline": true,
+    "baseline_character": "_",
+    "show_origin": true,
+    "origin_character": "O",
+    "show_child_labels": true
+  }
+}

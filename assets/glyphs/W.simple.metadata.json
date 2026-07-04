@@ -1,0 +1,16 @@
+{
+  "name": "glyph_W_simple_stroke_metadata",
+  "version": 1,
+  "glyph_asset": "W.simple.glyph.json",
+  "display": {
+    "stroke_character": "*",
+    "control_polygon_character": "-",
+    "control_point_character": "o",
+    "anchor_point_character": "+",
+    "show_strokes": true,
+    "show_control_points": false,
+    "show_control_polygons": false,
+    "show_anchor_points": false,
+    "show_labels": false
+  }
+}

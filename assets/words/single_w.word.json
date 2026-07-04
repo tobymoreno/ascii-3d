@@ -1,0 +1,37 @@
+{
+  "name": "single_w",
+  "version": 1,
+  "type": "bezier_word_3d",
+  "units": "relative_word_space",
+  "children": [
+    {
+      "id": "glyph_W_0",
+      "type": "bezier_glyph",
+      "glyph_asset": "assets/glyphs/W.simple.glyph.json",
+      "metadata_asset": "assets/glyphs/W.simple.metadata.json",
+      "character": "W",
+      "parent": "single_w",
+      "local_transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation_degrees": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "layout": {
+        "advance_width": 1.0,
+        "kerning_after": 0.0
+      }
+    }
+  ]
+}

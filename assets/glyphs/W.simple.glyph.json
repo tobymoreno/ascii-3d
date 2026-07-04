@@ -1,0 +1,107 @@
+{
+  "name": "glyph_W_simple_stroke",
+  "version": 1,
+  "type": "bezier_glyph_3d",
+  "units": "relative_glyph_space",
+  "coordinate_system": {
+    "origin": "bottom_left",
+    "x_range": [
+      0.0,
+      1.0
+    ],
+    "y_range": [
+      0.0,
+      1.0
+    ],
+    "z_plane": 0.0,
+    "advance_width": 1.0,
+    "baseline_y": 0.0,
+    "cap_height_y": 1.0
+  },
+  "paths": [
+    {
+      "id": "left_downstroke",
+      "role": "left_stem",
+      "closed": false,
+      "segments": [
+        {
+          "type": "line",
+          "from": [
+            0.12,
+            1.0,
+            0.0
+          ],
+          "to": [
+            0.28,
+            0.0,
+            0.0
+          ]
+        }
+      ]
+    },
+    {
+      "id": "left_upstroke",
+      "role": "inner_diagonal",
+      "closed": false,
+      "segments": [
+        {
+          "type": "line",
+          "from": [
+            0.28,
+            0.0,
+            0.0
+          ],
+          "to": [
+            0.5,
+            0.58,
+            0.0
+          ]
+        }
+      ]
+    },
+    {
+      "id": "right_downstroke",
+      "role": "inner_diagonal",
+      "closed": false,
+      "segments": [
+        {
+          "type": "line",
+          "from": [
+            0.5,
+            0.58,
+            0.0
+          ],
+          "to": [
+            0.72,
+            0.0,
+            0.0
+          ]
+        }
+      ]
+    },
+    {
+      "id": "right_upstroke",
+      "role": "right_stem",
+      "closed": false,
+      "segments": [
+        {
+          "type": "line",
+          "from": [
+            0.72,
+            0.0,
+            0.0
+          ],
+          "to": [
+            0.88,
+            1.0,
+            0.0
+          ]
+        }
+      ]
+    }
+  ],
+  "sampling": {
+    "default_segments_per_curve": 16,
+    "minimum_segments_per_curve": 1
+  }
+}

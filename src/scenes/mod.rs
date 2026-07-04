@@ -10,9 +10,13 @@ mod cross_product;
 mod obj_box;
 mod quad4;
 mod rotation;
+mod single_c;
+mod single_e;
 mod single_i;
 mod single_p;
+mod single_r;
 mod single_t;
+mod single_w;
 
 pub use arbitrary_vector::render as render_arbitrary_vector;
 pub use asset_axes::render as render_asset_axes;
@@ -28,12 +32,20 @@ pub use cross_product::{
 pub use obj_box::render as render_obj_box;
 pub use quad4::render as render_quad4;
 pub use rotation::{RotationAxis, render as render_rotation};
+pub use single_c::render as render_single_c;
+pub use single_e::render as render_single_e;
 pub use single_i::render as render_single_i;
 pub use single_p::render as render_single_p;
+pub use single_r::render as render_single_r;
 pub use single_t::render as render_single_t;
+pub use single_w::render as render_single_w;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scene {
+    SingleE,
+    SingleW,
+    SingleC,
+    SingleR,
     SingleT,
     SingleI,
     SingleP,
@@ -57,7 +69,11 @@ pub enum Scene {
 
 impl Scene {
     /// Scenes are ordered newest-first.
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 23] = [
+        Self::SingleE,
+        Self::SingleW,
+        Self::SingleC,
+        Self::SingleR,
         Self::SingleT,
         Self::SingleI,
         Self::SingleP,
@@ -81,6 +97,10 @@ impl Scene {
 
     pub const fn title(self) -> &'static str {
         match self {
+            Self::SingleE => "single_e word parent with E glyph",
+            Self::SingleW => "single_w word parent with W glyph",
+            Self::SingleC => "single_c word parent with C glyph",
+            Self::SingleR => "single_r word parent with R glyph",
             Self::SingleT => "single_t word parent with T glyph",
             Self::SingleI => "single_i word parent with I glyph",
             Self::SingleP => "single_p word parent with P glyph",
@@ -124,23 +144,24 @@ mod tests {
     use super::Scene;
 
     #[test]
-    fn newest_scene_is_single_t() {
-        assert_eq!(Scene::ALL.first(), Some(&Scene::SingleT));
+    fn newest_scene_is_single_e() {
+        assert_eq!(Scene::ALL.first(), Some(&Scene::SingleE));
     }
 
     #[test]
-    fn single_i_single_p_and_bezier_scenes_follow_single_t() {
-        assert_eq!(Scene::ALL[1], Scene::SingleI);
-        assert_eq!(Scene::ALL[2], Scene::SingleP);
-        assert_eq!(Scene::ALL[3], Scene::BezierAxes);
-        assert_eq!(Scene::ALL[4], Scene::AssetAxesRotateX);
-        assert_eq!(Scene::ALL[5], Scene::AssetAxesRotateY);
-        assert_eq!(Scene::ALL[6], Scene::AssetAxesRotateZ);
+    fn single_w_single_c_single_r_single_t_single_i_single_p_and_bezier_scenes_follow_single_e() {
+        assert_eq!(Scene::ALL[1], Scene::SingleW);
+        assert_eq!(Scene::ALL[2], Scene::SingleC);
+        assert_eq!(Scene::ALL[3], Scene::SingleR);
+        assert_eq!(Scene::ALL[4], Scene::SingleT);
+        assert_eq!(Scene::ALL[5], Scene::SingleI);
+        assert_eq!(Scene::ALL[6], Scene::SingleP);
+        assert_eq!(Scene::ALL[7], Scene::BezierAxes);
     }
 
     #[test]
-    fn quad4_is_eighth() {
-        assert_eq!(Scene::ALL[7], Scene::Quad4);
+    fn quad4_is_tenth() {
+        assert_eq!(Scene::ALL[10], Scene::Quad4);
     }
 
     #[test]
@@ -149,12 +170,16 @@ mod tests {
     }
 
     #[test]
-    fn scene_count_is_nineteen() {
-        assert_eq!(Scene::ALL.len(), 19);
+    fn scene_count_is_twenty_one() {
+        assert_eq!(Scene::ALL.len(), 21);
     }
 
     #[test]
     fn animated_scenes_are_identified() {
+        assert!(!Scene::SingleE.is_animated());
+        assert!(!Scene::SingleW.is_animated());
+        assert!(!Scene::SingleC.is_animated());
+        assert!(!Scene::SingleR.is_animated());
         assert!(!Scene::SingleT.is_animated());
         assert!(!Scene::SingleI.is_animated());
         assert!(!Scene::SingleP.is_animated());

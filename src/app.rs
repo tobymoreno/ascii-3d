@@ -26,7 +26,8 @@ use crate::{
         RotationAxis, Scene, render_arbitrary_vector, render_asset_axes_rotation, render_axes,
         render_bezier_axes, render_camera, render_camera_motion, render_camera_turntable,
         render_cross_negative_z, render_cross_positive_z, render_obj_box, render_quad4,
-        render_rotation, render_single_i, render_single_p, render_single_t,
+        render_rotation, render_single_c, render_single_e, render_single_i, render_single_p,
+        render_single_r, render_single_t, render_single_w,
     },
 };
 
@@ -37,6 +38,13 @@ const ROTATION_SPEED_DEGREES_PER_SECOND: f32 = 30.0;
 const FULL_ROTATION_DEGREES: f32 = 360.0;
 
 const FRAME_DURATION: Duration = Duration::from_nanos(1_000_000_000 / 60);
+
+const GLYPH_STROKE_CHARACTERS: &[char] = &[
+    '*', '+', '#', '@', '%', '&', '=', '-', '~', '.', ':', ';', 'o', 'O', '0', '·', '•', '○', '●',
+    '─', '│', '┌', '┐', '└', '┘', '┼', '═', '║', '╔', '╗', '╚', '╝', '╬', '█', '▓', '▒', '░',
+];
+
+const DEFAULT_GLYPH_STROKE_INDEX: usize = 0;
 
 struct TerminalGuard;
 
@@ -62,6 +70,7 @@ struct AppState {
     scene_position: usize,
     animation_angle_degrees: f32,
     box_angle_degrees: f32,
+    glyph_stroke_index: usize,
 }
 
 impl AppState {
@@ -70,6 +79,7 @@ impl AppState {
             scene_position: 0,
             animation_angle_degrees: 0.0,
             box_angle_degrees: 0.0,
+            glyph_stroke_index: DEFAULT_GLYPH_STROKE_INDEX,
         }
     }
 
@@ -95,6 +105,30 @@ impl AppState {
     fn reset_animation(&mut self) {
         self.animation_angle_degrees = 0.0;
         self.box_angle_degrees = 0.0;
+    }
+
+    fn glyph_stroke_character(&self) -> char {
+        GLYPH_STROKE_CHARACTERS[self.glyph_stroke_index]
+    }
+
+    fn glyph_stroke_position(&self) -> usize {
+        self.glyph_stroke_index + 1
+    }
+
+    fn glyph_stroke_character_count(&self) -> usize {
+        GLYPH_STROKE_CHARACTERS.len()
+    }
+
+    fn next_glyph_stroke_character(&mut self) {
+        self.glyph_stroke_index = (self.glyph_stroke_index + 1) % GLYPH_STROKE_CHARACTERS.len();
+    }
+
+    fn previous_glyph_stroke_character(&mut self) {
+        self.glyph_stroke_index = if self.glyph_stroke_index == 0 {
+            GLYPH_STROKE_CHARACTERS.len() - 1
+        } else {
+            self.glyph_stroke_index - 1
+        };
     }
 
     fn update(&mut self, elapsed: Duration) -> bool {
@@ -235,14 +269,26 @@ fn render_scene(state: &AppState, assets: &SceneAssets) -> io::Result<()> {
     let projector = projector_from_config(&assets.projection_config);
 
     match state.current_scene() {
+        Scene::SingleE => {
+            render_single_e(&mut canvas, Some(state.glyph_stroke_character()))?;
+        }
+        Scene::SingleW => {
+            render_single_w(&mut canvas, Some(state.glyph_stroke_character()))?;
+        }
+        Scene::SingleC => {
+            render_single_c(&mut canvas, Some(state.glyph_stroke_character()))?;
+        }
+        Scene::SingleR => {
+            render_single_r(&mut canvas, Some(state.glyph_stroke_character()))?;
+        }
         Scene::SingleT => {
-            render_single_t(&mut canvas)?;
+            render_single_t(&mut canvas, Some(state.glyph_stroke_character()))?;
         }
         Scene::SingleI => {
-            render_single_i(&mut canvas)?;
+            render_single_i(&mut canvas, Some(state.glyph_stroke_character()))?;
         }
         Scene::SingleP => {
-            render_single_p(&mut canvas)?;
+            render_single_p(&mut canvas, Some(state.glyph_stroke_character()))?;
         }
 
         Scene::BezierAxes => {
@@ -362,10 +408,13 @@ fn render_scene(state: &AppState, assets: &SceneAssets) -> io::Result<()> {
     canvas.draw_text(
         Point2::new(2, 27),
         &format!(
-            "[Scene {}/{}] {} | Space/Right: older  Left: newer  Q/Esc: quit",
+            "[Scene {}/{}] {} | Glyph '{}' [{}/{}]  Space: next char  Backspace: prev char  Right/Enter: older  Left: newer  Q/Esc: quit",
             state.scene_position + 1,
             Scene::ALL.len(),
             state.current_scene().title(),
+            state.glyph_stroke_character(),
+            state.glyph_stroke_position(),
+            state.glyph_stroke_character_count(),
         ),
     );
 
@@ -408,7 +457,17 @@ pub fn run() -> io::Result<()> {
         }
 
         match key.code {
-            KeyCode::Char(' ') | KeyCode::Right | KeyCode::Enter => {
+            KeyCode::Char(' ') => {
+                state.next_glyph_stroke_character();
+                render_scene(&state, &assets)?;
+            }
+
+            KeyCode::Backspace => {
+                state.previous_glyph_stroke_character();
+                render_scene(&state, &assets)?;
+            }
+
+            KeyCode::Right | KeyCode::Enter => {
                 state.next_scene();
                 previous_time = Instant::now();
                 render_scene(&state, &assets)?;
@@ -440,16 +499,16 @@ mod tests {
     fn application_starts_on_single_p_scene() {
         let state = AppState::new();
 
-        assert_eq!(state.current_scene(), Scene::SingleT);
+        assert_eq!(state.current_scene(), Scene::SingleE);
     }
 
     #[test]
-    fn next_scene_moves_to_single_i_scene() {
+    fn next_scene_moves_to_single_w_scene() {
         let mut state = AppState::new();
 
         state.next_scene();
 
-        assert_eq!(state.current_scene(), Scene::SingleI);
+        assert_eq!(state.current_scene(), Scene::SingleW);
     }
 
     #[test]
@@ -459,6 +518,33 @@ mod tests {
         state.previous_scene();
 
         assert_eq!(state.current_scene(), Scene::Axes);
+    }
+
+    #[test]
+    fn glyph_stroke_character_defaults_to_star() {
+        let state = AppState::new();
+
+        assert_eq!(state.glyph_stroke_character(), '*');
+    }
+
+    #[test]
+    fn glyph_stroke_character_cycles_forward_and_backward() {
+        let mut state = AppState::new();
+
+        state.next_glyph_stroke_character();
+        assert_eq!(state.glyph_stroke_character(), '+');
+
+        state.previous_glyph_stroke_character();
+        assert_eq!(state.glyph_stroke_character(), '*');
+    }
+
+    #[test]
+    fn glyph_stroke_character_wraps_backward_to_last_curated_character() {
+        let mut state = AppState::new();
+
+        state.previous_glyph_stroke_character();
+
+        assert_eq!(state.glyph_stroke_character(), '░');
     }
 
     #[test]
