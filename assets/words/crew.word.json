@@ -1,0 +1,124 @@
+{
+  "name": "crew",
+  "version": 1,
+  "type": "bezier_word_3d",
+  "units": "relative_word_space",
+  "children": [
+    {
+      "id": "glyph_C_0",
+      "type": "bezier_glyph",
+      "glyph_asset": "assets/glyphs/C.simple.glyph.json",
+      "metadata_asset": "assets/glyphs/C.simple.metadata.json",
+      "character": "C",
+      "parent": "crew",
+      "local_transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation_degrees": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "layout": {
+        "advance_width": 1.0,
+        "kerning_after": 0.0
+      }
+    },
+    {
+      "id": "glyph_R_1",
+      "type": "bezier_glyph",
+      "glyph_asset": "assets/glyphs/R.simple.glyph.json",
+      "metadata_asset": "assets/glyphs/R.simple.metadata.json",
+      "character": "R",
+      "parent": "crew",
+      "local_transform": {
+        "translation": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "rotation_degrees": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "layout": {
+        "advance_width": 1.0,
+        "kerning_after": 0.0
+      }
+    },
+    {
+      "id": "glyph_E_2",
+      "type": "bezier_glyph",
+      "glyph_asset": "assets/glyphs/E.simple.glyph.json",
+      "metadata_asset": "assets/glyphs/E.simple.metadata.json",
+      "character": "E",
+      "parent": "crew",
+      "local_transform": {
+        "translation": [
+          2.0,
+          0.0,
+          0.0
+        ],
+        "rotation_degrees": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "layout": {
+        "advance_width": 1.0,
+        "kerning_after": 0.0
+      }
+    },
+    {
+      "id": "glyph_W_3",
+      "type": "bezier_glyph",
+      "glyph_asset": "assets/glyphs/W.simple.glyph.json",
+      "metadata_asset": "assets/glyphs/W.simple.metadata.json",
+      "character": "W",
+      "parent": "crew",
+      "local_transform": {
+        "translation": [
+          3.0,
+          0.0,
+          0.0
+        ],
+        "rotation_degrees": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "layout": {
+        "advance_width": 1.0,
+        "kerning_after": 0.0
+      }
+    }
+  ]
+}

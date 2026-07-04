@@ -1,0 +1,17 @@
+{
+  "name": "crew_metadata",
+  "version": 1,
+  "word_asset": "crew.word.json",
+  "display": {
+    "stroke_character": "*",
+    "show_word_bounds": false,
+    "word_bounds_character": ".",
+    "show_glyph_bounds": false,
+    "glyph_bounds_character": ":",
+    "show_baseline": false,
+    "baseline_character": "_",
+    "show_origin": false,
+    "origin_character": "O",
+    "show_child_labels": true
+  }
+}

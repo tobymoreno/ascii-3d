@@ -1,0 +1,77 @@
+{
+  "name": "crew_axes_scene",
+  "version": 1,
+  "units": "world",
+  "description": "Scene hierarchy with Cartesian axes as the parent and a word parent spelling CREW with monospace glyph children.",
+  "projection_preset": "assets/projections/plan_xy.projection.json",
+  "nodes": [
+    {
+      "id": "axes_root",
+      "type": "cartesian_axes",
+      "geometry_asset": "assets/cartesian_axes.obj",
+      "metadata_asset": "assets/cartesian_axes.json",
+      "parent": null,
+      "local_transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation_degrees": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "display": {
+        "visible": true,
+        "show_labels": true
+      }
+    },
+    {
+      "id": "word_crew",
+      "type": "bezier_word",
+      "word_asset": "assets/words/crew.word.json",
+      "metadata_asset": "assets/words/crew.metadata.json",
+      "parent": "axes_root",
+      "local_transform": {
+        "translation": [
+          0.25,
+          0.35,
+          0.0
+        ],
+        "rotation_degrees": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          0.85,
+          0.85,
+          0.85
+        ]
+      },
+      "display": {
+        "visible": true,
+        "show_word_bounds": false,
+        "show_glyphs": true
+      }
+    }
+  ],
+  "hierarchy": {
+    "axes_root": [
+      "word_crew"
+    ],
+    "word_crew": [
+      "glyph_C_0",
+      "glyph_R_1",
+      "glyph_E_2",
+      "glyph_W_3"
+    ]
+  }
+}
