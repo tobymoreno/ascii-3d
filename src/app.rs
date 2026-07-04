@@ -259,6 +259,17 @@ impl AppState {
         };
     }
 
+    fn reset_world_camera(&mut self) {
+        let world_camera_position = Vec3::new(0.65, 0.55, 0.35);
+        let p_word_position = Vec3::new(P_WORD_WORLD_X, P_WORD_WORLD_Y, P_WORD_WORLD_Z);
+        let (world_camera_yaw_degrees, world_camera_pitch_degrees) =
+            yaw_pitch_toward(world_camera_position, p_word_position);
+
+        self.world_camera_position = world_camera_position;
+        self.world_camera_yaw_degrees = world_camera_yaw_degrees;
+        self.world_camera_pitch_degrees = world_camera_pitch_degrees;
+    }
+
     fn move_world_camera(&mut self, delta: Vec3) {
         self.world_camera_position = Vec3::new(
             self.world_camera_position.x + delta.x,
@@ -875,6 +886,12 @@ pub fn run() -> io::Result<()> {
 
         if key.code == KeyCode::Esc {
             break;
+        }
+
+        if matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R')) {
+            state.reset_world_camera();
+            render_scene(&state, &assets, &mut previous_frame)?;
+            continue;
         }
 
         match state.control_mode {
