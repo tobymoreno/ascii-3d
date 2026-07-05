@@ -137,7 +137,11 @@ impl MenuState {
     }
 }
 
-const FILE_ITEMS: &[MenuItem] = &[MenuItem::real("Exit", AppCommand::Quit)];
+const FILE_ITEMS: &[MenuItem] = &[
+    MenuItem::real("Load .a3d...", AppCommand::OpenA3dFilePicker),
+    MenuItem::real("Reload current .a3d", AppCommand::ReloadA3d),
+    MenuItem::real("Exit", AppCommand::Quit),
+];
 
 const SCENE_ITEMS: &[MenuItem] = &[
     MenuItem::real("Next scene", AppCommand::NextScene),
