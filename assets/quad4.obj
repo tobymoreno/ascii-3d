@@ -1,9 +1,0 @@
-# Small 4-vertex quad centered at the origin.
-# This is a flat square in the XY plane at Z = 0.
-
-v -0.5 -0.5  0.0
-v  0.5 -0.5  0.0
-v  0.5  0.5  0.0
-v -0.5  0.5  0.0
-
-f 1 2 3 4
