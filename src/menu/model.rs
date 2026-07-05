@@ -176,6 +176,10 @@ const DEBUG_ITEMS: &[MenuItem] = &[
     MenuItem::placeholder("Toggle depth view", AppCommand::ToggleDepthView),
     MenuItem::placeholder("Toggle projection debug", AppCommand::ToggleProjectionDebug),
     MenuItem::real("Toggle frame timing", AppCommand::ToggleFrameTiming),
+    MenuItem::real(
+        "Show OS graphics overlay",
+        AppCommand::ShowOsGraphicsOverlay,
+    ),
 ];
 
 const HELP_ITEMS: &[MenuItem] = &[

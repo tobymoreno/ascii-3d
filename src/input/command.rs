@@ -51,6 +51,7 @@ pub enum AppCommand {
     ToggleDepthView,
     ToggleProjectionDebug,
     ToggleFrameTiming,
+    ShowOsGraphicsOverlay,
 }
 
 pub fn menu_command_for_key(key: KeyCode) -> Option<AppCommand> {
