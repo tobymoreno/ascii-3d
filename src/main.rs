@@ -1,3 +1,7 @@
+#[cfg(target_os = "macos")]
+#[macro_use]
+extern crate objc;
+
 mod a3d;
 mod app;
 mod axis_metadata;
@@ -6,6 +10,7 @@ mod canvas;
 mod curves;
 mod geometry2d;
 mod glyphs;
+mod graphics;
 mod input;
 mod math;
 mod menu;

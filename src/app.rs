@@ -1932,6 +1932,12 @@ fn apply_app_command(state: &mut AppState, command: AppCommand) -> KeyHandling {
             KeyHandling::Handled
         }
 
+        AppCommand::ShowOsGraphicsOverlay => {
+            crate::graphics::raylib_overlay::spawn_raylib_overlay_demo();
+
+            KeyHandling::Handled
+        }
+
         AppCommand::ToggleFrameTiming => {
             state.toggle_frame_timing();
             KeyHandling::Handled
