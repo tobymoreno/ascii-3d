@@ -799,6 +799,58 @@ fn draw_camera_viewport(canvas: &mut Canvas, state: &AppState) -> io::Result<()>
     Ok(())
 }
 
+fn render_camera_viewport_canvas(state: &AppState) -> io::Result<Canvas> {
+    const VIEWPORT_CONTENT_WIDTH: usize = 78;
+    const VIEWPORT_CONTENT_HEIGHT: usize = 16;
+
+    let mut canvas = Canvas::new(VIEWPORT_CONTENT_WIDTH, VIEWPORT_CONTENT_HEIGHT);
+
+    canvas.draw_text(Point2::new(1, 0), "Camera3D viewport content");
+
+    let inner = ClipRect {
+        x: 1,
+        y: 2,
+        width: VIEWPORT_CONTENT_WIDTH.saturating_sub(2),
+        height: VIEWPORT_CONTENT_HEIGHT.saturating_sub(5),
+    };
+
+    let mut depth_buffer = CameraViewportDepthBuffer::new(inner);
+
+    canvas.with_clip_rect(inner, |canvas| {
+        draw_single_p_at_camera_viewport(
+            canvas,
+            &mut depth_buffer,
+            state,
+            inner,
+            Vec3::new(P2_WORD_WORLD_X, P2_WORD_WORLD_Y, P2_WORD_WORLD_Z),
+            state.glyph_stroke_character(),
+        )?;
+
+        draw_single_p_at_camera_viewport(
+            canvas,
+            &mut depth_buffer,
+            state,
+            inner,
+            Vec3::new(P_WORD_WORLD_X, P_WORD_WORLD_Y, P_WORD_WORLD_Z),
+            state.glyph_stroke_character(),
+        )
+    })?;
+
+    canvas.draw_text(
+        Point2::new(1, VIEWPORT_CONTENT_HEIGHT as i32 - 2),
+        &format!(
+            "pos [{:.2},{:.2},{:.2}] yaw {:.1} pitch {:.1} | P2 depth test",
+            state.world_camera_position.x,
+            state.world_camera_position.y,
+            state.world_camera_position.z,
+            state.world_camera_yaw_degrees,
+            state.world_camera_pitch_degrees,
+        ),
+    );
+
+    Ok(canvas)
+}
+
 fn render_scene_frame(state: &AppState, assets: &SceneAssets) -> io::Result<Canvas> {
     let mut canvas = Canvas::new(CANVAS_WIDTH, CANVAS_HEIGHT);
     let projector = projector_from_config(&assets.projection_config);
@@ -963,16 +1015,18 @@ fn render_scene_frame(state: &AppState, assets: &SceneAssets) -> io::Result<Canv
         }
     }
 
-    canvas.draw_text(Point2::new(2, HEADER_ROW), "Scene: WorldSpace3D + Camera3D");
-
-    draw_camera_viewport(&mut canvas, state)?;
+    canvas.draw_text(
+        Point2::new(2, HEADER_ROW),
+        &format!("Scene: {}", state.current_scene().title()),
+    );
 
     canvas.draw_text(
         Point2::new(2, FOOTER_ROW),
         &format!(
-            "[{}/{}] world+Camera3D | Mode: {} | Glyph '{}' | Menu: {} | h help | Esc quit",
+            "[{}/{}] {} | Mode: {} | Glyph '{}' | Menu: {} | h help | Esc quit",
             state.scene_position + 1,
             Scene::ALL.len(),
+            state.current_scene().title(),
             state.control_mode.label(),
             state.glyph_stroke_character(),
             state
@@ -993,9 +1047,19 @@ fn render_scene(
     previous_frame: &mut Option<String>,
 ) -> io::Result<()> {
     let scene_canvas = render_scene_frame(state, assets)?;
+    let camera_viewport_canvas = if matches!(state.current_scene(), Scene::WorldCameraSpaces) {
+        Some(render_camera_viewport_canvas(state)?)
+    } else {
+        None
+    };
 
     terminal.draw(|frame| {
-        crate::tui::draw(frame, &scene_canvas, state.active_menu.as_ref());
+        crate::tui::draw(
+            frame,
+            &scene_canvas,
+            camera_viewport_canvas.as_ref(),
+            state.active_menu.as_ref(),
+        );
     })?;
 
     *previous_frame = Some(scene_canvas.render());

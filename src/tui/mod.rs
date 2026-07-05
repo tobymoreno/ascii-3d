@@ -22,15 +22,32 @@ const MENU_KINDS: &[MenuKind] = &[
     MenuKind::Help,
 ];
 
-pub fn draw(frame: &mut Frame<'_>, scene_canvas: &Canvas, active_menu: Option<&MenuState>) {
+pub fn draw(
+    frame: &mut Frame<'_>,
+    scene_canvas: &Canvas,
+    camera_viewport_canvas: Option<&Canvas>,
+    active_menu: Option<&MenuState>,
+) {
     let area = frame.area();
-    let layout = Layout::default()
+
+    let shell = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(1), Constraint::Min(1)])
         .split(area);
 
-    draw_menu_bar(frame, layout[0], active_menu.map(MenuState::kind));
-    draw_scene(frame, scene_canvas, layout[1]);
+    draw_menu_bar(frame, shell[0], active_menu.map(MenuState::kind));
+
+    if let Some(camera_viewport_canvas) = camera_viewport_canvas {
+        let content = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1), Constraint::Length(18)])
+            .split(shell[1]);
+
+        draw_scene(frame, scene_canvas, content[0]);
+        draw_camera_viewport_block(frame, camera_viewport_canvas, content[1]);
+    } else {
+        draw_scene(frame, scene_canvas, shell[1]);
+    }
 
     if let Some(menu) = active_menu {
         draw_menu_popup(
@@ -88,6 +105,16 @@ impl Widget for CanvasWidget<'_> {
     fn render(self, area: Rect, buffer: &mut ratatui::buffer::Buffer) {
         self.canvas.render_to_ratatui_buffer(area, buffer);
     }
+}
+
+fn draw_camera_viewport_block(frame: &mut Frame<'_>, canvas: &Canvas, area: Rect) {
+    let block = Block::default()
+        .title("Camera3D viewport")
+        .borders(Borders::ALL);
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    frame.render_widget(CanvasWidget { canvas }, inner);
 }
 
 fn draw_menu_popup(frame: &mut Frame<'_>, menu: &MenuState, area: Rect) {
