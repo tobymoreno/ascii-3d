@@ -121,7 +121,7 @@ mod tests {
             name: "cartesian_axes".to_string(),
             version: 1,
             units: "world".to_string(),
-            geometry_asset: "cartesian_axes.obj".to_string(),
+            geometry_asset: "models/cartesian_axes.obj".to_string(),
             origin: OriginMetadata {
                 position: [0.0, 0.0, 0.0],
                 label: String::new(),

@@ -8,7 +8,7 @@
     {
       "id": "axes_root",
       "type": "cartesian_axes",
-      "geometry_asset": "assets/cartesian_axes.obj",
+      "geometry_asset": "assets/models/cartesian_axes.obj",
       "metadata_asset": "assets/cartesian_axes.json",
       "parent": null,
       "local_transform": {

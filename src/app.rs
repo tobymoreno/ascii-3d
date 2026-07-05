@@ -765,7 +765,7 @@ fn load_scene_assets() -> io::Result<SceneAssets> {
 
     let quad4_scene_config = load_quad4_scene_config(asset_path("quad4.scene.json"))?;
 
-    if quad4_scene_config.mesh_asset != "quad4.obj" {
+    if quad4_scene_config.mesh_asset != "models/quad4.obj" {
         return Err(io::Error::other(format!(
             "quad4.scene.json references unexpected mesh asset '{}'",
             quad4_scene_config.mesh_asset,
@@ -776,14 +776,14 @@ fn load_scene_assets() -> io::Result<SceneAssets> {
 
     if quad4_mesh.vertices.len() != 4 {
         return Err(io::Error::other(format!(
-            "assets/quad4.obj expected 4 vertices, but loaded {}",
+            "assets/models/quad4.obj expected 4 vertices, but loaded {}",
             quad4_mesh.vertices.len(),
         )));
     }
 
     if quad4_mesh.faces.len() != 1 {
         return Err(io::Error::other(format!(
-            "assets/quad4.obj expected 1 face, but loaded {}",
+            "assets/models/quad4.obj expected 1 face, but loaded {}",
             quad4_mesh.faces.len(),
         )));
     }
@@ -2255,7 +2255,7 @@ mod tests {
 
     #[test]
     fn quad4_asset_exists() {
-        assert!(asset_path("quad4.obj").is_file());
+        assert!(asset_path("models/quad4.obj").is_file());
     }
 
     #[test]
@@ -2280,7 +2280,7 @@ mod tests {
 
     #[test]
     fn quad4_asset_loads_four_vertices() {
-        let mesh = load_mesh_asset("quad4.obj").expect("quad4.obj should load");
+        let mesh = load_mesh_asset("models/quad4.obj").expect("models/quad4.obj should load");
 
         assert_eq!(mesh.vertices.len(), 4);
         assert_eq!(mesh.faces.len(), 1);

@@ -2,7 +2,7 @@
   "name": "cartesian_axes",
   "version": 1,
   "units": "world",
-  "geometry_asset": "cartesian_axes.obj",
+  "geometry_asset": "models/cartesian_axes.obj",
   "origin": {
     "position": [
       0.0,

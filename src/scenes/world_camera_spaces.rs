@@ -19,7 +19,7 @@ use crate::{
 };
 
 const PROJECTION_ASSET: &str = "assets/projections/plan_xy.projection.json";
-const AXES_ASSET: &str = "assets/cartesian_axes.obj";
+const AXES_ASSET: &str = "assets/models/cartesian_axes.obj";
 const AXES_METADATA_ASSET: &str = "assets/cartesian_axes.json";
 const SINGLE_P_WORD_ASSET: &str = "assets/words/single_p.word.json";
 const SINGLE_P_WORD_METADATA_ASSET: &str = "assets/words/single_p.metadata.json";
