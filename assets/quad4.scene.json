@@ -1,6 +1,6 @@
 {
   "name": "camera_bound_fov_frustum_planes",
-  "mesh_asset": "quad4.obj",
+  "mesh_asset": "models/quad4.obj",
   "camera": {
     "position": [
       0.0,

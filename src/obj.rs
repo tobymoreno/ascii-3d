@@ -330,6 +330,7 @@ mod tests {
     fn loads_cartesian_line_asset_from_disk() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("assets")
+            .join("models")
             .join("cartesian_axes.obj");
 
         let mesh = load_obj(&path)

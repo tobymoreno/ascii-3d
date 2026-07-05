@@ -169,7 +169,10 @@ pub fn render(
         "Width = height * aspect_ratio; not fixed manual scale",
     );
 
-    canvas.draw_text(Point2::new(2, 25), "Config: assets/quad4.scene.json");
+    canvas.draw_text(
+        Point2::new(2, 25),
+        "Config: assets/quad4.scene.json | Mesh: assets/models/quad4.obj",
+    );
 
     canvas.draw_text(
         Point2::new(2, 26),
@@ -192,7 +195,7 @@ mod tests {
     fn config() -> Quad4SceneConfig {
         Quad4SceneConfig {
             name: "test".to_string(),
-            mesh_asset: "quad4.obj".to_string(),
+            mesh_asset: "models/quad4.obj".to_string(),
             camera: CameraConfig {
                 position: [0.0, 0.0, 0.0],
                 pitch_amplitude_degrees: 45.0,

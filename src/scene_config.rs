@@ -140,7 +140,7 @@ mod tests {
 
         config.validate().expect("quad4 scene should validate");
 
-        assert_eq!(config.mesh_asset, "quad4.obj");
+        assert_eq!(config.mesh_asset, "models/quad4.obj");
         assert_eq!(config.frustum.vertical_fov_degrees, 60.0);
         assert_eq!(config.frustum.aspect_ratio, 1.77778);
         assert_eq!(config.frustum.near_distance, 0.25);

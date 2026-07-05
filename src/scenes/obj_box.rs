@@ -28,7 +28,7 @@ pub fn render(
     canvas.draw_text(
         Point2::new(2, 1),
         &format!(
-            "Scene: rotating OBJ wireframe box  angle={:06.1}",
+            "Scene: rotating standard OBJ cube  angle={:06.1}",
             angle_degrees
         ),
     );
@@ -41,7 +41,7 @@ pub fn render(
             mesh.unique_edges().len()
         ),
     );
-    canvas.draw_text(Point2::new(2, 25), "Source: assets/box.obj");
+    canvas.draw_text(Point2::new(2, 25), "Source: assets/models/cube.obj");
     canvas.draw_text(
         Point2::new(2, 26),
         "Centered at origin; largest dimension normalized to 1.0",
