@@ -21,7 +21,11 @@ use crate::{
     glyphs::{
         GlyphAsset, GlyphMetadata, GlyphSegment, WordAsset, read_json, transform_matrix, vec3,
     },
+    input::{
+        AppCommand, camera_mode_command_for_key, menu_command_for_key, scene_mode_command_for_key,
+    },
     math::{Mat4, Vec3},
+    menu::{MenuState, draw_menu},
     mesh::Mesh,
     obj::load_obj,
     projection::ObliqueProjector,
@@ -187,6 +191,7 @@ struct AppState {
     box_angle_degrees: f32,
     glyph_stroke_index: usize,
     control_mode: ControlMode,
+    active_menu: Option<MenuState>,
     world_camera_position: Vec3,
     world_camera_yaw_degrees: f32,
     world_camera_pitch_degrees: f32,
@@ -205,6 +210,7 @@ impl AppState {
             box_angle_degrees: 0.0,
             glyph_stroke_index: DEFAULT_GLYPH_STROKE_INDEX,
             control_mode: ControlMode::Scene,
+            active_menu: None,
             world_camera_position,
             world_camera_yaw_degrees,
             world_camera_pitch_degrees,
@@ -264,6 +270,26 @@ impl AppState {
             ControlMode::Scene => ControlMode::Camera,
             ControlMode::Camera => ControlMode::Scene,
         };
+    }
+
+    fn open_menu(&mut self, kind: crate::menu::MenuKind) {
+        self.active_menu = Some(MenuState::new(kind));
+    }
+
+    fn close_menu(&mut self) {
+        self.active_menu = None;
+    }
+
+    fn move_menu_up(&mut self) {
+        if let Some(menu) = &mut self.active_menu {
+            menu.move_up();
+        }
+    }
+
+    fn move_menu_down(&mut self) {
+        if let Some(menu) = &mut self.active_menu {
+            menu.move_down();
+        }
     }
 
     fn reset_world_camera(&mut self) {
@@ -939,14 +965,23 @@ fn render_scene_frame(state: &AppState, assets: &SceneAssets) -> io::Result<Stri
 
     draw_camera_viewport(&mut canvas, state)?;
 
+    if let Some(menu) = &state.active_menu {
+        draw_menu(&mut canvas, menu, Point2::new(2, 4));
+    }
+
     canvas.draw_text(
         Point2::new(2, FOOTER_ROW),
         &format!(
-            "[{}/{}] world+Camera3D | Mode: {} | Glyph '{}' | Tab mode | R reset | Esc quit",
+            "[{}/{}] world+Camera3D | Mode: {} | Glyph '{}' | Menu: {} | h help | Esc quit",
             state.scene_position + 1,
             Scene::ALL.len(),
             state.control_mode.label(),
             state.glyph_stroke_character(),
+            state
+                .active_menu
+                .as_ref()
+                .map(|menu| menu.kind().title())
+                .unwrap_or("closed"),
         ),
     );
 
@@ -966,6 +1001,161 @@ fn render_scene(
     *previous_frame = Some(frame);
 
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyHandling {
+    Handled,
+    Ignored,
+    Quit,
+}
+
+fn apply_app_command(state: &mut AppState, command: AppCommand) -> KeyHandling {
+    match command {
+        AppCommand::Quit => KeyHandling::Quit,
+
+        AppCommand::ToggleControlMode => {
+            state.toggle_control_mode();
+            KeyHandling::Handled
+        }
+
+        AppCommand::NextScene => {
+            state.next_scene();
+            KeyHandling::Handled
+        }
+
+        AppCommand::PreviousScene => {
+            state.previous_scene();
+            KeyHandling::Handled
+        }
+
+        AppCommand::ResetWorldCamera | AppCommand::ResetCamera => {
+            state.reset_world_camera();
+            KeyHandling::Handled
+        }
+
+        AppCommand::NextGlyphStroke => {
+            state.next_glyph_stroke_character();
+            KeyHandling::Handled
+        }
+
+        AppCommand::PreviousGlyphStroke => {
+            state.previous_glyph_stroke_character();
+            KeyHandling::Handled
+        }
+
+        AppCommand::OpenMenu(kind) => {
+            state.open_menu(kind);
+            KeyHandling::Handled
+        }
+
+        AppCommand::CloseMenu => {
+            state.close_menu();
+            KeyHandling::Handled
+        }
+
+        AppCommand::MenuUp => {
+            state.move_menu_up();
+            KeyHandling::Handled
+        }
+
+        AppCommand::MenuDown => {
+            state.move_menu_down();
+            KeyHandling::Handled
+        }
+
+        AppCommand::MenuSelect => {
+            let Some(menu) = &state.active_menu else {
+                return KeyHandling::Ignored;
+            };
+
+            let selected_command = menu.selected_command();
+            state.close_menu();
+            apply_app_command(state, selected_command)
+        }
+
+        AppCommand::MoveCameraForward => {
+            state.move_world_camera_forward(CAMERA_MOVE_STEP);
+            KeyHandling::Handled
+        }
+
+        AppCommand::MoveCameraBackward => {
+            state.move_world_camera_forward(-CAMERA_MOVE_STEP);
+            KeyHandling::Handled
+        }
+
+        AppCommand::MoveCameraLeft => {
+            state.move_world_camera_right(-CAMERA_MOVE_STEP);
+            KeyHandling::Handled
+        }
+
+        AppCommand::MoveCameraRight => {
+            state.move_world_camera_right(CAMERA_MOVE_STEP);
+            KeyHandling::Handled
+        }
+
+        AppCommand::MoveCameraDown => {
+            state.move_world_camera_up(-CAMERA_MOVE_STEP);
+            KeyHandling::Handled
+        }
+
+        AppCommand::MoveCameraUp => {
+            state.move_world_camera_up(CAMERA_MOVE_STEP);
+            KeyHandling::Handled
+        }
+
+        AppCommand::RotateCameraLeft => {
+            state.rotate_world_camera(-5.0, 0.0);
+            KeyHandling::Handled
+        }
+
+        AppCommand::RotateCameraRight => {
+            state.rotate_world_camera(5.0, 0.0);
+            KeyHandling::Handled
+        }
+
+        AppCommand::RotateCameraUp => {
+            state.rotate_world_camera(0.0, 5.0);
+            KeyHandling::Handled
+        }
+
+        AppCommand::RotateCameraDown => {
+            state.rotate_world_camera(0.0, -5.0);
+            KeyHandling::Handled
+        }
+
+        // Cross-term menu placeholders. They intentionally render as handled
+        // so the menu stack, hotkeys, and help text can be wired before the
+        // feature-specific behavior exists.
+        AppCommand::ToggleCameraDebug
+        | AppCommand::ToggleNearPlaneDebug
+        | AppCommand::ToggleWorldAxes
+        | AppCommand::ToggleWorldGrid
+        | AppCommand::NextGlyph
+        | AppCommand::PreviousGlyph
+        | AppCommand::SelectGlyph
+        | AppCommand::ToggleSimulationPause
+        | AppCommand::StepSimulation
+        | AppCommand::ToggleDepthView
+        | AppCommand::ToggleProjectionDebug => KeyHandling::Handled,
+    }
+}
+
+fn handle_key_press(state: &mut AppState, key_code: KeyCode) -> KeyHandling {
+    if state.active_menu.is_some() {
+        return menu_command_for_key(key_code)
+            .map(|command| apply_app_command(state, command))
+            .unwrap_or(KeyHandling::Ignored);
+    }
+
+    let command = match state.control_mode {
+        ControlMode::Scene => scene_mode_command_for_key(key_code),
+        ControlMode::Camera => camera_mode_command_for_key(key_code),
+    };
+
+    command
+        .map(|command| apply_app_command(state, command))
+        .unwrap_or(KeyHandling::Ignored)
 }
 
 pub fn run() -> io::Result<()> {
@@ -999,110 +1189,13 @@ pub fn run() -> io::Result<()> {
             continue;
         }
 
-        if key.code == KeyCode::Esc {
-            break;
-        }
-
-        if matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R')) {
-            state.reset_world_camera();
-            render_scene(&state, &assets, &mut previous_frame)?;
-            continue;
-        }
-
-        match state.control_mode {
-            ControlMode::Scene => match key.code {
-                KeyCode::Tab => {
-                    state.toggle_control_mode();
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Char(' ') => {
-                    state.next_glyph_stroke_character();
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Backspace => {
-                    state.previous_glyph_stroke_character();
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Right | KeyCode::Enter => {
-                    state.next_scene();
-                    previous_time = Instant::now();
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Left => {
-                    state.previous_scene();
-                    previous_time = Instant::now();
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Char('q') | KeyCode::Char('Q') => {
-                    break;
-                }
-
-                _ => {}
-            },
-
-            ControlMode::Camera => match key.code {
-                KeyCode::Tab => {
-                    state.toggle_control_mode();
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Char('w') | KeyCode::Char('W') => {
-                    state.move_world_camera_forward(CAMERA_MOVE_STEP);
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Char('s') | KeyCode::Char('S') => {
-                    state.move_world_camera_forward(-CAMERA_MOVE_STEP);
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Char('a') | KeyCode::Char('A') => {
-                    state.move_world_camera_right(-CAMERA_MOVE_STEP);
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Char('d') | KeyCode::Char('D') => {
-                    state.move_world_camera_right(CAMERA_MOVE_STEP);
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Char('q') | KeyCode::Char('Q') => {
-                    state.move_world_camera_up(-CAMERA_MOVE_STEP);
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Char('e') | KeyCode::Char('E') => {
-                    state.move_world_camera_up(CAMERA_MOVE_STEP);
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Left => {
-                    state.rotate_world_camera(-5.0, 0.0);
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Right => {
-                    state.rotate_world_camera(5.0, 0.0);
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Up => {
-                    state.rotate_world_camera(0.0, 5.0);
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Down => {
-                    state.rotate_world_camera(0.0, -5.0);
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                _ => {}
-            },
+        match handle_key_press(&mut state, key.code) {
+            KeyHandling::Quit => break,
+            KeyHandling::Handled => {
+                previous_time = Instant::now();
+                render_scene(&state, &assets, &mut previous_frame)?;
+            }
+            KeyHandling::Ignored => {}
         }
     }
 
