@@ -70,6 +70,7 @@ pub fn scene_mode_command_for_key(key: KeyCode) -> Option<AppCommand> {
         KeyCode::Backspace => Some(AppCommand::PreviousGlyphStroke),
         KeyCode::Char('r') | KeyCode::Char('R') => Some(AppCommand::ResetWorldCamera),
 
+        KeyCode::Char('x') | KeyCode::Char('X') => Some(AppCommand::OpenMenu(MenuKind::File)),
         KeyCode::Char('m') | KeyCode::Char('M') => Some(AppCommand::OpenMenu(MenuKind::Scenes)),
         KeyCode::Char('c') | KeyCode::Char('C') => Some(AppCommand::OpenMenu(MenuKind::Camera)),
         KeyCode::Char('w') | KeyCode::Char('W') => Some(AppCommand::OpenMenu(MenuKind::World)),

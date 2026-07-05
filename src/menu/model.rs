@@ -6,6 +6,7 @@ use crate::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuKind {
+    File,
     Scenes,
     Camera,
     World,
@@ -18,6 +19,7 @@ pub enum MenuKind {
 impl MenuKind {
     pub const fn title(self) -> &'static str {
         match self {
+            Self::File => "File",
             Self::Scenes => "Scenes",
             Self::Camera => "Camera",
             Self::World => "World",
@@ -30,6 +32,7 @@ impl MenuKind {
 
     pub const fn hotkey(self) -> &'static str {
         match self {
+            Self::File => "x",
             Self::Scenes => "m",
             Self::Camera => "c",
             Self::World => "w",
@@ -42,6 +45,7 @@ impl MenuKind {
 
     pub fn items(self) -> &'static [MenuItem] {
         match self {
+            Self::File => FILE_ITEMS,
             Self::Scenes => SCENE_ITEMS,
             Self::Camera => CAMERA_ITEMS,
             Self::World => WORLD_ITEMS,
@@ -132,6 +136,8 @@ impl MenuState {
         MENU_BINDINGS
     }
 }
+
+const FILE_ITEMS: &[MenuItem] = &[MenuItem::real("Exit", AppCommand::Quit)];
 
 const SCENE_ITEMS: &[MenuItem] = &[
     MenuItem::real("Next scene", AppCommand::NextScene),
