@@ -175,6 +175,7 @@ const PHYSICS_ITEMS: &[MenuItem] = &[
 const DEBUG_ITEMS: &[MenuItem] = &[
     MenuItem::placeholder("Toggle depth view", AppCommand::ToggleDepthView),
     MenuItem::placeholder("Toggle projection debug", AppCommand::ToggleProjectionDebug),
+    MenuItem::real("Toggle frame timing", AppCommand::ToggleFrameTiming),
 ];
 
 const HELP_ITEMS: &[MenuItem] = &[

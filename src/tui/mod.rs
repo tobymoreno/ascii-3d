@@ -36,6 +36,7 @@ pub fn draw(
     camera_viewport_canvas: Option<&Canvas>,
     active_menu: Option<&MenuState>,
     debug_popup_lines: Option<&[String]>,
+    frame_timing_lines: Option<&[String]>,
     file_picker_view: Option<FilePickerView<'_>>,
 ) {
     let area = frame.area();
@@ -64,6 +65,14 @@ pub fn draw(
             frame,
             lines,
             top_right_rect(50, lines.len() as u16 + 6, area),
+        );
+    }
+
+    if let Some(lines) = frame_timing_lines {
+        draw_frame_timing(
+            frame,
+            lines,
+            top_left_rect(44, lines.len() as u16 + 2, area),
         );
     }
 
@@ -137,6 +146,23 @@ fn draw_camera_viewport_block(frame: &mut Frame<'_>, canvas: &Canvas, area: Rect
     let inner = block.inner(area);
     frame.render_widget(block, area);
     frame.render_widget(CanvasWidget { canvas }, inner);
+}
+
+fn draw_frame_timing(frame: &mut Frame<'_>, lines: &[String], area: Rect) {
+    let text = lines.join("\n");
+    let panel = Paragraph::new(text).block(Block::default().title("FPS").borders(Borders::ALL));
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(panel, area);
+}
+
+fn top_left_rect(width: u16, height: u16, area: Rect) -> Rect {
+    Rect {
+        x: area.x,
+        y: area.y.saturating_add(1),
+        width: width.min(area.width),
+        height: height.min(area.height.saturating_sub(1)),
+    }
 }
 
 fn draw_debug_popup(frame: &mut Frame<'_>, lines: &[String], area: Rect) {

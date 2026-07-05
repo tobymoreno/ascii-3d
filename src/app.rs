@@ -75,6 +75,10 @@ const CAMERA_VIEWPORT: ViewportRect = ViewportRect {
 const FOOTER_ROW: i32 = 43;
 
 const ROTATION_SPEED_DEGREES_PER_SECOND: f32 = 30.0;
+const PULSED_ROTATION_BASE_SPEED_DEGREES_PER_SECOND: f32 = 95.0;
+const PULSED_ROTATION_MIN_MULTIPLIER: f32 = 0.28;
+const PULSED_ROTATION_BOOST_MULTIPLIER: f32 = 2.45;
+const PULSED_ROTATION_SEGMENT_DEGREES: f32 = 180.0;
 const FULL_ROTATION_DEGREES: f32 = 360.0;
 
 const FRAME_DURATION: Duration = Duration::from_nanos(1_000_000_000 / 60);
@@ -185,6 +189,86 @@ impl ControlMode {
             Self::Scene => "Scene",
             Self::Camera => "Camera",
         }
+    }
+}
+
+fn smoothstep(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+
+    t * t * (3.0 - (2.0 * t))
+}
+
+fn pulsed_rotation_delta_degrees(current_angle_degrees: f32, elapsed: Duration) -> f32 {
+    let segment_phase = current_angle_degrees.rem_euclid(PULSED_ROTATION_SEGMENT_DEGREES)
+        / PULSED_ROTATION_SEGMENT_DEGREES;
+
+    let triangular_phase = if segment_phase < 0.5 {
+        segment_phase * 2.0
+    } else {
+        (1.0 - segment_phase) * 2.0
+    };
+
+    let eased_phase = smoothstep(triangular_phase);
+    let speed_multiplier =
+        PULSED_ROTATION_MIN_MULTIPLIER + (eased_phase * PULSED_ROTATION_BOOST_MULTIPLIER);
+
+    elapsed.as_secs_f32() * PULSED_ROTATION_BASE_SPEED_DEGREES_PER_SECOND * speed_multiplier
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct RenderTimings {
+    update: Duration,
+    scene_frame: Duration,
+    camera_viewport: Duration,
+    tui_draw: Duration,
+    total_render: Duration,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct FrameTimings {
+    update: Duration,
+    scene_frame: Duration,
+    camera_viewport: Duration,
+    tui_draw: Duration,
+    total_render: Duration,
+    total_frame: Duration,
+    fps: f32,
+}
+
+impl FrameTimings {
+    fn from_render(render: RenderTimings) -> Self {
+        let total_frame = render.update + render.total_render;
+        let fps = if total_frame.is_zero() {
+            0.0
+        } else {
+            1.0 / total_frame.as_secs_f32()
+        };
+
+        Self {
+            update: render.update,
+            scene_frame: render.scene_frame,
+            camera_viewport: render.camera_viewport,
+            tui_draw: render.tui_draw,
+            total_render: render.total_render,
+            total_frame,
+            fps,
+        }
+    }
+
+    fn ms(duration: Duration) -> f32 {
+        duration.as_secs_f32() * 1_000.0
+    }
+
+    fn lines(self) -> Vec<String> {
+        vec![
+            format!("fps        {:>7.1}", self.fps),
+            format!("frame      {:>7.2} ms", Self::ms(self.total_frame)),
+            format!("update     {:>7.2} ms", Self::ms(self.update)),
+            format!("render     {:>7.2} ms", Self::ms(self.total_render)),
+            format!("  scene    {:>7.2} ms", Self::ms(self.scene_frame)),
+            format!("  camera   {:>7.2} ms", Self::ms(self.camera_viewport)),
+            format!("  tui      {:>7.2} ms", Self::ms(self.tui_draw)),
+        ]
     }
 }
 
@@ -312,6 +396,8 @@ struct AppState {
     loaded_a3d_debug_popup_until: Option<Instant>,
     loaded_a3d_error: Option<String>,
     a3d_file_picker: Option<A3dFilePicker>,
+    show_frame_timing: bool,
+    frame_timings: FrameTimings,
 }
 
 impl AppState {
@@ -337,6 +423,8 @@ impl AppState {
             loaded_a3d_debug_popup_until: None,
             loaded_a3d_error: None,
             a3d_file_picker: None,
+            show_frame_timing: false,
+            frame_timings: FrameTimings::default(),
         }
     }
 
@@ -465,6 +553,19 @@ impl AppState {
             (self.world_camera_pitch_degrees + pitch_delta_degrees).clamp(-80.0, 80.0);
     }
 
+    fn toggle_frame_timing(&mut self) {
+        self.show_frame_timing = !self.show_frame_timing;
+        self.close_menu();
+    }
+
+    fn record_render_timings(&mut self, timings: RenderTimings) {
+        self.frame_timings = FrameTimings::from_render(timings);
+    }
+
+    fn frame_timing_lines(&self) -> Option<Vec<String>> {
+        self.show_frame_timing.then(|| self.frame_timings.lines())
+    }
+
     fn open_a3d_file_picker(&mut self) {
         let start_dir = self
             .loaded_a3d_root
@@ -567,6 +668,10 @@ impl AppState {
 
     fn update(&mut self, elapsed: Duration) -> bool {
         let delta_degrees = elapsed.as_secs_f32() * ROTATION_SPEED_DEGREES_PER_SECOND;
+        let pulsed_delta_degrees =
+            pulsed_rotation_delta_degrees(self.animation_angle_degrees, elapsed);
+        let pulsed_box_delta_degrees =
+            pulsed_rotation_delta_degrees(self.box_angle_degrees, elapsed);
 
         match self.current_scene() {
             Scene::LoadedA3d => {
@@ -576,10 +681,13 @@ impl AppState {
                 true
             }
 
-            Scene::AssetAxesRotateX
-            | Scene::AssetAxesRotateY
-            | Scene::AssetAxesRotateZ
-            | Scene::Quad4
+            Scene::AssetAxesRotateX | Scene::AssetAxesRotateY | Scene::AssetAxesRotateZ => {
+                self.animation_angle_degrees += pulsed_delta_degrees;
+                self.animation_angle_degrees %= FULL_ROTATION_DEGREES;
+                true
+            }
+
+            Scene::Quad4
             | Scene::CameraMotion
             | Scene::CameraTurntable
             | Scene::RotateAxesX
@@ -591,7 +699,7 @@ impl AppState {
             }
 
             Scene::ObjBox => {
-                self.box_angle_degrees += delta_degrees;
+                self.box_angle_degrees += pulsed_box_delta_degrees;
                 self.box_angle_degrees %= FULL_ROTATION_DEGREES;
                 true
             }
@@ -1740,21 +1848,30 @@ fn render_scene(
     state: &AppState,
     assets: &SceneAssets,
     previous_frame: &mut Option<String>,
-) -> io::Result<()> {
+) -> io::Result<RenderTimings> {
+    let total_start = Instant::now();
+
+    let scene_start = Instant::now();
     let scene_canvas = render_scene_frame(state, assets)?;
+    let scene_frame = scene_start.elapsed();
+
+    let camera_start = Instant::now();
     let camera_viewport_canvas = match state.current_scene() {
         Scene::LoadedA3d => Some(render_loaded_a3d_camera_viewport_canvas(state)?),
         Scene::WorldCameraSpaces => Some(render_camera_viewport_canvas(state)?),
         _ => None,
     };
+    let camera_viewport = camera_start.elapsed();
 
     let debug_popup_lines = loaded_a3d_debug_popup_lines(state);
+    let frame_timing_lines = state.frame_timing_lines();
     let file_picker_labels = state.a3d_file_picker.as_ref().map(|picker| picker.labels());
     let file_picker_current_dir = state
         .a3d_file_picker
         .as_ref()
         .map(|picker| picker.current_dir.display().to_string());
 
+    let tui_start = Instant::now();
     terminal.draw(|frame| {
         let file_picker_view = match (
             state.a3d_file_picker.as_ref(),
@@ -1777,13 +1894,21 @@ fn render_scene(
             camera_viewport_canvas.as_ref(),
             state.active_menu.as_ref(),
             debug_popup_lines.as_deref(),
+            frame_timing_lines.as_deref(),
             file_picker_view,
         );
     })?;
+    let tui_draw = tui_start.elapsed();
 
     *previous_frame = Some(scene_canvas.render());
 
-    Ok(())
+    Ok(RenderTimings {
+        update: Duration::ZERO,
+        scene_frame,
+        camera_viewport,
+        tui_draw,
+        total_render: total_start.elapsed(),
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1804,6 +1929,11 @@ fn apply_app_command(state: &mut AppState, command: AppCommand) -> KeyHandling {
 
         AppCommand::ReloadA3d => {
             state.reload_a3d();
+            KeyHandling::Handled
+        }
+
+        AppCommand::ToggleFrameTiming => {
+            state.toggle_frame_timing();
             KeyHandling::Handled
         }
 
@@ -1998,15 +2128,22 @@ pub fn run() -> io::Result<()> {
     let mut previous_time = Instant::now();
     let mut previous_frame: Option<String> = None;
 
-    render_scene(&mut terminal, &state, &assets, &mut previous_frame)?;
+    let timings = render_scene(&mut terminal, &state, &assets, &mut previous_frame)?;
+    state.record_render_timings(timings);
 
     loop {
         let now = Instant::now();
         let elapsed = now.duration_since(previous_time);
         previous_time = now;
 
-        if state.update(elapsed) {
-            render_scene(&mut terminal, &state, &assets, &mut previous_frame)?;
+        let update_start = Instant::now();
+        let should_render = state.update(elapsed);
+        let update = update_start.elapsed();
+
+        if should_render {
+            let mut timings = render_scene(&mut terminal, &state, &assets, &mut previous_frame)?;
+            timings.update = update;
+            state.record_render_timings(timings);
         }
 
         if !event::poll(FRAME_DURATION)? {
@@ -2025,7 +2162,9 @@ pub fn run() -> io::Result<()> {
             KeyHandling::Quit => break,
             KeyHandling::Handled => {
                 previous_time = Instant::now();
-                render_scene(&mut terminal, &state, &assets, &mut previous_frame)?;
+
+                let timings = render_scene(&mut terminal, &state, &assets, &mut previous_frame)?;
+                state.record_render_timings(timings);
             }
             KeyHandling::Ignored => {}
         }
