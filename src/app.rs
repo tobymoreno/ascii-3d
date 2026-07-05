@@ -199,6 +199,8 @@ struct AppState {
     world_camera_yaw_degrees: f32,
     world_camera_pitch_degrees: f32,
     loaded_a3d_world: Option<LoadedWorld>,
+    loaded_a3d_root: Option<PathBuf>,
+    loaded_a3d_debug_popup_until: Option<Instant>,
 }
 
 impl AppState {
@@ -219,6 +221,8 @@ impl AppState {
             world_camera_yaw_degrees,
             world_camera_pitch_degrees,
             loaded_a3d_world: None,
+            loaded_a3d_root: None,
+            loaded_a3d_debug_popup_until: None,
         }
     }
 
@@ -398,12 +402,15 @@ fn asset_path(filename: &str) -> PathBuf {
         .join(filename)
 }
 
-fn load_default_a3d_world() -> io::Result<LoadedWorld> {
-    let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+fn default_a3d_root_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("assets")
         .join("a3d")
         .join("p_depth_demo")
-        .join("scene.a3d");
+}
+
+fn load_default_a3d_world() -> io::Result<LoadedWorld> {
+    let manifest_path = default_a3d_root_path().join("scene.a3d");
 
     let project = load_a3d_project(&manifest_path)?;
     project.into_world().map_err(io::Error::other)
@@ -872,23 +879,157 @@ fn render_camera_viewport_canvas(state: &AppState) -> io::Result<Canvas> {
     Ok(canvas)
 }
 
-fn render_loaded_a3d_world(canvas: &mut Canvas, world: Option<&LoadedWorld>) {
-    canvas.draw_text(Point2::new(2, 3), "LoadedA3d runtime scene");
-    canvas.draw_text(
-        Point2::new(2, 5),
-        "Data file: assets/a3d/p_depth_demo/scene.a3d",
-    );
-
-    let Some(world) = world else {
-        canvas.draw_text(Point2::new(2, 7), "No .a3d world loaded");
-        return;
+fn resolve_a3d_asset_path(root: &Path, relative_path: &str) -> io::Result<String> {
+    let path = Path::new(relative_path);
+    let resolved = if path.is_absolute() {
+        path.to_path_buf()
+    } else if path.exists() {
+        path.to_path_buf()
+    } else {
+        root.join(path)
     };
 
-    canvas.draw_text(Point2::new(2, 7), &format!("World: {}", world.title));
+    resolved
+        .to_str()
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| io::Error::other(format!("asset path is not UTF-8: {}", resolved.display())))
+}
+
+fn draw_loaded_a3d_word_object(
+    canvas: &mut Canvas,
+    depth_buffer: &mut CameraViewportDepthBuffer,
+    state: &AppState,
+    root: &Path,
+    inner: ClipRect,
+    object: &crate::a3d::SceneObject,
+) -> io::Result<()> {
+    if !object.render.visible {
+        return Ok(());
+    }
+
+    let AssetRef::Word { path } = &object.asset else {
+        return Ok(());
+    };
+
+    let word_path = resolve_a3d_asset_path(root, path)?;
+    let word: WordAsset = read_json(&word_path)?;
+    let object_world = object.transform.matrix();
+    let stroke_character = object
+        .render
+        .stroke_character
+        .unwrap_or_else(|| state.glyph_stroke_character());
+
+    for child in &word.children {
+        let glyph_path = resolve_a3d_asset_path(root, &child.glyph_asset)?;
+        let metadata_path = resolve_a3d_asset_path(root, &child.metadata_asset)?;
+        let glyph: GlyphAsset = read_json(&glyph_path)?;
+        let glyph_metadata: GlyphMetadata = read_json(&metadata_path)?;
+        let child_world = object_world * transform_matrix(child.local_transform);
+        let display = &glyph_metadata.display;
+        let stroke_character = if display.show_strokes {
+            stroke_character
+        } else {
+            display.stroke_character
+        };
+
+        for path in &glyph.paths {
+            for segment in &path.segments {
+                match segment {
+                    GlyphSegment::Line { from, to } => {
+                        if !display.show_strokes {
+                            continue;
+                        }
+
+                        let from_world = child_world.transform_point(vec3(*from));
+                        let to_world = child_world.transform_point(vec3(*to));
+
+                        draw_camera_viewport_depth_line(
+                            canvas,
+                            depth_buffer,
+                            state,
+                            inner,
+                            from_world,
+                            to_world,
+                            stroke_character,
+                        );
+                    }
+
+                    GlyphSegment::CubicBezier { p0, p1, p2, p3 } => {
+                        if !display.show_strokes {
+                            continue;
+                        }
+
+                        let curve = CubicBezier3::new(vec3(*p0), vec3(*p1), vec3(*p2), vec3(*p3));
+                        let sampled = curve.sample(glyph.sampling.default_segments_per_curve);
+
+                        for (start, end) in sampled.line_segments() {
+                            let start_world = child_world.transform_point(start);
+                            let end_world = child_world.transform_point(end);
+
+                            draw_camera_viewport_depth_line(
+                                canvas,
+                                depth_buffer,
+                                state,
+                                inner,
+                                start_world,
+                                end_world,
+                                stroke_character,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn render_loaded_a3d_world(
+    canvas: &mut Canvas,
+    root: Option<&Path>,
+    world: Option<&LoadedWorld>,
+    state: &AppState,
+) -> io::Result<()> {
+    canvas.draw_text(Point2::new(2, 3), "LoadedA3d runtime scene");
     canvas.draw_text(
-        Point2::new(2, 8),
+        Point2::new(2, 4),
+        "Rendering Word assets from assets/a3d/p_depth_demo/scene.a3d",
+    );
+
+    let Some(root) = root else {
+        canvas.draw_text(Point2::new(2, 6), "No .a3d root loaded");
+        return Ok(());
+    };
+
+    let Some(world) = world else {
+        canvas.draw_text(Point2::new(2, 6), "No .a3d world loaded");
+        return Ok(());
+    };
+
+    let inner = ClipRect {
+        x: 1,
+        y: 6,
+        width: CANVAS_WIDTH.saturating_sub(2),
+        height: FOOTER_ROW.saturating_sub(8) as usize,
+    };
+
+    let mut depth_buffer = CameraViewportDepthBuffer::new(inner);
+
+    canvas.with_clip_rect(inner, |canvas| {
+        for object in &world.objects {
+            draw_loaded_a3d_word_object(canvas, &mut depth_buffer, state, root, inner, object)?;
+        }
+
+        Ok::<(), io::Error>(())
+    })?;
+
+    let mut status_row = FOOTER_ROW - 5;
+    canvas.draw_text(
+        Point2::new(2, status_row),
         &format!(
-            "Physics gravity [{:.1}, {:.1}, {:.1}] damping {:.3}",
+            "World: {} | gravity [{:.1}, {:.1}, {:.1}] damping {:.3}",
+            world.title,
             world.physics.gravity[0],
             world.physics.gravity[1],
             world.physics.gravity[2],
@@ -896,54 +1037,207 @@ fn render_loaded_a3d_world(canvas: &mut Canvas, world: Option<&LoadedWorld>) {
         ),
     );
 
-    canvas.draw_text(
-        Point2::new(2, 10),
-        "Objects loaded from manifest. Behaviors update every frame.",
-    );
+    status_row += 1;
 
-    for (index, object) in world.objects.iter().enumerate() {
-        let row = 12 + index as i32 * 3;
-        if row >= FOOTER_ROW - 2 {
+    for object in &world.objects {
+        if status_row >= FOOTER_ROW - 1 {
             break;
         }
 
-        let asset = match &object.asset {
-            AssetRef::Mesh { path } => format!("mesh:{path}"),
-            AssetRef::Word { path } => format!("word:{path}"),
-            AssetRef::Glyph { path, metadata } => match metadata {
-                Some(metadata) => format!("glyph:{path} metadata:{metadata}"),
-                None => format!("glyph:{path}"),
-            },
-        };
-
         canvas.draw_text(
-            Point2::new(2, row),
+            Point2::new(2, status_row),
             &format!(
-                "{} [{}] pos [{:.2}, {:.2}, {:.2}] rot [{:.1}, {:.1}, {:.1}]",
+                "{} pos [{:.2}, {:.2}, {:.2}] rot [{:.1}, {:.1}, {:.1}] behaviors {}",
                 object.id,
-                asset,
                 object.transform.position[0],
                 object.transform.position[1],
                 object.transform.position[2],
                 object.transform.rotation_degrees[0],
                 object.transform.rotation_degrees[1],
                 object.transform.rotation_degrees[2],
+                object.behaviors.len(),
             ),
         );
 
-        canvas.draw_text(
-            Point2::new(4, row + 1),
-            &format!(
-                "behaviors: {} | physics: {}",
-                object.behaviors.len(),
-                if object.physics.is_some() {
-                    "yes"
-                } else {
-                    "no"
-                },
-            ),
-        );
+        status_row += 1;
     }
+
+    Ok(())
+}
+
+fn draw_loaded_a3d_word_object_in_ws(
+    canvas: &mut Canvas,
+    projector: &ObliqueProjector,
+    state: &AppState,
+    root: &Path,
+    object: &crate::a3d::SceneObject,
+) -> io::Result<()> {
+    if !object.render.visible {
+        return Ok(());
+    }
+
+    let AssetRef::Word { path } = &object.asset else {
+        return Ok(());
+    };
+
+    let word_path = resolve_a3d_asset_path(root, path)?;
+    let word: WordAsset = read_json(&word_path)?;
+    let object_world = object.transform.matrix();
+    let stroke_character = object
+        .render
+        .stroke_character
+        .unwrap_or_else(|| state.glyph_stroke_character());
+
+    for child in &word.children {
+        let glyph_path = resolve_a3d_asset_path(root, &child.glyph_asset)?;
+        let metadata_path = resolve_a3d_asset_path(root, &child.metadata_asset)?;
+        let glyph: GlyphAsset = read_json(&glyph_path)?;
+        let glyph_metadata: GlyphMetadata = read_json(&metadata_path)?;
+        let child_world = object_world * transform_matrix(child.local_transform);
+        let display = &glyph_metadata.display;
+        let stroke_character = if display.show_strokes {
+            stroke_character
+        } else {
+            display.stroke_character
+        };
+
+        for path in &glyph.paths {
+            for segment in &path.segments {
+                match segment {
+                    GlyphSegment::Line { from, to } => {
+                        if !display.show_strokes {
+                            continue;
+                        }
+
+                        let from_world = child_world.transform_point(vec3(*from));
+                        let to_world = child_world.transform_point(vec3(*to));
+
+                        canvas.draw_line(
+                            projector.project(from_world),
+                            projector.project(to_world),
+                            stroke_character,
+                        );
+                    }
+
+                    GlyphSegment::CubicBezier { p0, p1, p2, p3 } => {
+                        if !display.show_strokes {
+                            continue;
+                        }
+
+                        let curve = CubicBezier3::new(vec3(*p0), vec3(*p1), vec3(*p2), vec3(*p3));
+                        let sampled = curve.sample(glyph.sampling.default_segments_per_curve);
+
+                        for (start, end) in sampled.line_segments() {
+                            let start_world = child_world.transform_point(start);
+                            let end_world = child_world.transform_point(end);
+
+                            canvas.draw_line(
+                                projector.project(start_world),
+                                projector.project(end_world),
+                                stroke_character,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn draw_loaded_a3d_objects_in_ws(
+    canvas: &mut Canvas,
+    state: &AppState,
+    projector: &ObliqueProjector,
+) -> io::Result<()> {
+    let Some(root) = state.loaded_a3d_root.as_deref() else {
+        return Ok(());
+    };
+
+    let Some(world) = state.loaded_a3d_world.as_ref() else {
+        return Ok(());
+    };
+
+    for object in &world.objects {
+        draw_loaded_a3d_word_object_in_ws(canvas, projector, state, root, object)?;
+    }
+
+    Ok(())
+}
+
+fn render_loaded_a3d_camera_viewport_canvas(state: &AppState) -> io::Result<Canvas> {
+    const VIEWPORT_CONTENT_WIDTH: usize = 78;
+    const VIEWPORT_CONTENT_HEIGHT: usize = 16;
+
+    let mut canvas = Canvas::new(VIEWPORT_CONTENT_WIDTH, VIEWPORT_CONTENT_HEIGHT);
+
+    canvas.draw_text(Point2::new(1, 0), "LoadedA3d Camera3D viewport");
+
+    let inner = ClipRect {
+        x: 1,
+        y: 2,
+        width: VIEWPORT_CONTENT_WIDTH.saturating_sub(2),
+        height: VIEWPORT_CONTENT_HEIGHT.saturating_sub(5),
+    };
+
+    let Some(root) = state.loaded_a3d_root.as_deref() else {
+        canvas.draw_text(Point2::new(1, 3), "No .a3d root loaded");
+        return Ok(canvas);
+    };
+
+    let Some(world) = state.loaded_a3d_world.as_ref() else {
+        canvas.draw_text(Point2::new(1, 3), "No .a3d world loaded");
+        return Ok(canvas);
+    };
+
+    let mut depth_buffer = CameraViewportDepthBuffer::new(inner);
+
+    canvas.with_clip_rect(inner, |canvas| {
+        for object in &world.objects {
+            draw_loaded_a3d_word_object(canvas, &mut depth_buffer, state, root, inner, object)?;
+        }
+
+        Ok::<(), io::Error>(())
+    })?;
+
+    canvas.draw_text(
+        Point2::new(1, VIEWPORT_CONTENT_HEIGHT as i32 - 2),
+        &format!(
+            "{} | pos [{:.2},{:.2},{:.2}] yaw {:.1} pitch {:.1}",
+            world.title,
+            state.world_camera_position.x,
+            state.world_camera_position.y,
+            state.world_camera_position.z,
+            state.world_camera_yaw_degrees,
+            state.world_camera_pitch_degrees,
+        ),
+    );
+
+    Ok(canvas)
+}
+
+fn render_loaded_a3d_studio_world(
+    canvas: &mut Canvas,
+    state: &AppState,
+    projector: &ObliqueProjector,
+) -> io::Result<()> {
+    canvas.with_viewport(WORLD_DEBUG_VIEWPORT, |canvas| {
+        render_world_camera_spaces(
+            canvas,
+            state.world_camera_position,
+            state.world_camera_yaw_degrees,
+            state.world_camera_pitch_degrees,
+            Some(state.glyph_stroke_character()),
+        )?;
+
+        // WS = worldspace. Use the same scene projector built from
+        // assets/projection.default.json. Object placement must come from
+        // the .a3d data file; the renderer must not apply fake offsets.
+        draw_loaded_a3d_objects_in_ws(canvas, state, projector)
+    })?;
+
+    Ok(())
 }
 
 fn render_scene_frame(state: &AppState, assets: &SceneAssets) -> io::Result<Canvas> {
@@ -952,7 +1246,7 @@ fn render_scene_frame(state: &AppState, assets: &SceneAssets) -> io::Result<Canv
 
     match state.current_scene() {
         Scene::LoadedA3d => {
-            render_loaded_a3d_world(&mut canvas, state.loaded_a3d_world.as_ref());
+            render_loaded_a3d_studio_world(&mut canvas, state, &projector)?;
         }
 
         Scene::WorldCameraSpaces => {
@@ -1139,6 +1433,46 @@ fn render_scene_frame(state: &AppState, assets: &SceneAssets) -> io::Result<Canv
     Ok(canvas)
 }
 
+fn is_loaded_a3d_debug_popup_visible(state: &AppState) -> bool {
+    matches!(state.current_scene(), Scene::LoadedA3d)
+        && state
+            .loaded_a3d_debug_popup_until
+            .is_some_and(|until| Instant::now() <= until)
+}
+
+fn dismiss_loaded_a3d_debug_popup(state: &mut AppState) -> bool {
+    if is_loaded_a3d_debug_popup_visible(state) {
+        state.loaded_a3d_debug_popup_until = None;
+        true
+    } else {
+        false
+    }
+}
+
+fn loaded_a3d_debug_popup_lines(state: &AppState) -> Option<Vec<String>> {
+    if !is_loaded_a3d_debug_popup_visible(state) {
+        return None;
+    }
+
+    let world = state.loaded_a3d_world.as_ref()?;
+
+    let mut lines = vec![
+        world.title.clone(),
+        format!("objects: {}", world.objects.len()),
+        "source: assets/a3d/p_depth_demo/scene.a3d".to_string(),
+        "auto-hide: 5 seconds".to_string(),
+    ];
+
+    for object in world.objects.iter().take(5) {
+        lines.push(format!(
+            "{} x={:.2} z={:.2}",
+            object.id, object.transform.position[0], object.transform.position[2],
+        ));
+    }
+
+    Some(lines)
+}
+
 fn render_scene(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     state: &AppState,
@@ -1146,11 +1480,13 @@ fn render_scene(
     previous_frame: &mut Option<String>,
 ) -> io::Result<()> {
     let scene_canvas = render_scene_frame(state, assets)?;
-    let camera_viewport_canvas = if matches!(state.current_scene(), Scene::WorldCameraSpaces) {
-        Some(render_camera_viewport_canvas(state)?)
-    } else {
-        None
+    let camera_viewport_canvas = match state.current_scene() {
+        Scene::LoadedA3d => Some(render_loaded_a3d_camera_viewport_canvas(state)?),
+        Scene::WorldCameraSpaces => Some(render_camera_viewport_canvas(state)?),
+        _ => None,
     };
+
+    let debug_popup_lines = loaded_a3d_debug_popup_lines(state);
 
     terminal.draw(|frame| {
         crate::tui::draw(
@@ -1158,6 +1494,7 @@ fn render_scene(
             &scene_canvas,
             camera_viewport_canvas.as_ref(),
             state.active_menu.as_ref(),
+            debug_popup_lines.as_deref(),
         );
     })?;
 
@@ -1305,6 +1642,16 @@ fn apply_app_command(state: &mut AppState, command: AppCommand) -> KeyHandling {
 }
 
 fn handle_key_press(state: &mut AppState, key_code: KeyCode) -> KeyHandling {
+    if is_loaded_a3d_debug_popup_visible(state) {
+        match key_code {
+            KeyCode::Enter | KeyCode::Esc | KeyCode::Char('o') | KeyCode::Char('O') => {
+                dismiss_loaded_a3d_debug_popup(state);
+                return KeyHandling::Handled;
+            }
+            _ => {}
+        }
+    }
+
     if state.active_menu.is_some() {
         return menu_command_for_key(key_code)
             .map(|command| apply_app_command(state, command))
@@ -1328,7 +1675,9 @@ pub fn run() -> io::Result<()> {
     terminal.clear()?;
 
     let mut state = AppState::new();
+    state.loaded_a3d_root = Some(default_a3d_root_path());
     state.loaded_a3d_world = Some(load_default_a3d_world()?);
+    state.loaded_a3d_debug_popup_until = Some(Instant::now() + Duration::from_secs(5));
     let mut previous_time = Instant::now();
     let mut previous_frame: Option<String> = None;
 
@@ -1457,10 +1806,10 @@ mod tests {
     fn default_a3d_world_loads() {
         let world = super::load_default_a3d_world().expect("default .a3d world should load");
 
-        assert_eq!(world.title, "P depth demo");
-        assert_eq!(world.objects.len(), 2);
-        assert!(world.object("front_p").is_some());
-        assert!(world.object("rear_p").is_some());
+        assert_eq!(world.title, "PITT CREW depth stack demo");
+        assert_eq!(world.objects.len(), 8);
+        assert!(world.object("letter_p").is_some());
+        assert!(world.object("letter_w").is_some());
     }
 
     #[test]
