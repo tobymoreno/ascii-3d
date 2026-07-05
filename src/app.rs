@@ -4,6 +4,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use ratatui::{Terminal, backend::CrosstermBackend};
+
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
     event::{self, Event, KeyCode, KeyEventKind},
@@ -25,7 +27,7 @@ use crate::{
         AppCommand, camera_mode_command_for_key, menu_command_for_key, scene_mode_command_for_key,
     },
     math::{Mat4, Vec3},
-    menu::{MenuState, draw_menu},
+    menu::MenuState,
     mesh::Mesh,
     obj::load_obj,
     projection::ObliqueProjector,
@@ -797,7 +799,7 @@ fn draw_camera_viewport(canvas: &mut Canvas, state: &AppState) -> io::Result<()>
     Ok(())
 }
 
-fn render_scene_frame(state: &AppState, assets: &SceneAssets) -> io::Result<String> {
+fn render_scene_frame(state: &AppState, assets: &SceneAssets) -> io::Result<Canvas> {
     let mut canvas = Canvas::new(CANVAS_WIDTH, CANVAS_HEIGHT);
     let projector = projector_from_config(&assets.projection_config);
 
@@ -965,10 +967,6 @@ fn render_scene_frame(state: &AppState, assets: &SceneAssets) -> io::Result<Stri
 
     draw_camera_viewport(&mut canvas, state)?;
 
-    if let Some(menu) = &state.active_menu {
-        draw_menu(&mut canvas, menu, Point2::new(2, 4));
-    }
-
     canvas.draw_text(
         Point2::new(2, FOOTER_ROW),
         &format!(
@@ -985,20 +983,22 @@ fn render_scene_frame(state: &AppState, assets: &SceneAssets) -> io::Result<Stri
         ),
     );
 
-    Ok(canvas.render())
+    Ok(canvas)
 }
 
 fn render_scene(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     state: &AppState,
     assets: &SceneAssets,
     previous_frame: &mut Option<String>,
 ) -> io::Result<()> {
-    let frame = render_scene_frame(state, assets)?;
+    let scene_canvas = render_scene_frame(state, assets)?;
 
-    let mut output = stdout();
-    write_frame(&mut output, &frame)?;
+    terminal.draw(|frame| {
+        crate::tui::draw(frame, &scene_canvas, state.active_menu.as_ref());
+    })?;
 
-    *previous_frame = Some(frame);
+    *previous_frame = Some(scene_canvas.render());
 
     Ok(())
 }
@@ -1160,13 +1160,15 @@ fn handle_key_press(state: &mut AppState, key_code: KeyCode) -> KeyHandling {
 
 pub fn run() -> io::Result<()> {
     let assets = load_scene_assets()?;
-    let _terminal = TerminalGuard::enter()?;
+    let _terminal_guard = TerminalGuard::enter()?;
+    let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
+    terminal.clear()?;
 
     let mut state = AppState::new();
     let mut previous_time = Instant::now();
     let mut previous_frame: Option<String> = None;
 
-    render_scene(&state, &assets, &mut previous_frame)?;
+    render_scene(&mut terminal, &state, &assets, &mut previous_frame)?;
 
     loop {
         let now = Instant::now();
@@ -1174,7 +1176,7 @@ pub fn run() -> io::Result<()> {
         previous_time = now;
 
         if state.update(elapsed) {
-            render_scene(&state, &assets, &mut previous_frame)?;
+            render_scene(&mut terminal, &state, &assets, &mut previous_frame)?;
         }
 
         if !event::poll(FRAME_DURATION)? {
@@ -1193,7 +1195,7 @@ pub fn run() -> io::Result<()> {
             KeyHandling::Quit => break,
             KeyHandling::Handled => {
                 previous_time = Instant::now();
-                render_scene(&state, &assets, &mut previous_frame)?;
+                render_scene(&mut terminal, &state, &assets, &mut previous_frame)?;
             }
             KeyHandling::Ignored => {}
         }

@@ -1,3 +1,5 @@
+use ratatui::{buffer::Buffer, layout::Rect};
+
 use crate::geometry2d::Point2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -177,6 +179,18 @@ impl Canvas {
         }
 
         output
+    }
+
+    pub fn render_to_ratatui_buffer(&self, area: Rect, buffer: &mut Buffer) {
+        let width = self.width.min(area.width as usize);
+        let height = self.height.min(area.height as usize);
+
+        for y in 0..height {
+            for x in 0..width {
+                let character = self.cells[y * self.width + x];
+                buffer[(area.x + x as u16, area.y + y as u16)].set_char(character);
+            }
+        }
     }
 }
 
