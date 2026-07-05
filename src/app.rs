@@ -42,6 +42,7 @@ use crate::{
         render_single_i, render_single_p, render_single_r, render_single_t, render_single_w,
         render_world_camera_spaces,
     },
+    tui::FilePickerView,
 };
 
 const CANVAS_WIDTH: usize = 80;
@@ -187,6 +188,113 @@ impl ControlMode {
     }
 }
 
+#[derive(Debug, Clone)]
+struct A3dFilePickerEntry {
+    label: String,
+    path: PathBuf,
+    is_dir: bool,
+}
+
+#[derive(Debug, Clone)]
+struct A3dFilePicker {
+    current_dir: PathBuf,
+    entries: Vec<A3dFilePickerEntry>,
+    selected: usize,
+    error: Option<String>,
+}
+
+impl A3dFilePicker {
+    fn new(current_dir: PathBuf) -> Self {
+        let mut picker = Self {
+            current_dir,
+            entries: Vec::new(),
+            selected: 0,
+            error: None,
+        };
+        picker.refresh();
+        picker
+    }
+
+    fn refresh(&mut self) {
+        self.entries.clear();
+
+        let read_dir = match std::fs::read_dir(&self.current_dir) {
+            Ok(read_dir) => read_dir,
+            Err(error) => {
+                self.error = Some(error.to_string());
+                return;
+            }
+        };
+
+        let mut dirs = Vec::new();
+        let mut files = Vec::new();
+
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            let file_name = entry.file_name().to_string_lossy().to_string();
+
+            if path.is_dir() {
+                dirs.push(A3dFilePickerEntry {
+                    label: format!("[{file_name}]"),
+                    path,
+                    is_dir: true,
+                });
+            } else if path.extension().is_some_and(|extension| extension == "a3d") {
+                files.push(A3dFilePickerEntry {
+                    label: file_name,
+                    path,
+                    is_dir: false,
+                });
+            }
+        }
+
+        dirs.sort_by(|a, b| a.label.cmp(&b.label));
+        files.sort_by(|a, b| a.label.cmp(&b.label));
+
+        self.entries.push(A3dFilePickerEntry {
+            label: "[..]".to_string(),
+            path: self
+                .current_dir
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| self.current_dir.clone()),
+            is_dir: true,
+        });
+        self.entries.extend(dirs);
+        self.entries.extend(files);
+        self.selected = self.selected.min(self.entries.len().saturating_sub(1));
+        self.error = None;
+    }
+
+    fn move_up(&mut self) {
+        self.selected = self.selected.saturating_sub(1);
+    }
+
+    fn move_down(&mut self) {
+        if !self.entries.is_empty() {
+            self.selected = (self.selected + 1).min(self.entries.len() - 1);
+        }
+    }
+
+    fn selected_entry(&self) -> Option<&A3dFilePickerEntry> {
+        self.entries.get(self.selected)
+    }
+
+    fn open_parent(&mut self) {
+        if let Some(parent) = self.current_dir.parent() {
+            self.current_dir = parent.to_path_buf();
+            self.refresh();
+        }
+    }
+
+    fn labels(&self) -> Vec<String> {
+        self.entries
+            .iter()
+            .map(|entry| entry.label.clone())
+            .collect()
+    }
+}
+
 #[derive(Debug)]
 struct AppState {
     scene_position: usize,
@@ -200,7 +308,10 @@ struct AppState {
     world_camera_pitch_degrees: f32,
     loaded_a3d_world: Option<LoadedWorld>,
     loaded_a3d_root: Option<PathBuf>,
+    loaded_a3d_manifest_path: Option<PathBuf>,
     loaded_a3d_debug_popup_until: Option<Instant>,
+    loaded_a3d_error: Option<String>,
+    a3d_file_picker: Option<A3dFilePicker>,
 }
 
 impl AppState {
@@ -222,7 +333,10 @@ impl AppState {
             world_camera_pitch_degrees,
             loaded_a3d_world: None,
             loaded_a3d_root: None,
+            loaded_a3d_manifest_path: None,
             loaded_a3d_debug_popup_until: None,
+            loaded_a3d_error: None,
+            a3d_file_picker: None,
         }
     }
 
@@ -349,6 +463,106 @@ impl AppState {
 
         self.world_camera_pitch_degrees =
             (self.world_camera_pitch_degrees + pitch_delta_degrees).clamp(-80.0, 80.0);
+    }
+
+    fn open_a3d_file_picker(&mut self) {
+        let start_dir = self
+            .loaded_a3d_root
+            .clone()
+            .and_then(|root| root.parent().map(Path::to_path_buf))
+            .unwrap_or_else(|| {
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("assets")
+                    .join("a3d")
+            });
+
+        self.a3d_file_picker = Some(A3dFilePicker::new(start_dir));
+        self.close_menu();
+    }
+
+    fn close_a3d_file_picker(&mut self) {
+        self.a3d_file_picker = None;
+    }
+
+    fn move_a3d_file_picker_up(&mut self) {
+        if let Some(picker) = &mut self.a3d_file_picker {
+            picker.move_up();
+        }
+    }
+
+    fn move_a3d_file_picker_down(&mut self) {
+        if let Some(picker) = &mut self.a3d_file_picker {
+            picker.move_down();
+        }
+    }
+
+    fn a3d_file_picker_parent(&mut self) {
+        if let Some(picker) = &mut self.a3d_file_picker {
+            picker.open_parent();
+        }
+    }
+
+    fn select_a3d_file_picker_entry(&mut self) {
+        let Some(picker) = &mut self.a3d_file_picker else {
+            return;
+        };
+
+        let Some(entry) = picker.selected_entry().cloned() else {
+            return;
+        };
+
+        if entry.is_dir {
+            picker.current_dir = entry.path;
+            picker.refresh();
+            return;
+        }
+
+        self.load_a3d_file(entry.path);
+        self.a3d_file_picker = None;
+    }
+
+    fn load_a3d_root(&mut self, root: PathBuf) {
+        self.load_a3d_file(root.join("scene.a3d"));
+    }
+
+    fn load_a3d_file(&mut self, manifest_path: PathBuf) {
+        let Some(root) = manifest_path.parent().map(Path::to_path_buf) else {
+            self.loaded_a3d_error = Some("selected .a3d file has no parent folder".to_string());
+            self.loaded_a3d_debug_popup_until = Some(Instant::now() + Duration::from_secs(5));
+            return;
+        };
+
+        match load_a3d_project(&manifest_path).and_then(|project| {
+            project
+                .into_world()
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+        }) {
+            Ok(world) => {
+                self.loaded_a3d_root = Some(root);
+                self.loaded_a3d_manifest_path = Some(manifest_path);
+                self.loaded_a3d_world = Some(world);
+                self.loaded_a3d_error = None;
+                self.loaded_a3d_debug_popup_until = Some(Instant::now() + Duration::from_secs(5));
+            }
+            Err(error) => {
+                self.loaded_a3d_error = Some(error.to_string());
+                self.loaded_a3d_debug_popup_until = Some(Instant::now() + Duration::from_secs(5));
+            }
+        }
+    }
+
+    fn reload_a3d(&mut self) {
+        if let Some(manifest_path) = self.loaded_a3d_manifest_path.clone() {
+            self.load_a3d_file(manifest_path);
+            return;
+        }
+
+        let Some(root) = self.loaded_a3d_root.clone() else {
+            self.load_a3d_root(default_a3d_root_path());
+            return;
+        };
+
+        self.load_a3d_root(root);
     }
 
     fn update(&mut self, elapsed: Duration) -> bool {
@@ -1535,14 +1749,35 @@ fn render_scene(
     };
 
     let debug_popup_lines = loaded_a3d_debug_popup_lines(state);
+    let file_picker_labels = state.a3d_file_picker.as_ref().map(|picker| picker.labels());
+    let file_picker_current_dir = state
+        .a3d_file_picker
+        .as_ref()
+        .map(|picker| picker.current_dir.display().to_string());
 
     terminal.draw(|frame| {
+        let file_picker_view = match (
+            state.a3d_file_picker.as_ref(),
+            file_picker_labels.as_deref(),
+            file_picker_current_dir.as_deref(),
+        ) {
+            (Some(picker), Some(entries), Some(current_dir)) => Some(FilePickerView {
+                title: "Load .a3d",
+                current_dir,
+                entries,
+                selected: picker.selected,
+                error: picker.error.as_deref(),
+            }),
+            _ => None,
+        };
+
         crate::tui::draw(
             frame,
             &scene_canvas,
             camera_viewport_canvas.as_ref(),
             state.active_menu.as_ref(),
             debug_popup_lines.as_deref(),
+            file_picker_view,
         );
     })?;
 
@@ -1561,6 +1796,16 @@ enum KeyHandling {
 fn apply_app_command(state: &mut AppState, command: AppCommand) -> KeyHandling {
     match command {
         AppCommand::Quit => KeyHandling::Quit,
+
+        AppCommand::OpenA3dFilePicker => {
+            state.open_a3d_file_picker();
+            KeyHandling::Handled
+        }
+
+        AppCommand::ReloadA3d => {
+            state.reload_a3d();
+            KeyHandling::Handled
+        }
 
         AppCommand::ToggleControlMode => {
             state.toggle_control_mode();
@@ -1690,6 +1935,32 @@ fn apply_app_command(state: &mut AppState, command: AppCommand) -> KeyHandling {
 }
 
 fn handle_key_press(state: &mut AppState, key_code: KeyCode) -> KeyHandling {
+    if state.a3d_file_picker.is_some() {
+        match key_code {
+            KeyCode::Esc => {
+                state.close_a3d_file_picker();
+                return KeyHandling::Handled;
+            }
+            KeyCode::Up => {
+                state.move_a3d_file_picker_up();
+                return KeyHandling::Handled;
+            }
+            KeyCode::Down => {
+                state.move_a3d_file_picker_down();
+                return KeyHandling::Handled;
+            }
+            KeyCode::Backspace => {
+                state.a3d_file_picker_parent();
+                return KeyHandling::Handled;
+            }
+            KeyCode::Enter => {
+                state.select_a3d_file_picker_entry();
+                return KeyHandling::Handled;
+            }
+            _ => return KeyHandling::Ignored,
+        }
+    }
+
     if is_loaded_a3d_debug_popup_visible(state) {
         match key_code {
             KeyCode::Enter | KeyCode::Esc | KeyCode::Char('o') | KeyCode::Char('O') => {
@@ -1723,9 +1994,7 @@ pub fn run() -> io::Result<()> {
     terminal.clear()?;
 
     let mut state = AppState::new();
-    state.loaded_a3d_root = Some(default_a3d_root_path());
-    state.loaded_a3d_world = Some(load_default_a3d_world()?);
-    state.loaded_a3d_debug_popup_until = Some(Instant::now() + Duration::from_secs(5));
+    state.load_a3d_root(default_a3d_root_path());
     let mut previous_time = Instant::now();
     let mut previous_frame: Option<String> = None;
 
