@@ -18,8 +18,6 @@ use crate::{
     world_space::WorldSpace3D,
 };
 
-use super::render_asset_axes;
-
 const PROJECTION_ASSET: &str = "assets/projections/plan_xy.projection.json";
 const AXES_ASSET: &str = "assets/cartesian_axes.obj";
 const AXES_METADATA_ASSET: &str = "assets/cartesian_axes.json";
@@ -27,18 +25,25 @@ const SINGLE_P_WORD_ASSET: &str = "assets/words/single_p.word.json";
 const SINGLE_P_WORD_METADATA_ASSET: &str = "assets/words/single_p.metadata.json";
 
 const WORLD_AXES_SCALE: f32 = 2.8;
-const CAMERA_GIZMO_SCREEN_LEG: f32 = 3.0;
+const CAMERA_GIZMO_SCREEN_LEG: f32 = 10.0;
+const CAMERA_DEBUG_NEAR_DISTANCE: f32 = 1.20;
+const CAMERA_DEBUG_NEAR_HALF_WIDTH: f32 = 0.35;
 
 // Screen-only framing for the debug/world view.
 // This does not change 3D world coordinates. It only moves the projected
 // universe on the terminal so +X has more visible room.
 const WORLD_DEBUG_SCREEN_OFFSET_X: i32 = -18;
-const WORLD_DEBUG_SCREEN_OFFSET_Y: i32 = 8;
+const WORLD_DEBUG_SCREEN_OFFSET_Y: i32 = 6;
 
 // World placement for the actual P object.
 const P_WORD_WORLD_X: f32 = 0.35;
 const P_WORD_WORLD_Y: f32 = 0.10;
 const P_WORD_WORLD_Z: f32 = -1.80;
+
+const P2_WORD_WORLD_X: f32 = 0.55;
+const P2_WORD_WORLD_Y: f32 = 0.10;
+const P2_WORD_WORLD_Z: f32 = -3.20;
+
 const P_WORD_WORLD_SCALE: f32 = 1.35;
 
 fn asset_path(relative_path: &str) -> PathBuf {
@@ -134,36 +139,40 @@ fn camera_for_debug(position: Vec3, yaw_degrees: f32, pitch_degrees: f32) -> Cam
     )
 }
 
-fn fixed_screen_direction(
+fn vec3_from_array(values: [f32; 3]) -> Vec3 {
+    Vec3::new(values[0], values[1], values[2])
+}
+
+fn draw_axis_line(
+    canvas: &mut Canvas,
     projector: &ObliqueProjector,
-    origin_world: Vec3,
-    direction_world: Vec3,
+    transform: MeshTransform,
+    from: Vec3,
+    to: Vec3,
+    character: char,
 ) -> Point2 {
-    let origin_2d = projector.project(origin_world);
-    let tip_2d = projector.project(Vec3::new(
-        origin_world.x + direction_world.x,
-        origin_world.y + direction_world.y,
-        origin_world.z + direction_world.z,
-    ));
+    let from_screen = projector.project(transform.transform_vertex(from));
+    let to_screen = projector.project(transform.transform_vertex(to));
 
-    let dx = (tip_2d.x - origin_2d.x) as f32;
-    let dy = (tip_2d.y - origin_2d.y) as f32;
-    let length = (dx * dx + dy * dy).sqrt();
+    canvas.draw_line(from_screen, to_screen, character);
 
-    if length <= f32::EPSILON {
-        origin_2d
-    } else {
-        Point2::new(
-            origin_2d.x + (dx / length * CAMERA_GIZMO_SCREEN_LEG).round() as i32,
-            origin_2d.y + (dy / length * CAMERA_GIZMO_SCREEN_LEG).round() as i32,
-        )
+    to_screen
+}
+
+fn world_axis_label_position(axis_id: &str, endpoint_screen: Point2, negative: bool) -> Point2 {
+    match (axis_id, negative) {
+        ("x", false) => Point2::new(endpoint_screen.x + 1, endpoint_screen.y),
+        ("y", false) => Point2::new(endpoint_screen.x - 1, endpoint_screen.y - 1),
+        ("z", false) => Point2::new(endpoint_screen.x - 2, endpoint_screen.y),
+        ("z", true) => Point2::new(endpoint_screen.x + 1, endpoint_screen.y),
+        _ => Point2::new(endpoint_screen.x + 1, endpoint_screen.y),
     }
 }
 
 fn draw_world_axes(
     canvas: &mut Canvas,
     projector: &ObliqueProjector,
-    axes_mesh: &Mesh,
+    _axes_mesh: &Mesh,
     axes_metadata: &CartesianAxesMetadata,
 ) -> io::Result<()> {
     let transform = MeshTransform {
@@ -171,39 +180,112 @@ fn draw_world_axes(
         ..MeshTransform::default()
     };
 
-    render_asset_axes(canvas, projector, axes_mesh, axes_metadata, transform)
+    let origin = vec3_from_array(axes_metadata.origin.position);
+
+    for axis in &axes_metadata.axes {
+        let positive_endpoint = vec3_from_array(axis.positive_endpoint);
+
+        let character = match axis.id.as_str() {
+            "x" => '-',
+            "y" => '|',
+            "z" => '/',
+            _ => '.',
+        };
+
+        let positive_endpoint_screen = draw_axis_line(
+            canvas,
+            projector,
+            transform,
+            origin,
+            positive_endpoint,
+            character,
+        );
+
+        if axes_metadata.display.show_positive_labels {
+            let label_screen =
+                world_axis_label_position(axis.id.as_str(), positive_endpoint_screen, false);
+            canvas.draw_text(label_screen, &axis.positive_label);
+        }
+
+        if axes_metadata.display.show_negative_labels && !axis.negative_label.trim().is_empty() {
+            let negative_endpoint = Vec3::new(
+                origin.x - positive_endpoint.x,
+                origin.y - positive_endpoint.y,
+                origin.z - positive_endpoint.z,
+            );
+
+            let negative_endpoint_screen = draw_axis_line(
+                canvas,
+                projector,
+                transform,
+                origin,
+                negative_endpoint,
+                character,
+            );
+
+            let label_screen =
+                world_axis_label_position(axis.id.as_str(), negative_endpoint_screen, true);
+            canvas.draw_text(label_screen, &axis.negative_label);
+        }
+    }
+
+    if axes_metadata.display.show_origin {
+        let origin_screen = projector.project(transform.transform_vertex(origin));
+        canvas.set(origin_screen, 'O');
+    }
+
+    Ok(())
 }
 
 fn draw_camera_gizmo(canvas: &mut Canvas, projector: &ObliqueProjector, camera: Camera3D) {
-    let origin_world = camera.position;
+    let eye_world = camera.position;
+    let forward = vec3_normalize(vec3_subtract(camera.target, camera.position));
 
-    let z_direction = vec3_normalize(vec3_subtract(camera.target, camera.position));
-    let x_direction = vec3_normalize(vec3_cross(camera.up, z_direction));
-    let y_direction = vec3_normalize(vec3_cross(z_direction, x_direction));
+    // Match Mat4::look_at basis for the near-plane horizontal direction.
+    let right = vec3_normalize(vec3_cross(forward, camera.up));
 
-    let origin_2d = projector.project(origin_world);
-    let x_2d = fixed_screen_direction(projector, origin_world, x_direction);
-    let y_2d = fixed_screen_direction(projector, origin_world, y_direction);
-    let z_2d = fixed_screen_direction(projector, origin_world, z_direction);
+    let near_center_world = Vec3::new(
+        eye_world.x + forward.x * CAMERA_DEBUG_NEAR_DISTANCE,
+        eye_world.y + forward.y * CAMERA_DEBUG_NEAR_DISTANCE,
+        eye_world.z + forward.z * CAMERA_DEBUG_NEAR_DISTANCE,
+    );
 
-    canvas.draw_line(origin_2d, x_2d, '-');
-    canvas.draw_line(origin_2d, y_2d, '|');
-    canvas.draw_line(origin_2d, z_2d, '/');
+    let near_left_world = Vec3::new(
+        near_center_world.x - right.x * CAMERA_DEBUG_NEAR_HALF_WIDTH,
+        near_center_world.y - right.y * CAMERA_DEBUG_NEAR_HALF_WIDTH,
+        near_center_world.z - right.z * CAMERA_DEBUG_NEAR_HALF_WIDTH,
+    );
 
-    canvas.set(origin_2d, '*');
-    canvas.set(x_2d, 'x');
-    canvas.set(y_2d, 'y');
-    canvas.set(z_2d, 'z');
+    let near_right_world = Vec3::new(
+        near_center_world.x + right.x * CAMERA_DEBUG_NEAR_HALF_WIDTH,
+        near_center_world.y + right.y * CAMERA_DEBUG_NEAR_HALF_WIDTH,
+        near_center_world.z + right.z * CAMERA_DEBUG_NEAR_HALF_WIDTH,
+    );
+
+    let eye_2d = projector.project(eye_world);
+    let near_center_2d = projector.project(near_center_world);
+    let near_left_2d = projector.project(near_left_world);
+    let near_right_2d = projector.project(near_right_world);
+
+    // Eye-to-near-plane vector. This is the camera look direction in world/debug view.
+    canvas.draw_line_auto(eye_2d, near_center_2d);
+
+    // Small near-plane bar.
+    canvas.draw_line_auto(near_left_2d, near_right_2d);
+
+    canvas.set(eye_2d, 'E');
+    canvas.set(near_center_2d, 'N');
 }
 
-fn draw_single_p_in_world(
+fn draw_single_p_at_world_position(
     canvas: &mut Canvas,
     projector: &ObliqueProjector,
+    position: Vec3,
     stroke_character: Option<char>,
 ) -> io::Result<()> {
     let (word, metadata) = load_single_p_word_assets()?;
 
-    let word_world = Mat4::translation(P_WORD_WORLD_X, P_WORD_WORLD_Y, P_WORD_WORLD_Z)
+    let word_world = Mat4::translation(position.x, position.y, position.z)
         * Mat4::uniform_scale(P_WORD_WORLD_SCALE);
 
     render_word_with_stroke_character(
@@ -219,46 +301,13 @@ fn draw_single_p_in_world(
 }
 
 fn draw_metadata(
-    canvas: &mut Canvas,
-    world: WorldSpace3D,
-    camera: Camera3D,
-    yaw_degrees: f32,
-    pitch_degrees: f32,
-    stroke_character: Option<char>,
+    _canvas: &mut Canvas,
+    _world: WorldSpace3D,
+    _camera: Camera3D,
+    _yaw_degrees: f32,
+    _pitch_degrees: f32,
+    _stroke_character: Option<char>,
 ) {
-    let stroke = stroke_character.unwrap_or('*');
-
-    canvas.draw_text(
-        Point2::new(2, 1),
-        "Scene: WorldSpace3D axes with camera gizmo and real single_p asset",
-    );
-    canvas.draw_text(
-        Point2::new(2, 2),
-        "Big XYZ = world axes reframed for camera/object space. Small */x/y/z = camera gizmo.",
-    );
-    canvas.draw_text(
-        Point2::new(2, 24),
-        &format!(
-            "world axis_length {:.1} | camera pos [{:.2}, {:.2}, {:.2}] | yaw {:.1} pitch {:.1}",
-            world.axis_length,
-            camera.position.x,
-            camera.position.y,
-            camera.position.z,
-            yaw_degrees,
-            pitch_degrees
-        ),
-    );
-    canvas.draw_text(
-        Point2::new(2, 25),
-        &format!(
-            "single_p at [{:.2}, {:.2}, {:.2}] scale {:.2} | stroke '{}'",
-            P_WORD_WORLD_X, P_WORD_WORLD_Y, P_WORD_WORLD_Z, P_WORD_WORLD_SCALE, stroke
-        ),
-    );
-    canvas.draw_text(
-        Point2::new(2, 26),
-        "Camera gizmo uses an orthogonal x/y/z basis; P is a real world-space word object.",
-    );
 }
 
 pub fn render(
@@ -284,7 +333,18 @@ pub fn render(
         stroke_character,
     );
     draw_world_axes(canvas, &projector, &axes_mesh, &axes_metadata)?;
-    draw_single_p_in_world(canvas, &projector, stroke_character)?;
+    draw_single_p_at_world_position(
+        canvas,
+        &projector,
+        Vec3::new(P2_WORD_WORLD_X, P2_WORD_WORLD_Y, P2_WORD_WORLD_Z),
+        stroke_character,
+    )?;
+    draw_single_p_at_world_position(
+        canvas,
+        &projector,
+        Vec3::new(P_WORD_WORLD_X, P_WORD_WORLD_Y, P_WORD_WORLD_Z),
+        stroke_character,
+    )?;
     draw_camera_gizmo(canvas, &projector, camera);
 
     Ok(())
@@ -315,7 +375,7 @@ mod tests {
 
     #[test]
     fn camera_gizmo_screen_leg_is_fixed_visual_length() {
-        assert_eq!(CAMERA_GIZMO_SCREEN_LEG, 3.0);
+        assert_eq!(CAMERA_GIZMO_SCREEN_LEG, 10.0);
     }
 
     #[test]
