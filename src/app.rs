@@ -791,7 +791,7 @@ fn load_scene_assets() -> io::Result<SceneAssets> {
     let cartesian_axes_metadata =
         crate::axis_metadata::load_cartesian_axes_metadata(asset_path("cartesian_axes.json"))?;
 
-    if cartesian_axes_metadata.geometry_asset != "cartesian_axes.obj" {
+    if cartesian_axes_metadata.geometry_asset != "models/cartesian_axes.obj" {
         return Err(io::Error::other(format!(
             "cartesian_axes.json references unexpected geometry asset '{}'",
             cartesian_axes_metadata.geometry_asset,
