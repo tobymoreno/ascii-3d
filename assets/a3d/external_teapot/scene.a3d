@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "title": "External OBJ teapot demo",
+  "world": {
+    "physics": {
+      "gravity": [
+        0.0,
+        -9.8,
+        0.0
+      ],
+      "damping": 0.01,
+      "bounds_min": [
+        -8.0,
+        -4.0,
+        -8.0
+      ],
+      "bounds_max": [
+        8.0,
+        4.0,
+        8.0
+      ]
+    }
+  },
+  "camera": {
+    "position": [
+      0.0,
+      0.8,
+      5.5
+    ],
+    "target": [
+      0.0,
+      0.2,
+      -2.5
+    ],
+    "fov_degrees": 35.0
+  },
+  "viewport": {
+    "show_world_debug": true,
+    "show_camera3d": true
+  },
+  "objects": [
+    {
+      "id": "teapot",
+      "asset": {
+        "type": "mesh",
+        "path": "../../models/external/teapot.obj"
+      },
+      "transform": {
+        "position": [
+          0.0,
+          0.0,
+          -2.5
+        ],
+        "scale": [
+          6.0,
+          6.0,
+          6.0
+        ],
+        "rotation_degrees": [
+          0.0,
+          35.0,
+          0.0
+        ]
+      },
+      "behaviors": [
+        {
+          "type": "rotate",
+          "axis": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "degrees_per_second": 30.0
+        }
+      ],
+      "render": {
+        "visible": true,
+        "stroke_character": "."
+      }
+    }
+  ]
+}

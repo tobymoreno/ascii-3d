@@ -1221,6 +1221,93 @@ fn resolve_a3d_asset_path(root: &Path, relative_path: &str) -> io::Result<String
         .ok_or_else(|| io::Error::other(format!("asset path is not UTF-8: {}", resolved.display())))
 }
 
+fn load_loaded_a3d_mesh(root: &Path, relative_path: &str) -> io::Result<Mesh> {
+    let mesh_path = resolve_a3d_asset_path(root, relative_path)?;
+    let mut mesh = load_obj(Path::new(&mesh_path)).map_err(|error| {
+        io::Error::other(format!("failed to load A3D mesh {}: {}", mesh_path, error))
+    })?;
+
+    // External OBJ files often arrive in arbitrary units and offsets.
+    // Normalize first, then let the .a3d object transform place/scale it.
+    if !mesh.normalize_to_size(1.0) {
+        return Err(io::Error::other(format!(
+            "could not normalize A3D mesh {}",
+            mesh_path
+        )));
+    }
+
+    Ok(mesh)
+}
+
+fn draw_loaded_a3d_mesh_object_in_ws(
+    canvas: &mut Canvas,
+    projector: &ObliqueProjector,
+    root: &Path,
+    object: &crate::a3d::SceneObject,
+) -> io::Result<()> {
+    if !object.render.visible {
+        return Ok(());
+    }
+
+    let AssetRef::Mesh { path } = &object.asset else {
+        return Ok(());
+    };
+
+    let mesh = load_loaded_a3d_mesh(root, path)?;
+    let object_world = object.transform.matrix();
+
+    for (from_index, to_index) in mesh.unique_edges() {
+        let from_world = object_world.transform_point(mesh.vertices[from_index]);
+        let to_world = object_world.transform_point(mesh.vertices[to_index]);
+
+        canvas.draw_line(
+            projector.project(from_world),
+            projector.project(to_world),
+            '#',
+        );
+    }
+
+    Ok(())
+}
+
+fn draw_loaded_a3d_mesh_object(
+    canvas: &mut Canvas,
+    depth_buffer: &mut CameraViewportDepthBuffer,
+    state: &AppState,
+    root: &Path,
+    inner: ClipRect,
+    object: &crate::a3d::SceneObject,
+) -> io::Result<()> {
+    if !object.render.visible {
+        return Ok(());
+    }
+
+    let AssetRef::Mesh { path } = &object.asset else {
+        return Ok(());
+    };
+
+    let mesh = load_loaded_a3d_mesh(root, path)?;
+    let object_world = object.transform.matrix();
+    let character = object.render.stroke_character.unwrap_or('#');
+
+    for (from_index, to_index) in mesh.unique_edges() {
+        let from_world = object_world.transform_point(mesh.vertices[from_index]);
+        let to_world = object_world.transform_point(mesh.vertices[to_index]);
+
+        draw_camera_viewport_depth_line(
+            canvas,
+            depth_buffer,
+            state,
+            inner,
+            from_world,
+            to_world,
+            character,
+        );
+    }
+
+    Ok(())
+}
+
 fn draw_loaded_a3d_word_object(
     canvas: &mut Canvas,
     depth_buffer: &mut CameraViewportDepthBuffer,
@@ -1320,7 +1407,7 @@ fn render_loaded_a3d_world(
     canvas.draw_text(Point2::new(2, 3), "LoadedA3d runtime scene");
     canvas.draw_text(
         Point2::new(2, 4),
-        "Rendering Word assets from assets/a3d/p_depth_demo/scene.a3d",
+        "Rendering Word and Mesh assets from the loaded .a3d scene",
     );
 
     let Some(root) = root else {
@@ -1345,6 +1432,7 @@ fn render_loaded_a3d_world(
     canvas.with_clip_rect(inner, |canvas| {
         for object in &world.objects {
             draw_loaded_a3d_word_object(canvas, &mut depth_buffer, state, root, inner, object)?;
+            draw_loaded_a3d_mesh_object(canvas, &mut depth_buffer, state, root, inner, object)?;
         }
 
         Ok::<(), io::Error>(())
@@ -1487,6 +1575,7 @@ fn draw_loaded_a3d_objects_in_ws(
 
     for object in &world.objects {
         draw_loaded_a3d_word_object_in_ws(canvas, projector, state, root, object)?;
+        draw_loaded_a3d_mesh_object_in_ws(canvas, projector, root, object)?;
     }
 
     Ok(())
@@ -1522,6 +1611,7 @@ fn render_loaded_a3d_camera_viewport_canvas(state: &AppState) -> io::Result<Canv
     canvas.with_clip_rect(inner, |canvas| {
         for object in &world.objects {
             draw_loaded_a3d_word_object(canvas, &mut depth_buffer, state, root, inner, object)?;
+            draw_loaded_a3d_mesh_object(canvas, &mut depth_buffer, state, root, inner, object)?;
         }
 
         Ok::<(), io::Error>(())
