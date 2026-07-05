@@ -17,6 +17,7 @@ use crossterm::{
 };
 
 use crate::{
+    a3d::{AssetRef, LoadedWorld, load_a3d_project},
     canvas::{Canvas, ClipRect},
     curves::CubicBezier3,
     geometry2d::Point2,
@@ -197,6 +198,7 @@ struct AppState {
     world_camera_position: Vec3,
     world_camera_yaw_degrees: f32,
     world_camera_pitch_degrees: f32,
+    loaded_a3d_world: Option<LoadedWorld>,
 }
 
 impl AppState {
@@ -216,6 +218,7 @@ impl AppState {
             world_camera_position,
             world_camera_yaw_degrees,
             world_camera_pitch_degrees,
+            loaded_a3d_world: None,
         }
     }
 
@@ -348,6 +351,13 @@ impl AppState {
         let delta_degrees = elapsed.as_secs_f32() * ROTATION_SPEED_DEGREES_PER_SECOND;
 
         match self.current_scene() {
+            Scene::LoadedA3d => {
+                if let Some(world) = &mut self.loaded_a3d_world {
+                    world.update(elapsed.as_secs_f32());
+                }
+                true
+            }
+
             Scene::AssetAxesRotateX
             | Scene::AssetAxesRotateY
             | Scene::AssetAxesRotateZ
@@ -386,6 +396,17 @@ fn asset_path(filename: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("assets")
         .join(filename)
+}
+
+fn load_default_a3d_world() -> io::Result<LoadedWorld> {
+    let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("assets")
+        .join("a3d")
+        .join("p_depth_demo")
+        .join("scene.a3d");
+
+    let project = load_a3d_project(&manifest_path)?;
+    project.into_world().map_err(io::Error::other)
 }
 
 fn load_mesh_asset(filename: &str) -> io::Result<Mesh> {
@@ -851,11 +872,89 @@ fn render_camera_viewport_canvas(state: &AppState) -> io::Result<Canvas> {
     Ok(canvas)
 }
 
+fn render_loaded_a3d_world(canvas: &mut Canvas, world: Option<&LoadedWorld>) {
+    canvas.draw_text(Point2::new(2, 3), "LoadedA3d runtime scene");
+    canvas.draw_text(
+        Point2::new(2, 5),
+        "Data file: assets/a3d/p_depth_demo/scene.a3d",
+    );
+
+    let Some(world) = world else {
+        canvas.draw_text(Point2::new(2, 7), "No .a3d world loaded");
+        return;
+    };
+
+    canvas.draw_text(Point2::new(2, 7), &format!("World: {}", world.title));
+    canvas.draw_text(
+        Point2::new(2, 8),
+        &format!(
+            "Physics gravity [{:.1}, {:.1}, {:.1}] damping {:.3}",
+            world.physics.gravity[0],
+            world.physics.gravity[1],
+            world.physics.gravity[2],
+            world.physics.damping,
+        ),
+    );
+
+    canvas.draw_text(
+        Point2::new(2, 10),
+        "Objects loaded from manifest. Behaviors update every frame.",
+    );
+
+    for (index, object) in world.objects.iter().enumerate() {
+        let row = 12 + index as i32 * 3;
+        if row >= FOOTER_ROW - 2 {
+            break;
+        }
+
+        let asset = match &object.asset {
+            AssetRef::Mesh { path } => format!("mesh:{path}"),
+            AssetRef::Word { path } => format!("word:{path}"),
+            AssetRef::Glyph { path, metadata } => match metadata {
+                Some(metadata) => format!("glyph:{path} metadata:{metadata}"),
+                None => format!("glyph:{path}"),
+            },
+        };
+
+        canvas.draw_text(
+            Point2::new(2, row),
+            &format!(
+                "{} [{}] pos [{:.2}, {:.2}, {:.2}] rot [{:.1}, {:.1}, {:.1}]",
+                object.id,
+                asset,
+                object.transform.position[0],
+                object.transform.position[1],
+                object.transform.position[2],
+                object.transform.rotation_degrees[0],
+                object.transform.rotation_degrees[1],
+                object.transform.rotation_degrees[2],
+            ),
+        );
+
+        canvas.draw_text(
+            Point2::new(4, row + 1),
+            &format!(
+                "behaviors: {} | physics: {}",
+                object.behaviors.len(),
+                if object.physics.is_some() {
+                    "yes"
+                } else {
+                    "no"
+                },
+            ),
+        );
+    }
+}
+
 fn render_scene_frame(state: &AppState, assets: &SceneAssets) -> io::Result<Canvas> {
     let mut canvas = Canvas::new(CANVAS_WIDTH, CANVAS_HEIGHT);
     let projector = projector_from_config(&assets.projection_config);
 
     match state.current_scene() {
+        Scene::LoadedA3d => {
+            render_loaded_a3d_world(&mut canvas, state.loaded_a3d_world.as_ref());
+        }
+
         Scene::WorldCameraSpaces => {
             canvas.with_viewport(WORLD_DEBUG_VIEWPORT, |canvas| {
                 render_world_camera_spaces(
@@ -1229,6 +1328,7 @@ pub fn run() -> io::Result<()> {
     terminal.clear()?;
 
     let mut state = AppState::new();
+    state.loaded_a3d_world = Some(load_default_a3d_world()?);
     let mut previous_time = Instant::now();
     let mut previous_frame: Option<String> = None;
 
@@ -1274,19 +1374,19 @@ mod tests {
     use crate::scenes::Scene;
 
     #[test]
-    fn application_starts_on_single_p_scene() {
+    fn application_starts_on_loaded_a3d_scene() {
         let state = AppState::new();
 
-        assert_eq!(state.current_scene(), Scene::WorldCameraSpaces);
+        assert_eq!(state.current_scene(), Scene::LoadedA3d);
     }
 
     #[test]
-    fn next_scene_moves_to_pittcrew_scene() {
+    fn next_scene_moves_to_world_camera_spaces_scene() {
         let mut state = AppState::new();
 
         state.next_scene();
 
-        assert_eq!(state.current_scene(), Scene::PittCrew);
+        assert_eq!(state.current_scene(), Scene::WorldCameraSpaces);
     }
 
     #[test]
@@ -1351,6 +1451,16 @@ mod tests {
     #[test]
     fn projection_config_exists() {
         assert!(asset_path("projection.default.json").is_file());
+    }
+
+    #[test]
+    fn default_a3d_world_loads() {
+        let world = super::load_default_a3d_world().expect("default .a3d world should load");
+
+        assert_eq!(world.title, "P depth demo");
+        assert_eq!(world.objects.len(), 2);
+        assert!(world.object("front_p").is_some());
+        assert!(world.object("rear_p").is_some());
     }
 
     #[test]
