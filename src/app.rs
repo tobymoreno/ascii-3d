@@ -4,6 +4,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use ratatui::{Terminal, backend::CrosstermBackend};
+
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
     event::{self, Event, KeyCode, KeyEventKind},
@@ -15,13 +17,18 @@ use crossterm::{
 };
 
 use crate::{
+    a3d::{AssetRef, LoadedWorld, load_a3d_project},
     canvas::{Canvas, ClipRect},
     curves::CubicBezier3,
     geometry2d::Point2,
     glyphs::{
         GlyphAsset, GlyphMetadata, GlyphSegment, WordAsset, read_json, transform_matrix, vec3,
     },
+    input::{
+        AppCommand, camera_mode_command_for_key, menu_command_for_key, scene_mode_command_for_key,
+    },
     math::{Mat4, Vec3},
+    menu::MenuState,
     mesh::Mesh,
     obj::load_obj,
     projection::ObliqueProjector,
@@ -187,9 +194,13 @@ struct AppState {
     box_angle_degrees: f32,
     glyph_stroke_index: usize,
     control_mode: ControlMode,
+    active_menu: Option<MenuState>,
     world_camera_position: Vec3,
     world_camera_yaw_degrees: f32,
     world_camera_pitch_degrees: f32,
+    loaded_a3d_world: Option<LoadedWorld>,
+    loaded_a3d_root: Option<PathBuf>,
+    loaded_a3d_debug_popup_until: Option<Instant>,
 }
 
 impl AppState {
@@ -205,9 +216,13 @@ impl AppState {
             box_angle_degrees: 0.0,
             glyph_stroke_index: DEFAULT_GLYPH_STROKE_INDEX,
             control_mode: ControlMode::Scene,
+            active_menu: None,
             world_camera_position,
             world_camera_yaw_degrees,
             world_camera_pitch_degrees,
+            loaded_a3d_world: None,
+            loaded_a3d_root: None,
+            loaded_a3d_debug_popup_until: None,
         }
     }
 
@@ -266,6 +281,26 @@ impl AppState {
         };
     }
 
+    fn open_menu(&mut self, kind: crate::menu::MenuKind) {
+        self.active_menu = Some(MenuState::new(kind));
+    }
+
+    fn close_menu(&mut self) {
+        self.active_menu = None;
+    }
+
+    fn move_menu_up(&mut self) {
+        if let Some(menu) = &mut self.active_menu {
+            menu.move_up();
+        }
+    }
+
+    fn move_menu_down(&mut self) {
+        if let Some(menu) = &mut self.active_menu {
+            menu.move_down();
+        }
+    }
+
     fn reset_world_camera(&mut self) {
         let world_camera_position = Vec3::new(0.65, 0.55, 0.35);
         let p_word_position = Vec3::new(P_WORD_WORLD_X, P_WORD_WORLD_Y, P_WORD_WORLD_Z);
@@ -320,6 +355,13 @@ impl AppState {
         let delta_degrees = elapsed.as_secs_f32() * ROTATION_SPEED_DEGREES_PER_SECOND;
 
         match self.current_scene() {
+            Scene::LoadedA3d => {
+                if let Some(world) = &mut self.loaded_a3d_world {
+                    world.update(elapsed.as_secs_f32());
+                }
+                true
+            }
+
             Scene::AssetAxesRotateX
             | Scene::AssetAxesRotateY
             | Scene::AssetAxesRotateZ
@@ -358,6 +400,20 @@ fn asset_path(filename: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("assets")
         .join(filename)
+}
+
+fn default_a3d_root_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("assets")
+        .join("a3d")
+        .join("p_depth_demo")
+}
+
+fn load_default_a3d_world() -> io::Result<LoadedWorld> {
+    let manifest_path = default_a3d_root_path().join("scene.a3d");
+
+    let project = load_a3d_project(&manifest_path)?;
+    project.into_world().map_err(io::Error::other)
 }
 
 fn load_mesh_asset(filename: &str) -> io::Result<Mesh> {
@@ -771,11 +827,476 @@ fn draw_camera_viewport(canvas: &mut Canvas, state: &AppState) -> io::Result<()>
     Ok(())
 }
 
-fn render_scene_frame(state: &AppState, assets: &SceneAssets) -> io::Result<String> {
+fn render_camera_viewport_canvas(state: &AppState) -> io::Result<Canvas> {
+    const VIEWPORT_CONTENT_WIDTH: usize = 78;
+    const VIEWPORT_CONTENT_HEIGHT: usize = 16;
+
+    let mut canvas = Canvas::new(VIEWPORT_CONTENT_WIDTH, VIEWPORT_CONTENT_HEIGHT);
+
+    canvas.draw_text(Point2::new(1, 0), "Camera3D viewport content");
+
+    let inner = ClipRect {
+        x: 1,
+        y: 2,
+        width: VIEWPORT_CONTENT_WIDTH.saturating_sub(2),
+        height: VIEWPORT_CONTENT_HEIGHT.saturating_sub(5),
+    };
+
+    let mut depth_buffer = CameraViewportDepthBuffer::new(inner);
+
+    canvas.with_clip_rect(inner, |canvas| {
+        draw_single_p_at_camera_viewport(
+            canvas,
+            &mut depth_buffer,
+            state,
+            inner,
+            Vec3::new(P2_WORD_WORLD_X, P2_WORD_WORLD_Y, P2_WORD_WORLD_Z),
+            state.glyph_stroke_character(),
+        )?;
+
+        draw_single_p_at_camera_viewport(
+            canvas,
+            &mut depth_buffer,
+            state,
+            inner,
+            Vec3::new(P_WORD_WORLD_X, P_WORD_WORLD_Y, P_WORD_WORLD_Z),
+            state.glyph_stroke_character(),
+        )
+    })?;
+
+    canvas.draw_text(
+        Point2::new(1, VIEWPORT_CONTENT_HEIGHT as i32 - 2),
+        &format!(
+            "pos [{:.2},{:.2},{:.2}] yaw {:.1} pitch {:.1} | P2 depth test",
+            state.world_camera_position.x,
+            state.world_camera_position.y,
+            state.world_camera_position.z,
+            state.world_camera_yaw_degrees,
+            state.world_camera_pitch_degrees,
+        ),
+    );
+
+    Ok(canvas)
+}
+
+fn resolve_a3d_asset_path(root: &Path, relative_path: &str) -> io::Result<String> {
+    let path = Path::new(relative_path);
+    let resolved = if path.is_absolute() {
+        path.to_path_buf()
+    } else if path.exists() {
+        path.to_path_buf()
+    } else {
+        root.join(path)
+    };
+
+    resolved
+        .to_str()
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| io::Error::other(format!("asset path is not UTF-8: {}", resolved.display())))
+}
+
+fn draw_loaded_a3d_word_object(
+    canvas: &mut Canvas,
+    depth_buffer: &mut CameraViewportDepthBuffer,
+    state: &AppState,
+    root: &Path,
+    inner: ClipRect,
+    object: &crate::a3d::SceneObject,
+) -> io::Result<()> {
+    if !object.render.visible {
+        return Ok(());
+    }
+
+    let AssetRef::Word { path } = &object.asset else {
+        return Ok(());
+    };
+
+    let word_path = resolve_a3d_asset_path(root, path)?;
+    let word: WordAsset = read_json(&word_path)?;
+    let object_world = object.transform.matrix();
+    let stroke_character = object
+        .render
+        .stroke_character
+        .unwrap_or_else(|| state.glyph_stroke_character());
+
+    for child in &word.children {
+        let glyph_path = resolve_a3d_asset_path(root, &child.glyph_asset)?;
+        let metadata_path = resolve_a3d_asset_path(root, &child.metadata_asset)?;
+        let glyph: GlyphAsset = read_json(&glyph_path)?;
+        let glyph_metadata: GlyphMetadata = read_json(&metadata_path)?;
+        let child_world = object_world * transform_matrix(child.local_transform);
+        let display = &glyph_metadata.display;
+        let stroke_character = if display.show_strokes {
+            stroke_character
+        } else {
+            display.stroke_character
+        };
+
+        for path in &glyph.paths {
+            for segment in &path.segments {
+                match segment {
+                    GlyphSegment::Line { from, to } => {
+                        if !display.show_strokes {
+                            continue;
+                        }
+
+                        let from_world = child_world.transform_point(vec3(*from));
+                        let to_world = child_world.transform_point(vec3(*to));
+
+                        draw_camera_viewport_depth_line(
+                            canvas,
+                            depth_buffer,
+                            state,
+                            inner,
+                            from_world,
+                            to_world,
+                            stroke_character,
+                        );
+                    }
+
+                    GlyphSegment::CubicBezier { p0, p1, p2, p3 } => {
+                        if !display.show_strokes {
+                            continue;
+                        }
+
+                        let curve = CubicBezier3::new(vec3(*p0), vec3(*p1), vec3(*p2), vec3(*p3));
+                        let sampled = curve.sample(glyph.sampling.default_segments_per_curve);
+
+                        for (start, end) in sampled.line_segments() {
+                            let start_world = child_world.transform_point(start);
+                            let end_world = child_world.transform_point(end);
+
+                            draw_camera_viewport_depth_line(
+                                canvas,
+                                depth_buffer,
+                                state,
+                                inner,
+                                start_world,
+                                end_world,
+                                stroke_character,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn render_loaded_a3d_world(
+    canvas: &mut Canvas,
+    root: Option<&Path>,
+    world: Option<&LoadedWorld>,
+    state: &AppState,
+) -> io::Result<()> {
+    canvas.draw_text(Point2::new(2, 3), "LoadedA3d runtime scene");
+    canvas.draw_text(
+        Point2::new(2, 4),
+        "Rendering Word assets from assets/a3d/p_depth_demo/scene.a3d",
+    );
+
+    let Some(root) = root else {
+        canvas.draw_text(Point2::new(2, 6), "No .a3d root loaded");
+        return Ok(());
+    };
+
+    let Some(world) = world else {
+        canvas.draw_text(Point2::new(2, 6), "No .a3d world loaded");
+        return Ok(());
+    };
+
+    let inner = ClipRect {
+        x: 1,
+        y: 6,
+        width: CANVAS_WIDTH.saturating_sub(2),
+        height: FOOTER_ROW.saturating_sub(8) as usize,
+    };
+
+    let mut depth_buffer = CameraViewportDepthBuffer::new(inner);
+
+    canvas.with_clip_rect(inner, |canvas| {
+        for object in &world.objects {
+            draw_loaded_a3d_word_object(canvas, &mut depth_buffer, state, root, inner, object)?;
+        }
+
+        Ok::<(), io::Error>(())
+    })?;
+
+    let mut status_row = FOOTER_ROW - 5;
+    canvas.draw_text(
+        Point2::new(2, status_row),
+        &format!(
+            "World: {} | gravity [{:.1}, {:.1}, {:.1}] damping {:.3}",
+            world.title,
+            world.physics.gravity[0],
+            world.physics.gravity[1],
+            world.physics.gravity[2],
+            world.physics.damping,
+        ),
+    );
+
+    status_row += 1;
+
+    for object in &world.objects {
+        if status_row >= FOOTER_ROW - 1 {
+            break;
+        }
+
+        canvas.draw_text(
+            Point2::new(2, status_row),
+            &format!(
+                "{} pos [{:.2}, {:.2}, {:.2}] rot [{:.1}, {:.1}, {:.1}] behaviors {}",
+                object.id,
+                object.transform.position[0],
+                object.transform.position[1],
+                object.transform.position[2],
+                object.transform.rotation_degrees[0],
+                object.transform.rotation_degrees[1],
+                object.transform.rotation_degrees[2],
+                object.behaviors.len(),
+            ),
+        );
+
+        status_row += 1;
+    }
+
+    Ok(())
+}
+
+fn draw_loaded_a3d_word_object_in_ws(
+    canvas: &mut Canvas,
+    projector: &ObliqueProjector,
+    state: &AppState,
+    root: &Path,
+    object: &crate::a3d::SceneObject,
+) -> io::Result<()> {
+    if !object.render.visible {
+        return Ok(());
+    }
+
+    let AssetRef::Word { path } = &object.asset else {
+        return Ok(());
+    };
+
+    let word_path = resolve_a3d_asset_path(root, path)?;
+    let word: WordAsset = read_json(&word_path)?;
+    let object_world = object.transform.matrix();
+    let stroke_character = object
+        .render
+        .stroke_character
+        .unwrap_or_else(|| state.glyph_stroke_character());
+
+    for child in &word.children {
+        let glyph_path = resolve_a3d_asset_path(root, &child.glyph_asset)?;
+        let metadata_path = resolve_a3d_asset_path(root, &child.metadata_asset)?;
+        let glyph: GlyphAsset = read_json(&glyph_path)?;
+        let glyph_metadata: GlyphMetadata = read_json(&metadata_path)?;
+        let child_world = object_world * transform_matrix(child.local_transform);
+        let display = &glyph_metadata.display;
+        let stroke_character = if display.show_strokes {
+            stroke_character
+        } else {
+            display.stroke_character
+        };
+
+        for path in &glyph.paths {
+            for segment in &path.segments {
+                match segment {
+                    GlyphSegment::Line { from, to } => {
+                        if !display.show_strokes {
+                            continue;
+                        }
+
+                        let from_world = child_world.transform_point(vec3(*from));
+                        let to_world = child_world.transform_point(vec3(*to));
+
+                        canvas.draw_line(
+                            projector.project(from_world),
+                            projector.project(to_world),
+                            stroke_character,
+                        );
+                    }
+
+                    GlyphSegment::CubicBezier { p0, p1, p2, p3 } => {
+                        if !display.show_strokes {
+                            continue;
+                        }
+
+                        let curve = CubicBezier3::new(vec3(*p0), vec3(*p1), vec3(*p2), vec3(*p3));
+                        let sampled = curve.sample(glyph.sampling.default_segments_per_curve);
+
+                        for (start, end) in sampled.line_segments() {
+                            let start_world = child_world.transform_point(start);
+                            let end_world = child_world.transform_point(end);
+
+                            canvas.draw_line(
+                                projector.project(start_world),
+                                projector.project(end_world),
+                                stroke_character,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn draw_loaded_a3d_objects_in_ws(
+    canvas: &mut Canvas,
+    state: &AppState,
+    projector: &ObliqueProjector,
+) -> io::Result<()> {
+    let Some(root) = state.loaded_a3d_root.as_deref() else {
+        return Ok(());
+    };
+
+    let Some(world) = state.loaded_a3d_world.as_ref() else {
+        return Ok(());
+    };
+
+    for object in &world.objects {
+        draw_loaded_a3d_word_object_in_ws(canvas, projector, state, root, object)?;
+    }
+
+    Ok(())
+}
+
+fn render_loaded_a3d_camera_viewport_canvas(state: &AppState) -> io::Result<Canvas> {
+    const VIEWPORT_CONTENT_WIDTH: usize = 78;
+    const VIEWPORT_CONTENT_HEIGHT: usize = 16;
+
+    let mut canvas = Canvas::new(VIEWPORT_CONTENT_WIDTH, VIEWPORT_CONTENT_HEIGHT);
+
+    canvas.draw_text(Point2::new(1, 0), "LoadedA3d Camera3D viewport");
+
+    let inner = ClipRect {
+        x: 1,
+        y: 2,
+        width: VIEWPORT_CONTENT_WIDTH.saturating_sub(2),
+        height: VIEWPORT_CONTENT_HEIGHT.saturating_sub(5),
+    };
+
+    let Some(root) = state.loaded_a3d_root.as_deref() else {
+        canvas.draw_text(Point2::new(1, 3), "No .a3d root loaded");
+        return Ok(canvas);
+    };
+
+    let Some(world) = state.loaded_a3d_world.as_ref() else {
+        canvas.draw_text(Point2::new(1, 3), "No .a3d world loaded");
+        return Ok(canvas);
+    };
+
+    let mut depth_buffer = CameraViewportDepthBuffer::new(inner);
+
+    canvas.with_clip_rect(inner, |canvas| {
+        for object in &world.objects {
+            draw_loaded_a3d_word_object(canvas, &mut depth_buffer, state, root, inner, object)?;
+        }
+
+        Ok::<(), io::Error>(())
+    })?;
+
+    canvas.draw_text(
+        Point2::new(1, VIEWPORT_CONTENT_HEIGHT as i32 - 2),
+        &format!(
+            "{} | pos [{:.2},{:.2},{:.2}] yaw {:.1} pitch {:.1}",
+            world.title,
+            state.world_camera_position.x,
+            state.world_camera_position.y,
+            state.world_camera_position.z,
+            state.world_camera_yaw_degrees,
+            state.world_camera_pitch_degrees,
+        ),
+    );
+
+    Ok(canvas)
+}
+
+fn render_loaded_a3d_ws_camera_workspace(
+    canvas: &mut Canvas,
+    state: &AppState,
+    projector: &ObliqueProjector,
+) {
+    let origin = Vec3::zero();
+    let positive_x = Vec3::new(4.0, 0.0, 0.0);
+    let positive_y = Vec3::new(0.0, 3.0, 0.0);
+    let negative_z = Vec3::new(0.0, 0.0, -4.0);
+
+    canvas.draw_line(
+        projector.project(origin),
+        projector.project(positive_x),
+        '-',
+    );
+    canvas.draw_line(
+        projector.project(origin),
+        projector.project(positive_y),
+        '|',
+    );
+    canvas.draw_line(
+        projector.project(origin),
+        projector.project(negative_z),
+        '/',
+    );
+
+    canvas.draw_text(projector.project(positive_x), "+X");
+    canvas.draw_text(projector.project(positive_y), "+Y");
+    canvas.draw_text(projector.project(negative_z), "-Z");
+    canvas.set(projector.project(origin), 'O');
+
+    let forward = camera_forward_from_yaw_pitch(
+        state.world_camera_yaw_degrees,
+        state.world_camera_pitch_degrees,
+    );
+    let right = state.camera_right();
+    let eye = state.world_camera_position;
+    let near_center = eye + vec3_scale(forward, 0.60);
+    let near_left = near_center + vec3_scale(right, -0.35);
+    let near_right = near_center + vec3_scale(right, 0.35);
+
+    let eye_screen = projector.project(eye);
+    let near_center_screen = projector.project(near_center);
+    let near_left_screen = projector.project(near_left);
+    let near_right_screen = projector.project(near_right);
+
+    canvas.set(eye_screen, 'E');
+    canvas.set(near_center_screen, 'N');
+    canvas.draw_line(eye_screen, near_center_screen, '.');
+    canvas.draw_line(near_left_screen, near_right_screen, '=');
+
+    canvas.draw_text(Point2::new(2, 3), "WS: LoadedA3d clean worldspace");
+    canvas.draw_text(
+        Point2::new(2, 4),
+        "Only .a3d objects are drawn here; no hardcoded demo letters",
+    );
+}
+
+fn render_loaded_a3d_studio_world(
+    canvas: &mut Canvas,
+    state: &AppState,
+    projector: &ObliqueProjector,
+) -> io::Result<()> {
+    canvas.with_viewport(WORLD_DEBUG_VIEWPORT, |canvas| {
+        render_loaded_a3d_ws_camera_workspace(canvas, state, projector);
+        draw_loaded_a3d_objects_in_ws(canvas, state, projector)
+    })?;
+
+    Ok(())
+}
+
+fn render_scene_frame(state: &AppState, assets: &SceneAssets) -> io::Result<Canvas> {
     let mut canvas = Canvas::new(CANVAS_WIDTH, CANVAS_HEIGHT);
     let projector = projector_from_config(&assets.projection_config);
 
     match state.current_scene() {
+        Scene::LoadedA3d => {
+            render_loaded_a3d_studio_world(&mut canvas, state, &projector)?;
+        }
+
         Scene::WorldCameraSpaces => {
             canvas.with_viewport(WORLD_DEBUG_VIEWPORT, |canvas| {
                 render_world_camera_spaces(
@@ -935,48 +1456,280 @@ fn render_scene_frame(state: &AppState, assets: &SceneAssets) -> io::Result<Stri
         }
     }
 
-    canvas.draw_text(Point2::new(2, HEADER_ROW), "Scene: WorldSpace3D + Camera3D");
-
-    draw_camera_viewport(&mut canvas, state)?;
+    canvas.draw_text(
+        Point2::new(2, HEADER_ROW),
+        &format!("Scene: {}", state.current_scene().title()),
+    );
 
     canvas.draw_text(
         Point2::new(2, FOOTER_ROW),
         &format!(
-            "[{}/{}] world+Camera3D | Mode: {} | Glyph '{}' | Tab mode | R reset | Esc quit",
+            "[{}/{}] {} | Mode: {} | Glyph '{}' | Menu: {} | h help | Esc quit",
             state.scene_position + 1,
             Scene::ALL.len(),
+            state.current_scene().title(),
             state.control_mode.label(),
             state.glyph_stroke_character(),
+            state
+                .active_menu
+                .as_ref()
+                .map(|menu| menu.kind().title())
+                .unwrap_or("closed"),
         ),
     );
 
-    Ok(canvas.render())
+    Ok(canvas)
+}
+
+fn is_loaded_a3d_debug_popup_visible(state: &AppState) -> bool {
+    matches!(state.current_scene(), Scene::LoadedA3d)
+        && state
+            .loaded_a3d_debug_popup_until
+            .is_some_and(|until| Instant::now() <= until)
+}
+
+fn dismiss_loaded_a3d_debug_popup(state: &mut AppState) -> bool {
+    if is_loaded_a3d_debug_popup_visible(state) {
+        state.loaded_a3d_debug_popup_until = None;
+        true
+    } else {
+        false
+    }
+}
+
+fn loaded_a3d_debug_popup_lines(state: &AppState) -> Option<Vec<String>> {
+    if !is_loaded_a3d_debug_popup_visible(state) {
+        return None;
+    }
+
+    let world = state.loaded_a3d_world.as_ref()?;
+
+    let mut lines = vec![
+        world.title.clone(),
+        format!("objects: {}", world.objects.len()),
+        "source: assets/a3d/p_depth_demo/scene.a3d".to_string(),
+        "auto-hide: 5 seconds".to_string(),
+    ];
+
+    for object in world.objects.iter().take(5) {
+        lines.push(format!(
+            "{} x={:.2} z={:.2}",
+            object.id, object.transform.position[0], object.transform.position[2],
+        ));
+    }
+
+    Some(lines)
 }
 
 fn render_scene(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     state: &AppState,
     assets: &SceneAssets,
     previous_frame: &mut Option<String>,
 ) -> io::Result<()> {
-    let frame = render_scene_frame(state, assets)?;
+    let scene_canvas = render_scene_frame(state, assets)?;
+    let camera_viewport_canvas = match state.current_scene() {
+        Scene::LoadedA3d => Some(render_loaded_a3d_camera_viewport_canvas(state)?),
+        Scene::WorldCameraSpaces => Some(render_camera_viewport_canvas(state)?),
+        _ => None,
+    };
 
-    let mut output = stdout();
-    write_frame(&mut output, &frame)?;
+    let debug_popup_lines = loaded_a3d_debug_popup_lines(state);
 
-    *previous_frame = Some(frame);
+    terminal.draw(|frame| {
+        crate::tui::draw(
+            frame,
+            &scene_canvas,
+            camera_viewport_canvas.as_ref(),
+            state.active_menu.as_ref(),
+            debug_popup_lines.as_deref(),
+        );
+    })?;
+
+    *previous_frame = Some(scene_canvas.render());
 
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyHandling {
+    Handled,
+    Ignored,
+    Quit,
+}
+
+fn apply_app_command(state: &mut AppState, command: AppCommand) -> KeyHandling {
+    match command {
+        AppCommand::Quit => KeyHandling::Quit,
+
+        AppCommand::ToggleControlMode => {
+            state.toggle_control_mode();
+            KeyHandling::Handled
+        }
+
+        AppCommand::NextScene => {
+            state.next_scene();
+            KeyHandling::Handled
+        }
+
+        AppCommand::PreviousScene => {
+            state.previous_scene();
+            KeyHandling::Handled
+        }
+
+        AppCommand::ResetWorldCamera | AppCommand::ResetCamera => {
+            state.reset_world_camera();
+            KeyHandling::Handled
+        }
+
+        AppCommand::NextGlyphStroke => {
+            state.next_glyph_stroke_character();
+            KeyHandling::Handled
+        }
+
+        AppCommand::PreviousGlyphStroke => {
+            state.previous_glyph_stroke_character();
+            KeyHandling::Handled
+        }
+
+        AppCommand::OpenMenu(kind) => {
+            state.open_menu(kind);
+            KeyHandling::Handled
+        }
+
+        AppCommand::CloseMenu => {
+            state.close_menu();
+            KeyHandling::Handled
+        }
+
+        AppCommand::MenuUp => {
+            state.move_menu_up();
+            KeyHandling::Handled
+        }
+
+        AppCommand::MenuDown => {
+            state.move_menu_down();
+            KeyHandling::Handled
+        }
+
+        AppCommand::MenuSelect => {
+            let Some(menu) = &state.active_menu else {
+                return KeyHandling::Ignored;
+            };
+
+            let selected_command = menu.selected_command();
+            state.close_menu();
+            apply_app_command(state, selected_command)
+        }
+
+        AppCommand::MoveCameraForward => {
+            state.move_world_camera_forward(CAMERA_MOVE_STEP);
+            KeyHandling::Handled
+        }
+
+        AppCommand::MoveCameraBackward => {
+            state.move_world_camera_forward(-CAMERA_MOVE_STEP);
+            KeyHandling::Handled
+        }
+
+        AppCommand::MoveCameraLeft => {
+            state.move_world_camera_right(-CAMERA_MOVE_STEP);
+            KeyHandling::Handled
+        }
+
+        AppCommand::MoveCameraRight => {
+            state.move_world_camera_right(CAMERA_MOVE_STEP);
+            KeyHandling::Handled
+        }
+
+        AppCommand::MoveCameraDown => {
+            state.move_world_camera_up(-CAMERA_MOVE_STEP);
+            KeyHandling::Handled
+        }
+
+        AppCommand::MoveCameraUp => {
+            state.move_world_camera_up(CAMERA_MOVE_STEP);
+            KeyHandling::Handled
+        }
+
+        AppCommand::RotateCameraLeft => {
+            state.rotate_world_camera(-5.0, 0.0);
+            KeyHandling::Handled
+        }
+
+        AppCommand::RotateCameraRight => {
+            state.rotate_world_camera(5.0, 0.0);
+            KeyHandling::Handled
+        }
+
+        AppCommand::RotateCameraUp => {
+            state.rotate_world_camera(0.0, 5.0);
+            KeyHandling::Handled
+        }
+
+        AppCommand::RotateCameraDown => {
+            state.rotate_world_camera(0.0, -5.0);
+            KeyHandling::Handled
+        }
+
+        // Cross-term menu placeholders. They intentionally render as handled
+        // so the menu stack, hotkeys, and help text can be wired before the
+        // feature-specific behavior exists.
+        AppCommand::ToggleCameraDebug
+        | AppCommand::ToggleNearPlaneDebug
+        | AppCommand::ToggleWorldAxes
+        | AppCommand::ToggleWorldGrid
+        | AppCommand::NextGlyph
+        | AppCommand::PreviousGlyph
+        | AppCommand::SelectGlyph
+        | AppCommand::ToggleSimulationPause
+        | AppCommand::StepSimulation
+        | AppCommand::ToggleDepthView
+        | AppCommand::ToggleProjectionDebug => KeyHandling::Handled,
+    }
+}
+
+fn handle_key_press(state: &mut AppState, key_code: KeyCode) -> KeyHandling {
+    if is_loaded_a3d_debug_popup_visible(state) {
+        match key_code {
+            KeyCode::Enter | KeyCode::Esc | KeyCode::Char('o') | KeyCode::Char('O') => {
+                dismiss_loaded_a3d_debug_popup(state);
+                return KeyHandling::Handled;
+            }
+            _ => {}
+        }
+    }
+
+    if state.active_menu.is_some() {
+        return menu_command_for_key(key_code)
+            .map(|command| apply_app_command(state, command))
+            .unwrap_or(KeyHandling::Ignored);
+    }
+
+    let command = match state.control_mode {
+        ControlMode::Scene => scene_mode_command_for_key(key_code),
+        ControlMode::Camera => camera_mode_command_for_key(key_code),
+    };
+
+    command
+        .map(|command| apply_app_command(state, command))
+        .unwrap_or(KeyHandling::Ignored)
+}
+
 pub fn run() -> io::Result<()> {
     let assets = load_scene_assets()?;
-    let _terminal = TerminalGuard::enter()?;
+    let _terminal_guard = TerminalGuard::enter()?;
+    let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
+    terminal.clear()?;
 
     let mut state = AppState::new();
+    state.loaded_a3d_root = Some(default_a3d_root_path());
+    state.loaded_a3d_world = Some(load_default_a3d_world()?);
+    state.loaded_a3d_debug_popup_until = Some(Instant::now() + Duration::from_secs(5));
     let mut previous_time = Instant::now();
     let mut previous_frame: Option<String> = None;
 
-    render_scene(&state, &assets, &mut previous_frame)?;
+    render_scene(&mut terminal, &state, &assets, &mut previous_frame)?;
 
     loop {
         let now = Instant::now();
@@ -984,7 +1737,7 @@ pub fn run() -> io::Result<()> {
         previous_time = now;
 
         if state.update(elapsed) {
-            render_scene(&state, &assets, &mut previous_frame)?;
+            render_scene(&mut terminal, &state, &assets, &mut previous_frame)?;
         }
 
         if !event::poll(FRAME_DURATION)? {
@@ -999,110 +1752,13 @@ pub fn run() -> io::Result<()> {
             continue;
         }
 
-        if key.code == KeyCode::Esc {
-            break;
-        }
-
-        if matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R')) {
-            state.reset_world_camera();
-            render_scene(&state, &assets, &mut previous_frame)?;
-            continue;
-        }
-
-        match state.control_mode {
-            ControlMode::Scene => match key.code {
-                KeyCode::Tab => {
-                    state.toggle_control_mode();
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Char(' ') => {
-                    state.next_glyph_stroke_character();
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Backspace => {
-                    state.previous_glyph_stroke_character();
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Right | KeyCode::Enter => {
-                    state.next_scene();
-                    previous_time = Instant::now();
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Left => {
-                    state.previous_scene();
-                    previous_time = Instant::now();
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Char('q') | KeyCode::Char('Q') => {
-                    break;
-                }
-
-                _ => {}
-            },
-
-            ControlMode::Camera => match key.code {
-                KeyCode::Tab => {
-                    state.toggle_control_mode();
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Char('w') | KeyCode::Char('W') => {
-                    state.move_world_camera_forward(CAMERA_MOVE_STEP);
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Char('s') | KeyCode::Char('S') => {
-                    state.move_world_camera_forward(-CAMERA_MOVE_STEP);
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Char('a') | KeyCode::Char('A') => {
-                    state.move_world_camera_right(-CAMERA_MOVE_STEP);
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Char('d') | KeyCode::Char('D') => {
-                    state.move_world_camera_right(CAMERA_MOVE_STEP);
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Char('q') | KeyCode::Char('Q') => {
-                    state.move_world_camera_up(-CAMERA_MOVE_STEP);
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Char('e') | KeyCode::Char('E') => {
-                    state.move_world_camera_up(CAMERA_MOVE_STEP);
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Left => {
-                    state.rotate_world_camera(-5.0, 0.0);
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Right => {
-                    state.rotate_world_camera(5.0, 0.0);
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Up => {
-                    state.rotate_world_camera(0.0, 5.0);
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                KeyCode::Down => {
-                    state.rotate_world_camera(0.0, -5.0);
-                    render_scene(&state, &assets, &mut previous_frame)?;
-                }
-
-                _ => {}
-            },
+        match handle_key_press(&mut state, key.code) {
+            KeyHandling::Quit => break,
+            KeyHandling::Handled => {
+                previous_time = Instant::now();
+                render_scene(&mut terminal, &state, &assets, &mut previous_frame)?;
+            }
+            KeyHandling::Ignored => {}
         }
     }
 
@@ -1115,19 +1771,19 @@ mod tests {
     use crate::scenes::Scene;
 
     #[test]
-    fn application_starts_on_single_p_scene() {
+    fn application_starts_on_loaded_a3d_scene() {
         let state = AppState::new();
 
-        assert_eq!(state.current_scene(), Scene::WorldCameraSpaces);
+        assert_eq!(state.current_scene(), Scene::LoadedA3d);
     }
 
     #[test]
-    fn next_scene_moves_to_pittcrew_scene() {
+    fn next_scene_moves_to_world_camera_spaces_scene() {
         let mut state = AppState::new();
 
         state.next_scene();
 
-        assert_eq!(state.current_scene(), Scene::PittCrew);
+        assert_eq!(state.current_scene(), Scene::WorldCameraSpaces);
     }
 
     #[test]
@@ -1192,6 +1848,16 @@ mod tests {
     #[test]
     fn projection_config_exists() {
         assert!(asset_path("projection.default.json").is_file());
+    }
+
+    #[test]
+    fn default_a3d_world_loads() {
+        let world = super::load_default_a3d_world().expect("default .a3d world should load");
+
+        assert_eq!(world.title, "PITT CREW depth stack demo");
+        assert_eq!(world.objects.len(), 8);
+        assert!(world.object("letter_p").is_some());
+        assert!(world.object("letter_w").is_some());
     }
 
     #[test]

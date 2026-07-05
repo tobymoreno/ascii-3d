@@ -49,7 +49,17 @@ pub use single_w::render as render_single_w;
 pub use world_camera_spaces::render as render_world_camera_spaces;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SceneDescriptor {
+    pub scene: Scene,
+    pub id: &'static str,
+    pub title: &'static str,
+    pub index: usize,
+    pub animated: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scene {
+    LoadedA3d,
     WorldCameraSpaces,
     PittCrew,
     Crew,
@@ -81,7 +91,8 @@ pub enum Scene {
 
 impl Scene {
     /// Scenes are ordered newest-first.
-    pub const ALL: [Self; 27] = [
+    pub const ALL: [Self; 28] = [
+        Self::LoadedA3d,
         Self::WorldCameraSpaces,
         Self::PittCrew,
         Self::Crew,
@@ -111,8 +122,52 @@ impl Scene {
         Self::Axes,
     ];
 
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::LoadedA3d => "loaded_a3d",
+            Self::WorldCameraSpaces => "world_camera_spaces",
+            Self::PittCrew => "pitt_crew",
+            Self::Crew => "crew",
+            Self::Pitt => "pitt",
+            Self::SingleE => "single_e",
+            Self::SingleW => "single_w",
+            Self::SingleC => "single_c",
+            Self::SingleR => "single_r",
+            Self::SingleT => "single_t",
+            Self::SingleI => "single_i",
+            Self::SingleP => "single_p",
+            Self::BezierAxes => "bezier_axes",
+            Self::AssetAxesRotateX => "asset_axes_rotate_x",
+            Self::AssetAxesRotateY => "asset_axes_rotate_y",
+            Self::AssetAxesRotateZ => "asset_axes_rotate_z",
+            Self::Quad4 => "quad4",
+            Self::CameraMotion => "camera_motion",
+            Self::CameraTurntable => "camera_turntable",
+            Self::CameraLookAt => "camera_look_at",
+            Self::ObjBox => "obj_box",
+            Self::RotateAxesZ => "rotate_axes_z",
+            Self::RotateAxesY => "rotate_axes_y",
+            Self::RotateAxesX => "rotate_axes_x",
+            Self::CrossNegativeZ => "cross_negative_z",
+            Self::CrossPositiveZ => "cross_positive_z",
+            Self::ArbitraryVector => "arbitrary_vector",
+            Self::Axes => "axes",
+        }
+    }
+
+    pub const fn descriptor(self, index: usize) -> SceneDescriptor {
+        SceneDescriptor {
+            scene: self,
+            id: self.id(),
+            title: self.title(),
+            index,
+            animated: self.is_animated(),
+        }
+    }
+
     pub const fn title(self) -> &'static str {
         match self {
+            Self::LoadedA3d => "Loaded .a3d data-driven world",
             Self::WorldCameraSpaces => "world space and Camera3D foundation",
             Self::PittCrew => "PITT CREW word parent with P/I/T/T SPACE C/R/E/W glyphs",
             Self::Crew => "CREW word parent with C/R/E/W glyphs",
@@ -146,7 +201,8 @@ impl Scene {
     pub const fn is_animated(self) -> bool {
         matches!(
             self,
-            Self::AssetAxesRotateX
+            Self::LoadedA3d
+                | Self::AssetAxesRotateX
                 | Self::AssetAxesRotateY
                 | Self::AssetAxesRotateZ
                 | Self::CameraMotion
@@ -159,18 +215,27 @@ impl Scene {
     }
 }
 
+pub fn registry() -> Vec<SceneDescriptor> {
+    Scene::ALL
+        .iter()
+        .enumerate()
+        .map(|(index, scene)| scene.descriptor(index))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::Scene;
 
     #[test]
-    fn newest_scene_is_world_camera_spaces() {
-        assert_eq!(Scene::ALL.first(), Some(&Scene::WorldCameraSpaces));
+    fn newest_scene_is_loaded_a3d() {
+        assert_eq!(Scene::ALL.first(), Some(&Scene::LoadedA3d));
     }
 
     #[test]
-    fn next_scene_after_world_camera_spaces_is_pittcrew() {
-        assert_eq!(Scene::ALL[1], Scene::PittCrew);
+    fn next_scene_after_loaded_a3d_is_world_camera_spaces() {
+        assert_eq!(Scene::ALL[1], Scene::WorldCameraSpaces);
+        assert_eq!(Scene::ALL[2], Scene::PittCrew);
     }
 
     #[test]
@@ -190,11 +255,24 @@ mod tests {
 
     #[test]
     fn scene_count_matches_scene_all() {
-        assert_eq!(Scene::ALL.len(), 27);
+        assert_eq!(Scene::ALL.len(), 28);
+    }
+
+    #[test]
+    fn registry_contains_each_scene_in_all_order() {
+        let registry = super::registry();
+
+        assert_eq!(registry.len(), Scene::ALL.len());
+        assert_eq!(registry[0].scene, Scene::LoadedA3d);
+        assert_eq!(registry[0].id, "loaded_a3d");
+        assert_eq!(registry[0].index, 0);
+        assert_eq!(registry[1].scene, Scene::WorldCameraSpaces);
+        assert_eq!(registry[2].scene, Scene::PittCrew);
     }
 
     #[test]
     fn animated_scenes_are_identified() {
+        assert!(Scene::LoadedA3d.is_animated());
         assert!(!Scene::WorldCameraSpaces.is_animated());
         assert!(!Scene::PittCrew.is_animated());
         assert!(!Scene::Crew.is_animated());
