@@ -1,17 +1,37 @@
 {
   "version": 1,
-  "title": "P depth demo",
+  "title": "PITT CREW depth stack demo",
   "world": {
     "physics": {
-      "gravity": [0.0, -9.8, 0.0],
+      "gravity": [
+        0.0,
+        -9.8,
+        0.0
+      ],
       "damping": 0.01,
-      "bounds_min": [-3.0, -2.0, -5.0],
-      "bounds_max": [3.0, 3.0, 1.0]
+      "bounds_min": [
+        -8.0,
+        -2.0,
+        -8.0
+      ],
+      "bounds_max": [
+        8.0,
+        3.0,
+        1.0
+      ]
     }
   },
   "camera": {
-    "position": [0.65, 0.55, 0.35],
-    "target": [0.35, 0.10, -1.80],
+    "position": [
+      0.65,
+      0.55,
+      0.35
+    ],
+    "target": [
+      0.0,
+      0.1,
+      -2.5
+    ],
     "fov_degrees": 60.0
   },
   "viewport": {
@@ -20,14 +40,22 @@
   },
   "objects": [
     {
-      "id": "front_p",
+      "id": "letter_p",
       "asset": {
         "type": "word",
         "path": "../../words/single_p.word.json"
       },
       "transform": {
-        "position": [0.35, 0.10, -1.80],
-        "scale": [1.35, 1.35, 1.35]
+        "position": [
+          -3.5,
+          0.1,
+          -1.8
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
       },
       "behaviors": [
         {
@@ -36,20 +64,170 @@
       ]
     },
     {
-      "id": "rear_p",
+      "id": "letter_i",
       "asset": {
         "type": "word",
-        "path": "../../words/single_p.word.json"
+        "path": "../../words/single_i.word.json"
       },
       "transform": {
-        "position": [0.55, 0.10, -3.20],
-        "scale": [1.35, 1.35, 1.35]
+        "position": [
+          -2.5,
+          0.1,
+          -2.05
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
       },
       "behaviors": [
         {
-          "type": "rotate",
-          "axis": [0.0, 1.0, 0.0],
-          "degrees_per_second": 15.0
+          "type": "static"
+        }
+      ]
+    },
+    {
+      "id": "letter_t_1",
+      "asset": {
+        "type": "word",
+        "path": "../../words/single_t.word.json"
+      },
+      "transform": {
+        "position": [
+          -1.5,
+          0.1,
+          -2.3
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "behaviors": [
+        {
+          "type": "static"
+        }
+      ]
+    },
+    {
+      "id": "letter_t_2",
+      "asset": {
+        "type": "word",
+        "path": "../../words/single_t.word.json"
+      },
+      "transform": {
+        "position": [
+          -0.5,
+          0.1,
+          -2.55
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "behaviors": [
+        {
+          "type": "static"
+        }
+      ]
+    },
+    {
+      "id": "letter_c",
+      "asset": {
+        "type": "word",
+        "path": "../../words/single_c.word.json"
+      },
+      "transform": {
+        "position": [
+          0.5,
+          0.1,
+          -2.8
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "behaviors": [
+        {
+          "type": "static"
+        }
+      ]
+    },
+    {
+      "id": "letter_r",
+      "asset": {
+        "type": "word",
+        "path": "../../words/single_r.word.json"
+      },
+      "transform": {
+        "position": [
+          1.5,
+          0.1,
+          -3.05
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "behaviors": [
+        {
+          "type": "static"
+        }
+      ]
+    },
+    {
+      "id": "letter_e",
+      "asset": {
+        "type": "word",
+        "path": "../../words/single_e.word.json"
+      },
+      "transform": {
+        "position": [
+          2.5,
+          0.1,
+          -3.3
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "behaviors": [
+        {
+          "type": "static"
+        }
+      ]
+    },
+    {
+      "id": "letter_w",
+      "asset": {
+        "type": "word",
+        "path": "../../words/single_w.word.json"
+      },
+      "transform": {
+        "position": [
+          3.5,
+          0.1,
+          -3.55
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "behaviors": [
+        {
+          "type": "static"
         }
       ]
     }

@@ -1217,23 +1217,71 @@ fn render_loaded_a3d_camera_viewport_canvas(state: &AppState) -> io::Result<Canv
     Ok(canvas)
 }
 
+fn render_loaded_a3d_ws_camera_workspace(
+    canvas: &mut Canvas,
+    state: &AppState,
+    projector: &ObliqueProjector,
+) {
+    let origin = Vec3::zero();
+    let positive_x = Vec3::new(4.0, 0.0, 0.0);
+    let positive_y = Vec3::new(0.0, 3.0, 0.0);
+    let negative_z = Vec3::new(0.0, 0.0, -4.0);
+
+    canvas.draw_line(
+        projector.project(origin),
+        projector.project(positive_x),
+        '-',
+    );
+    canvas.draw_line(
+        projector.project(origin),
+        projector.project(positive_y),
+        '|',
+    );
+    canvas.draw_line(
+        projector.project(origin),
+        projector.project(negative_z),
+        '/',
+    );
+
+    canvas.draw_text(projector.project(positive_x), "+X");
+    canvas.draw_text(projector.project(positive_y), "+Y");
+    canvas.draw_text(projector.project(negative_z), "-Z");
+    canvas.set(projector.project(origin), 'O');
+
+    let forward = camera_forward_from_yaw_pitch(
+        state.world_camera_yaw_degrees,
+        state.world_camera_pitch_degrees,
+    );
+    let right = state.camera_right();
+    let eye = state.world_camera_position;
+    let near_center = eye + vec3_scale(forward, 0.60);
+    let near_left = near_center + vec3_scale(right, -0.35);
+    let near_right = near_center + vec3_scale(right, 0.35);
+
+    let eye_screen = projector.project(eye);
+    let near_center_screen = projector.project(near_center);
+    let near_left_screen = projector.project(near_left);
+    let near_right_screen = projector.project(near_right);
+
+    canvas.set(eye_screen, 'E');
+    canvas.set(near_center_screen, 'N');
+    canvas.draw_line(eye_screen, near_center_screen, '.');
+    canvas.draw_line(near_left_screen, near_right_screen, '=');
+
+    canvas.draw_text(Point2::new(2, 3), "WS: LoadedA3d clean worldspace");
+    canvas.draw_text(
+        Point2::new(2, 4),
+        "Only .a3d objects are drawn here; no hardcoded demo letters",
+    );
+}
+
 fn render_loaded_a3d_studio_world(
     canvas: &mut Canvas,
     state: &AppState,
     projector: &ObliqueProjector,
 ) -> io::Result<()> {
     canvas.with_viewport(WORLD_DEBUG_VIEWPORT, |canvas| {
-        render_world_camera_spaces(
-            canvas,
-            state.world_camera_position,
-            state.world_camera_yaw_degrees,
-            state.world_camera_pitch_degrees,
-            Some(state.glyph_stroke_character()),
-        )?;
-
-        // WS = worldspace. Use the same scene projector built from
-        // assets/projection.default.json. Object placement must come from
-        // the .a3d data file; the renderer must not apply fake offsets.
+        render_loaded_a3d_ws_camera_workspace(canvas, state, projector);
         draw_loaded_a3d_objects_in_ws(canvas, state, projector)
     })?;
 

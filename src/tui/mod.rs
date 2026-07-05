@@ -2,8 +2,8 @@ use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Tabs, Widget},
+    text::{Line, Span, Text},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Tabs, Widget},
 };
 
 use crate::{
@@ -27,6 +27,7 @@ pub fn draw(
     scene_canvas: &Canvas,
     camera_viewport_canvas: Option<&Canvas>,
     active_menu: Option<&MenuState>,
+    debug_popup_lines: Option<&[String]>,
 ) {
     let area = frame.area();
 
@@ -47,6 +48,14 @@ pub fn draw(
         draw_camera_viewport_block(frame, camera_viewport_canvas, content[1]);
     } else {
         draw_scene(frame, scene_canvas, shell[1]);
+    }
+
+    if let Some(lines) = debug_popup_lines {
+        draw_debug_popup(
+            frame,
+            lines,
+            top_right_rect(50, lines.len() as u16 + 6, area),
+        );
     }
 
     if let Some(menu) = active_menu {
@@ -115,6 +124,41 @@ fn draw_camera_viewport_block(frame: &mut Frame<'_>, canvas: &Canvas, area: Rect
     let inner = block.inner(area);
     frame.render_widget(block, area);
     frame.render_widget(CanvasWidget { canvas }, inner);
+}
+
+fn draw_debug_popup(frame: &mut Frame<'_>, lines: &[String], area: Rect) {
+    let mut popup_lines = lines
+        .iter()
+        .map(|line| Line::from(line.as_str()))
+        .collect::<Vec<_>>();
+
+    popup_lines.push(Line::from(""));
+    popup_lines.push(Line::from(vec![
+        Span::raw("Press "),
+        Span::styled("[ OK ]", Style::default().add_modifier(Modifier::REVERSED)),
+        Span::raw("  Enter/o/Esc"),
+    ]));
+
+    let popup = Paragraph::new(Text::from(popup_lines)).block(
+        Block::default()
+            .title("LoadedA3d debug")
+            .borders(Borders::ALL),
+    );
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(popup, area);
+}
+
+fn top_right_rect(width: u16, height: u16, area: Rect) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+
+    Rect {
+        x: area.x + area.width.saturating_sub(width + 2),
+        y: area.y + 2,
+        width,
+        height,
+    }
 }
 
 fn draw_menu_popup(frame: &mut Frame<'_>, menu: &MenuState, area: Rect) {
