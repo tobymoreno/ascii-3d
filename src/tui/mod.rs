@@ -11,6 +11,14 @@ use crate::{
     menu::{MenuKind, MenuState},
 };
 
+pub struct FilePickerView<'a> {
+    pub title: &'a str,
+    pub current_dir: &'a str,
+    pub entries: &'a [String],
+    pub selected: usize,
+    pub error: Option<&'a str>,
+}
+
 const MENU_KINDS: &[MenuKind] = &[
     MenuKind::File,
     MenuKind::Scenes,
@@ -28,6 +36,7 @@ pub fn draw(
     camera_viewport_canvas: Option<&Canvas>,
     active_menu: Option<&MenuState>,
     debug_popup_lines: Option<&[String]>,
+    file_picker_view: Option<FilePickerView<'_>>,
 ) {
     let area = frame.area();
 
@@ -56,6 +65,10 @@ pub fn draw(
             lines,
             top_right_rect(50, lines.len() as u16 + 6, area),
         );
+    }
+
+    if let Some(file_picker_view) = file_picker_view {
+        draw_file_picker(frame, file_picker_view, centered_rect(72, 22, area));
     }
 
     if let Some(menu) = active_menu {
@@ -159,6 +172,43 @@ fn top_right_rect(width: u16, height: u16, area: Rect) -> Rect {
         width,
         height,
     }
+}
+
+fn draw_file_picker(frame: &mut Frame<'_>, view: FilePickerView<'_>, area: Rect) {
+    let items = view
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            let selector = if index == view.selected { ">" } else { " " };
+            ListItem::new(Line::from(format!("{selector} {entry}")))
+        })
+        .collect::<Vec<_>>();
+
+    let help = match view.error {
+        Some(error) => format!("Enter=open/load  Backspace=parent  Esc=cancel  ERROR: {error}"),
+        None => "Enter=open/load  Backspace=parent  Esc=cancel".to_string(),
+    };
+
+    let list = List::new(items).block(
+        Block::default()
+            .title(Line::from(vec![
+                Span::styled(view.title, Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw(format!("  {}", view.current_dir)),
+            ]))
+            .borders(Borders::ALL),
+    );
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(list, area);
+
+    let help_area = Rect {
+        x: area.x + 2,
+        y: area.y + area.height.saturating_sub(2),
+        width: area.width.saturating_sub(4),
+        height: 1,
+    };
+    frame.render_widget(Paragraph::new(help), help_area);
 }
 
 fn draw_menu_popup(frame: &mut Frame<'_>, menu: &MenuState, area: Rect) {

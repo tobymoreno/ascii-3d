@@ -5,6 +5,8 @@ use crate::menu::MenuKind;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppCommand {
     Quit,
+    OpenA3dFilePicker,
+    ReloadA3d,
 
     ToggleControlMode,
 
