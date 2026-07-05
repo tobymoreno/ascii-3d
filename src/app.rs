@@ -90,6 +90,8 @@ const GLYPH_STROKE_CHARACTERS: &[char] = &[
 
 const DEFAULT_GLYPH_STROKE_INDEX: usize = 0;
 
+const STANDARD_BOX_ASSET: &str = "models/cube.obj";
+
 struct TerminalGuard;
 
 impl TerminalGuard {
@@ -753,10 +755,12 @@ fn load_mesh_asset(filename: &str) -> io::Result<Mesh> {
 fn load_scene_assets() -> io::Result<SceneAssets> {
     let projection_config = load_projection_config(asset_path("projection.default.json"))?;
 
-    let mut box_mesh = load_mesh_asset("box.obj")?;
+    let mut box_mesh = load_mesh_asset(STANDARD_BOX_ASSET)?;
 
     if !box_mesh.normalize_to_size(1.0) {
-        return Err(io::Error::other("could not normalize assets/box.obj"));
+        return Err(io::Error::other(format!(
+            "could not normalize assets/{STANDARD_BOX_ASSET}"
+        )));
     }
 
     let quad4_scene_config = load_quad4_scene_config(asset_path("quad4.scene.json"))?;
@@ -2280,5 +2284,18 @@ mod tests {
 
         assert_eq!(mesh.vertices.len(), 4);
         assert_eq!(mesh.faces.len(), 1);
+    }
+    #[test]
+    fn standard_cube_obj_asset_exists() {
+        assert!(asset_path("models/cube.obj").is_file());
+    }
+
+    #[test]
+    fn standard_cube_obj_asset_loads_as_wireframe_cube() {
+        let mesh = load_mesh_asset("models/cube.obj").expect("models/cube.obj should load");
+
+        assert_eq!(mesh.vertices.len(), 8);
+        assert_eq!(mesh.faces.len(), 6);
+        assert_eq!(mesh.unique_edges().len(), 12);
     }
 }

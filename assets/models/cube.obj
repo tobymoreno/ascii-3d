@@ -1,0 +1,21 @@
+# ascii-3d standard OBJ cube
+#
+# OBJ face indices are 1-based.
+# This file stores standard geometry only.
+# ascii-3d metadata/style should live in a sidecar manifest later.
+
+v -1 -1 -1
+v  1 -1 -1
+v  1  1 -1
+v -1  1 -1
+v -1 -1  1
+v  1 -1  1
+v  1  1  1
+v -1  1  1
+
+f 1 2 3 4
+f 5 8 7 6
+f 1 5 6 2
+f 2 6 7 3
+f 3 7 8 4
+f 5 1 4 8
