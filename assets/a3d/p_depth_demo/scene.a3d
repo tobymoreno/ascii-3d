@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "title": "P depth demo",
+  "world": {
+    "physics": {
+      "gravity": [0.0, -9.8, 0.0],
+      "damping": 0.01,
+      "bounds_min": [-3.0, -2.0, -5.0],
+      "bounds_max": [3.0, 3.0, 1.0]
+    }
+  },
+  "camera": {
+    "position": [0.65, 0.55, 0.35],
+    "target": [0.35, 0.10, -1.80],
+    "fov_degrees": 60.0
+  },
+  "viewport": {
+    "show_world_debug": true,
+    "show_camera3d": true
+  },
+  "objects": [
+    {
+      "id": "front_p",
+      "asset": {
+        "type": "word",
+        "path": "../../words/single_p.word.json"
+      },
+      "transform": {
+        "position": [0.35, 0.10, -1.80],
+        "scale": [1.35, 1.35, 1.35]
+      },
+      "behaviors": [
+        {
+          "type": "static"
+        }
+      ]
+    },
+    {
+      "id": "rear_p",
+      "asset": {
+        "type": "word",
+        "path": "../../words/single_p.word.json"
+      },
+      "transform": {
+        "position": [0.55, 0.10, -3.20],
+        "scale": [1.35, 1.35, 1.35]
+      },
+      "behaviors": [
+        {
+          "type": "rotate",
+          "axis": [0.0, 1.0, 0.0],
+          "degrees_per_second": 15.0
+        }
+      ]
+    }
+  ]
+}
