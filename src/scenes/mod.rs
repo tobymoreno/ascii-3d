@@ -59,6 +59,7 @@ pub struct SceneDescriptor {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scene {
+    LoadedA3d,
     WorldCameraSpaces,
     PittCrew,
     Crew,
@@ -90,7 +91,8 @@ pub enum Scene {
 
 impl Scene {
     /// Scenes are ordered newest-first.
-    pub const ALL: [Self; 27] = [
+    pub const ALL: [Self; 28] = [
+        Self::LoadedA3d,
         Self::WorldCameraSpaces,
         Self::PittCrew,
         Self::Crew,
@@ -122,6 +124,7 @@ impl Scene {
 
     pub const fn id(self) -> &'static str {
         match self {
+            Self::LoadedA3d => "loaded_a3d",
             Self::WorldCameraSpaces => "world_camera_spaces",
             Self::PittCrew => "pitt_crew",
             Self::Crew => "crew",
@@ -164,6 +167,7 @@ impl Scene {
 
     pub const fn title(self) -> &'static str {
         match self {
+            Self::LoadedA3d => "Loaded .a3d data-driven world",
             Self::WorldCameraSpaces => "world space and Camera3D foundation",
             Self::PittCrew => "PITT CREW word parent with P/I/T/T SPACE C/R/E/W glyphs",
             Self::Crew => "CREW word parent with C/R/E/W glyphs",
@@ -197,7 +201,8 @@ impl Scene {
     pub const fn is_animated(self) -> bool {
         matches!(
             self,
-            Self::AssetAxesRotateX
+            Self::LoadedA3d
+                | Self::AssetAxesRotateX
                 | Self::AssetAxesRotateY
                 | Self::AssetAxesRotateZ
                 | Self::CameraMotion
@@ -223,13 +228,14 @@ mod tests {
     use super::Scene;
 
     #[test]
-    fn newest_scene_is_world_camera_spaces() {
-        assert_eq!(Scene::ALL.first(), Some(&Scene::WorldCameraSpaces));
+    fn newest_scene_is_loaded_a3d() {
+        assert_eq!(Scene::ALL.first(), Some(&Scene::LoadedA3d));
     }
 
     #[test]
-    fn next_scene_after_world_camera_spaces_is_pittcrew() {
-        assert_eq!(Scene::ALL[1], Scene::PittCrew);
+    fn next_scene_after_loaded_a3d_is_world_camera_spaces() {
+        assert_eq!(Scene::ALL[1], Scene::WorldCameraSpaces);
+        assert_eq!(Scene::ALL[2], Scene::PittCrew);
     }
 
     #[test]
@@ -249,7 +255,7 @@ mod tests {
 
     #[test]
     fn scene_count_matches_scene_all() {
-        assert_eq!(Scene::ALL.len(), 27);
+        assert_eq!(Scene::ALL.len(), 28);
     }
 
     #[test]
@@ -257,14 +263,16 @@ mod tests {
         let registry = super::registry();
 
         assert_eq!(registry.len(), Scene::ALL.len());
-        assert_eq!(registry[0].scene, Scene::WorldCameraSpaces);
-        assert_eq!(registry[0].id, "world_camera_spaces");
+        assert_eq!(registry[0].scene, Scene::LoadedA3d);
+        assert_eq!(registry[0].id, "loaded_a3d");
         assert_eq!(registry[0].index, 0);
-        assert_eq!(registry[1].scene, Scene::PittCrew);
+        assert_eq!(registry[1].scene, Scene::WorldCameraSpaces);
+        assert_eq!(registry[2].scene, Scene::PittCrew);
     }
 
     #[test]
     fn animated_scenes_are_identified() {
+        assert!(Scene::LoadedA3d.is_animated());
         assert!(!Scene::WorldCameraSpaces.is_animated());
         assert!(!Scene::PittCrew.is_animated());
         assert!(!Scene::Crew.is_animated());
