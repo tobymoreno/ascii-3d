@@ -452,6 +452,7 @@ struct AppState {
     a3d_file_picker: Option<A3dFilePicker>,
     show_frame_timing: bool,
     show_debug_console: bool,
+    confirm_exit: bool,
     frame_timings: FrameTimings,
     last_input_event_trace: Option<String>,
     debug_console_lines: VecDeque<String>,
@@ -486,6 +487,7 @@ impl AppState {
             a3d_file_picker: None,
             show_frame_timing: false,
             show_debug_console: false,
+            confirm_exit: false,
             frame_timings: FrameTimings::default(),
             last_input_event_trace: None,
             debug_console_lines: VecDeque::from([
@@ -548,6 +550,16 @@ impl AppState {
         for line in lines {
             self.push_debug_console_line(line);
         }
+    }
+
+    fn open_exit_confirm(&mut self) {
+        self.confirm_exit = true;
+        self.close_menu();
+        self.close_a3d_file_picker();
+    }
+
+    fn close_exit_confirm(&mut self) {
+        self.confirm_exit = false;
     }
 
     fn close_debug_console(&mut self) {
@@ -3082,6 +3094,19 @@ fn dismiss_loaded_a3d_debug_popup(state: &mut AppState) -> bool {
         false
     }
 }
+fn exit_confirm_popup_lines(state: &AppState) -> Option<Vec<String>> {
+    state.confirm_exit.then(|| {
+        vec![
+            "Exit ascii-3d".to_string(),
+            String::new(),
+            "Do you really want to exit?".to_string(),
+            String::new(),
+            "Enter / y  = Yes, exit".to_string(),
+            "Esc / n / c = Cancel".to_string(),
+        ]
+    })
+}
+
 fn debug_console_popup_lines(state: &AppState) -> Option<Vec<String>> {
     if !state.show_debug_console {
         return None;
@@ -3167,7 +3192,8 @@ fn render_scene(
     };
     let camera_viewport = camera_start.elapsed();
 
-    let debug_popup_lines = debug_console_popup_lines(state);
+    let debug_popup_lines =
+        exit_confirm_popup_lines(state).or_else(|| debug_console_popup_lines(state));
     let frame_timing_lines = state.frame_timing_lines();
     let file_picker_labels = state.a3d_file_picker.as_ref().map(|picker| picker.labels());
     let file_picker_current_dir = state
@@ -3324,7 +3350,10 @@ fn push_command_debug_trace(state: &mut AppState, route: &str, command: AppComma
 
 fn apply_app_command(state: &mut AppState, command: AppCommand) -> KeyHandling {
     match command {
-        AppCommand::Quit => KeyHandling::Quit,
+        AppCommand::Quit => {
+            state.open_exit_confirm();
+            KeyHandling::Handled
+        }
 
         AppCommand::XyzControl(event) => {
             if state.apply_xyz_control_event(event) {
@@ -3649,6 +3678,25 @@ fn apply_app_command(state: &mut AppState, command: AppCommand) -> KeyHandling {
 
 fn handle_key_press(state: &mut AppState, key: KeyEvent) -> KeyHandling {
     let key_code = key.code;
+
+    if state.confirm_exit {
+        match key_code {
+            KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                return KeyHandling::Quit;
+            }
+            KeyCode::Esc
+            | KeyCode::Char('n')
+            | KeyCode::Char('N')
+            | KeyCode::Char('c')
+            | KeyCode::Char('C') => {
+                state.close_exit_confirm();
+                return KeyHandling::Handled;
+            }
+            _ => {
+                return KeyHandling::Handled;
+            }
+        }
+    }
 
     if key.modifiers.contains(KeyModifiers::ALT) {
         if state.active_menu.is_some() {
