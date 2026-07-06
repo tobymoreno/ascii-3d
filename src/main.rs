@@ -23,6 +23,7 @@ mod scene_config;
 mod scenes;
 mod tui;
 mod world_space;
+mod xyz_control;
 
 fn main() -> std::io::Result<()> {
     app::run()
