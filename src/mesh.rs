@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use crate::math::Vec3;
 
@@ -125,6 +125,100 @@ impl Mesh {
         true
     }
 
+    /// Returns a lower-detail mesh by clustering nearby vertices into a
+    /// regular 3D grid and rebuilding primitives with the remapped indexes.
+    ///
+    /// This is intended for low-resolution ASCII/TUI rendering, where a
+    /// coherent simplified wireframe usually looks better than randomly
+    /// skipping edges from the original mesh.
+    pub fn simplify_by_vertex_grid(&self, grid_size: f32) -> Self {
+        if grid_size <= 0.0 || self.vertices.is_empty() {
+            return self.clone();
+        }
+
+        let Some(bounds) = self.bounds() else {
+            return self.clone();
+        };
+
+        let origin = bounds.min;
+        let mut clusters: HashMap<(i32, i32, i32), usize> = HashMap::new();
+        let mut sums = Vec::new();
+        let mut counts = Vec::new();
+        let mut old_to_new = Vec::with_capacity(self.vertices.len());
+
+        for vertex in &self.vertices {
+            let local = *vertex - origin;
+            let key = (
+                (local.x / grid_size).floor() as i32,
+                (local.y / grid_size).floor() as i32,
+                (local.z / grid_size).floor() as i32,
+            );
+
+            let new_index = match clusters.get(&key).copied() {
+                Some(index) => index,
+                None => {
+                    let index = sums.len();
+                    clusters.insert(key, index);
+                    sums.push(Vec3::new(0.0, 0.0, 0.0));
+                    counts.push(0usize);
+                    index
+                }
+            };
+
+            sums[new_index] = sums[new_index] + *vertex;
+            counts[new_index] += 1;
+            old_to_new.push(new_index);
+        }
+
+        let vertices = sums
+            .into_iter()
+            .zip(counts)
+            .map(|(sum, count)| sum * (1.0 / count as f32))
+            .collect();
+
+        let mut faces = Vec::new();
+
+        for primitive in &self.faces {
+            match primitive.as_slice() {
+                [a, b] => {
+                    let a = old_to_new[*a];
+                    let b = old_to_new[*b];
+
+                    if a != b {
+                        faces.push(vec![a, b]);
+                    }
+                }
+
+                indexes if indexes.len() >= 3 => {
+                    let mut remapped = Vec::new();
+
+                    for index in indexes {
+                        let new_index = old_to_new[*index];
+
+                        if remapped.last().copied() != Some(new_index) {
+                            remapped.push(new_index);
+                        }
+                    }
+
+                    if remapped.len() >= 2 && remapped.first().copied() == remapped.last().copied()
+                    {
+                        remapped.pop();
+                    }
+
+                    let unique_indexes: BTreeSet<_> = remapped.iter().copied().collect();
+
+                    if unique_indexes.len() >= 3 {
+                        faces.push(remapped);
+                    }
+                }
+
+                _ => {}
+            }
+        }
+
+        Self::new(vertices, faces)
+    }
+
     /// Derives every unique drawable edge.
     ///
     /// Entries with two indexes represent explicit line segments.
@@ -186,6 +280,26 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn simplify_by_vertex_grid_preserves_unit_box_with_tiny_grid() {
+        let mesh = Mesh::unit_box();
+        let simplified = mesh.simplify_by_vertex_grid(0.01);
+
+        assert_eq!(simplified.vertices.len(), mesh.vertices.len());
+        assert_eq!(simplified.faces.len(), mesh.faces.len());
+        assert_eq!(simplified.unique_edges().len(), mesh.unique_edges().len());
+    }
+
+    #[test]
+    fn simplify_by_vertex_grid_drops_degenerate_collapsed_faces() {
+        let mesh = Mesh::unit_box();
+        let simplified = mesh.simplify_by_vertex_grid(10.0);
+
+        assert_eq!(simplified.vertices.len(), 1);
+        assert!(simplified.faces.is_empty());
+        assert!(simplified.unique_edges().is_empty());
+    }
+
     fn unit_box_is_centered_and_normalized() {
         let mesh = Mesh::unit_box();
         let bounds = mesh.bounds().expect("unit box must have bounds");

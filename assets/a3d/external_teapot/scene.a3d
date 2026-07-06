@@ -36,7 +36,11 @@
   },
   "viewport": {
     "show_world_debug": true,
-    "show_camera3d": true
+    "show_camera3d": true,
+    "camera_view": {
+      "cell_aspect_ratio": 0.6,
+      "perspective_scale": 22.0
+    }
   },
   "objects": [
     {
@@ -75,7 +79,12 @@
       ],
       "render": {
         "visible": true,
-        "stroke_character": "."
+        "stroke_character": ".",
+        "edge_stride": 1,
+        "ascii_simplify": {
+          "enabled": true,
+          "grid_size": 0.15
+        }
       }
     }
   ]

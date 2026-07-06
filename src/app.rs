@@ -125,6 +125,9 @@ const P2_WORD_WORLD_Z: f32 = -3.20;
 
 const P_WORD_WORLD_SCALE: f32 = 1.35;
 
+const DEFAULT_CAMERA_VIEWPORT_CELL_ASPECT_RATIO: f32 = 0.5;
+const DEFAULT_CAMERA_VIEWPORT_PERSPECTIVE_SCALE: f32 = 22.0;
+
 fn vec3_cross(a: Vec3, b: Vec3) -> Vec3 {
     Vec3::new(
         a.y * b.z - a.z * b.y,
@@ -733,6 +736,23 @@ fn default_a3d_root_path() -> PathBuf {
         .join("p_depth_demo")
 }
 
+fn initial_a3d_root_path_from_args() -> PathBuf {
+    let Some(argument) = std::env::args_os().nth(1) else {
+        return default_a3d_root_path();
+    };
+
+    let path = PathBuf::from(argument);
+
+    if path.is_file() {
+        return path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(default_a3d_root_path);
+    }
+
+    path
+}
+
 fn load_default_a3d_world() -> io::Result<LoadedWorld> {
     let manifest_path = default_a3d_root_path().join("scene.a3d");
 
@@ -875,7 +895,12 @@ fn camera_viewport_content_rect() -> ClipRect {
     }
 }
 
-fn project_camera_space_to_viewport(camera_space: Vec3, inner: ClipRect) -> Option<Point2> {
+fn project_camera_space_to_viewport(
+    camera_space: Vec3,
+    inner: ClipRect,
+    cell_aspect_ratio: f32,
+    perspective_scale: f32,
+) -> Option<Point2> {
     // Mat4::look_at uses the conventional right-handed camera space:
     // +X = camera right, +Y = camera up, and camera forward points along -Z.
     if camera_space.z >= -0.01 {
@@ -886,9 +911,9 @@ fn project_camera_space_to_viewport(camera_space: Vec3, inner: ClipRect) -> Opti
     let center_y = inner.y + inner.height as i32 / 2;
     let depth = -camera_space.z;
 
-    let perspective = 22.0 / depth;
+    let perspective = perspective_scale / depth;
     let screen_x = center_x + (camera_space.x * perspective).round() as i32;
-    let screen_y = center_y - (camera_space.y * perspective).round() as i32;
+    let screen_y = center_y - (camera_space.y * perspective * cell_aspect_ratio).round() as i32;
 
     Some(Point2::new(screen_x, screen_y))
 }
@@ -896,11 +921,64 @@ fn project_camera_space_to_viewport(camera_space: Vec3, inner: ClipRect) -> Opti
 fn project_camera_space_to_viewport_with_depth(
     camera_space: Vec3,
     inner: ClipRect,
+    cell_aspect_ratio: f32,
+    perspective_scale: f32,
 ) -> Option<(Point2, f32)> {
-    let point = project_camera_space_to_viewport(camera_space, inner)?;
+    let point = project_camera_space_to_viewport(
+        camera_space,
+        inner,
+        cell_aspect_ratio,
+        perspective_scale,
+    )?;
     let depth = -camera_space.z;
 
     Some((point, depth))
+}
+
+fn loaded_a3d_camera_view_number(state: &AppState, key: &str, default_value: f32) -> f32 {
+    let Some(root) = state.loaded_a3d_root.as_deref() else {
+        return default_value;
+    };
+
+    let scene_path = root.join("scene.a3d");
+    let Ok(source) = std::fs::read_to_string(&scene_path) else {
+        return default_value;
+    };
+
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&source) else {
+        return default_value;
+    };
+
+    let Some(value) = json
+        .get("viewport")
+        .and_then(|viewport| viewport.get("camera_view"))
+        .and_then(|camera_view| camera_view.get(key))
+        .and_then(serde_json::Value::as_f64)
+    else {
+        return default_value;
+    };
+
+    if value.is_finite() && value > 0.0 {
+        value as f32
+    } else {
+        default_value
+    }
+}
+
+fn camera_viewport_cell_aspect_ratio(state: &AppState) -> f32 {
+    loaded_a3d_camera_view_number(
+        state,
+        "cell_aspect_ratio",
+        DEFAULT_CAMERA_VIEWPORT_CELL_ASPECT_RATIO,
+    )
+}
+
+fn camera_viewport_perspective_scale(state: &AppState) -> f32 {
+    loaded_a3d_camera_view_number(
+        state,
+        "perspective_scale",
+        DEFAULT_CAMERA_VIEWPORT_PERSPECTIVE_SCALE,
+    )
 }
 
 struct CameraViewportDepthBuffer {
@@ -966,13 +1044,23 @@ fn draw_camera_viewport_depth_line(
         return;
     };
 
-    let Some((from_screen, from_depth)) =
-        project_camera_space_to_viewport_with_depth(from_camera, inner)
-    else {
+    let cell_aspect_ratio = camera_viewport_cell_aspect_ratio(state);
+    let perspective_scale = camera_viewport_perspective_scale(state);
+
+    let Some((from_screen, from_depth)) = project_camera_space_to_viewport_with_depth(
+        from_camera,
+        inner,
+        cell_aspect_ratio,
+        perspective_scale,
+    ) else {
         return;
     };
-    let Some((to_screen, to_depth)) = project_camera_space_to_viewport_with_depth(to_camera, inner)
-    else {
+    let Some((to_screen, to_depth)) = project_camera_space_to_viewport_with_depth(
+        to_camera,
+        inner,
+        cell_aspect_ratio,
+        perspective_scale,
+    ) else {
         return;
     };
 
@@ -1221,7 +1309,91 @@ fn resolve_a3d_asset_path(root: &Path, relative_path: &str) -> io::Result<String
         .ok_or_else(|| io::Error::other(format!("asset path is not UTF-8: {}", resolved.display())))
 }
 
-fn load_loaded_a3d_mesh(root: &Path, relative_path: &str) -> io::Result<Mesh> {
+fn loaded_a3d_object_render_usize(
+    root: &Path,
+    object_id: &str,
+    key: &str,
+    default_value: usize,
+) -> usize {
+    let scene_path = root.join("scene.a3d");
+    let Ok(source) = std::fs::read_to_string(&scene_path) else {
+        return default_value;
+    };
+
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&source) else {
+        return default_value;
+    };
+
+    let Some(objects) = json.get("objects").and_then(serde_json::Value::as_array) else {
+        return default_value;
+    };
+
+    let Some(value) = objects
+        .iter()
+        .find(|entry| {
+            entry
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|id| id == object_id)
+        })
+        .and_then(|entry| entry.get("render"))
+        .and_then(|render| render.get(key))
+        .and_then(serde_json::Value::as_u64)
+    else {
+        return default_value;
+    };
+
+    usize::try_from(value)
+        .ok()
+        .filter(|value| *value > 0)
+        .unwrap_or(default_value)
+}
+
+fn loaded_a3d_object_edge_stride(root: &Path, object: &crate::a3d::SceneObject) -> usize {
+    loaded_a3d_object_render_usize(root, &object.id, "edge_stride", 1)
+}
+
+fn loaded_a3d_object_ascii_simplify_grid_size(
+    root: &Path,
+    object: &crate::a3d::SceneObject,
+) -> Option<f32> {
+    let scene_path = root.join("scene.a3d");
+    let source = std::fs::read_to_string(&scene_path).ok()?;
+    let json = serde_json::from_str::<serde_json::Value>(&source).ok()?;
+    let objects = json.get("objects").and_then(serde_json::Value::as_array)?;
+
+    let render = objects
+        .iter()
+        .find(|entry| {
+            entry
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|id| id == object.id)
+        })
+        .and_then(|entry| entry.get("render"))?;
+
+    let simplify = render.get("ascii_simplify")?;
+
+    if simplify
+        .get("enabled")
+        .and_then(serde_json::Value::as_bool)
+        .is_some_and(|enabled| !enabled)
+    {
+        return None;
+    }
+
+    simplify
+        .get("grid_size")
+        .and_then(serde_json::Value::as_f64)
+        .map(|value| value as f32)
+        .filter(|value| value.is_finite() && *value > 0.0)
+}
+
+fn load_loaded_a3d_mesh(
+    root: &Path,
+    relative_path: &str,
+    object: &crate::a3d::SceneObject,
+) -> io::Result<Mesh> {
     let mesh_path = resolve_a3d_asset_path(root, relative_path)?;
     let mut mesh = load_obj(Path::new(&mesh_path)).map_err(|error| {
         io::Error::other(format!("failed to load A3D mesh {}: {}", mesh_path, error))
@@ -1234,6 +1406,10 @@ fn load_loaded_a3d_mesh(root: &Path, relative_path: &str) -> io::Result<Mesh> {
             "could not normalize A3D mesh {}",
             mesh_path
         )));
+    }
+
+    if let Some(grid_size) = loaded_a3d_object_ascii_simplify_grid_size(root, object) {
+        mesh = mesh.simplify_by_vertex_grid(grid_size);
     }
 
     Ok(mesh)
@@ -1253,7 +1429,7 @@ fn draw_loaded_a3d_mesh_object_in_ws(
         return Ok(());
     };
 
-    let mesh = load_loaded_a3d_mesh(root, path)?;
+    let mesh = load_loaded_a3d_mesh(root, path, object)?;
     let object_world = object.transform.matrix();
 
     for (from_index, to_index) in mesh.unique_edges() {
@@ -1286,11 +1462,16 @@ fn draw_loaded_a3d_mesh_object(
         return Ok(());
     };
 
-    let mesh = load_loaded_a3d_mesh(root, path)?;
+    let mesh = load_loaded_a3d_mesh(root, path, object)?;
     let object_world = object.transform.matrix();
     let character = object.render.stroke_character.unwrap_or('#');
+    let edge_stride = loaded_a3d_object_edge_stride(root, object);
 
-    for (from_index, to_index) in mesh.unique_edges() {
+    for (edge_index, (from_index, to_index)) in mesh.unique_edges().into_iter().enumerate() {
+        if edge_index % edge_stride != 0 {
+            continue;
+        }
+
         let from_world = object_world.transform_point(mesh.vertices[from_index]);
         let to_world = object_world.transform_point(mesh.vertices[to_index]);
 
@@ -1620,13 +1801,15 @@ fn render_loaded_a3d_camera_viewport_canvas(state: &AppState) -> io::Result<Canv
     canvas.draw_text(
         Point2::new(1, VIEWPORT_CONTENT_HEIGHT as i32 - 2),
         &format!(
-            "{} | pos [{:.2},{:.2},{:.2}] yaw {:.1} pitch {:.1}",
+            "{} | pos [{:.2},{:.2},{:.2}] yaw {:.1} pitch {:.1} | cell {:.2} persp {:.1}",
             world.title,
             state.world_camera_position.x,
             state.world_camera_position.y,
             state.world_camera_position.z,
             state.world_camera_yaw_degrees,
             state.world_camera_pitch_degrees,
+            camera_viewport_cell_aspect_ratio(state),
+            camera_viewport_perspective_scale(state),
         ),
     );
 
@@ -2224,7 +2407,7 @@ pub fn run() -> io::Result<()> {
     terminal.clear()?;
 
     let mut state = AppState::new();
-    state.load_a3d_root(default_a3d_root_path());
+    state.load_a3d_root(initial_a3d_root_path_from_args());
     let mut previous_time = Instant::now();
     let mut previous_frame: Option<String> = None;
 
@@ -2275,8 +2458,16 @@ pub fn run() -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AppState, asset_path, load_mesh_asset};
+    use super::{AppState, asset_path, default_a3d_root_path, load_mesh_asset};
     use crate::scenes::Scene;
+    use std::path::Path;
+
+    #[test]
+    fn initial_a3d_root_path_defaults_to_bundled_demo_when_no_cli_arg_is_used() {
+        let path = default_a3d_root_path();
+
+        assert!(path.ends_with(Path::new("assets").join("a3d").join("p_depth_demo")));
+    }
 
     #[test]
     fn application_starts_on_loaded_a3d_scene() {
