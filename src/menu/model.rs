@@ -8,8 +8,7 @@ use crate::{
 pub enum MenuKind {
     File,
     Scenes,
-    Camera,
-    World,
+    Control,
     Glyphs,
     Physics,
     Debug,
@@ -21,8 +20,7 @@ impl MenuKind {
         match self {
             Self::File => "File",
             Self::Scenes => "Scenes",
-            Self::Camera => "Camera",
-            Self::World => "World",
+            Self::Control => "Control",
             Self::Glyphs => "Glyphs",
             Self::Physics => "Physics",
             Self::Debug => "Debug",
@@ -34,8 +32,7 @@ impl MenuKind {
         match self {
             Self::File => "x",
             Self::Scenes => "m",
-            Self::Camera => "c",
-            Self::World => "w",
+            Self::Control => "c",
             Self::Glyphs => "g",
             Self::Physics => "f",
             Self::Debug => "d",
@@ -47,8 +44,7 @@ impl MenuKind {
         match self {
             Self::File => FILE_ITEMS,
             Self::Scenes => SCENE_ITEMS,
-            Self::Camera => CAMERA_ITEMS,
-            Self::World => WORLD_ITEMS,
+            Self::Control => CONTROL_ITEMS,
             Self::Glyphs => GLYPH_ITEMS,
             Self::Physics => PHYSICS_ITEMS,
             Self::Debug => DEBUG_ITEMS,
@@ -93,6 +89,19 @@ impl MenuState {
         Self {
             kind,
             selected_index: 0,
+        }
+    }
+
+    pub fn with_selected(kind: MenuKind, selected_index: usize) -> Self {
+        let item_count = kind.items().len();
+
+        Self {
+            kind,
+            selected_index: if item_count == 0 {
+                0
+            } else {
+                selected_index.min(item_count - 1)
+            },
         }
     }
 
@@ -148,15 +157,10 @@ const SCENE_ITEMS: &[MenuItem] = &[
     MenuItem::real("Previous scene", AppCommand::PreviousScene),
 ];
 
-const CAMERA_ITEMS: &[MenuItem] = &[
-    MenuItem::placeholder("Toggle camera debug", AppCommand::ToggleCameraDebug),
-    MenuItem::real("Reset camera", AppCommand::ResetCamera),
-    MenuItem::placeholder("Toggle near-plane debug", AppCommand::ToggleNearPlaneDebug),
-];
-
-const WORLD_ITEMS: &[MenuItem] = &[
-    MenuItem::placeholder("Toggle world axes", AppCommand::ToggleWorldAxes),
-    MenuItem::placeholder("Toggle world grid", AppCommand::ToggleWorldGrid),
+const CONTROL_ITEMS: &[MenuItem] = &[
+    MenuItem::real("World mode", AppCommand::SetControlModeScene),
+    MenuItem::real("Camera mode", AppCommand::SetControlModeCamera),
+    MenuItem::real("Light mode", AppCommand::SetControlModeLight),
 ];
 
 const GLYPH_ITEMS: &[MenuItem] = &[
@@ -173,6 +177,7 @@ const PHYSICS_ITEMS: &[MenuItem] = &[
 ];
 
 const DEBUG_ITEMS: &[MenuItem] = &[
+    MenuItem::real("Toggle debug console", AppCommand::ToggleDebugConsole),
     MenuItem::placeholder("Toggle depth view", AppCommand::ToggleDepthView),
     MenuItem::placeholder("Toggle projection debug", AppCommand::ToggleProjectionDebug),
     MenuItem::real("Toggle frame timing", AppCommand::ToggleFrameTiming),
@@ -183,8 +188,12 @@ const DEBUG_ITEMS: &[MenuItem] = &[
 ];
 
 const HELP_ITEMS: &[MenuItem] = &[
-    MenuItem::placeholder("Scene mode: arrows change scene", AppCommand::CloseMenu),
+    MenuItem::placeholder(
+        "Control menu: C, choose World/Camera/Light",
+        AppCommand::CloseMenu,
+    ),
     MenuItem::placeholder("Camera mode: WASD/QE move camera", AppCommand::CloseMenu),
+    MenuItem::placeholder("Light mode: WASD/QE move light", AppCommand::CloseMenu),
     MenuItem::placeholder("Menus: j/k or arrows, Enter, Esc", AppCommand::CloseMenu),
 ];
 
