@@ -1,0 +1,131 @@
+{
+  "camera": {
+    "fov_degrees": 35.0,
+    "position": [
+      0.0,
+      0.8,
+      5.5
+    ],
+    "target": [
+      0.0,
+      0.2,
+      -2.5
+    ]
+  },
+  "lights": [
+    {
+      "direction": [
+        -1.0,
+        -0.08,
+        0.0
+      ],
+      "gizmo": {
+        "length": 4.0,
+        "ray_character": "-",
+        "source_character": "L",
+        "visible": true
+      },
+      "id": "key-light",
+      "intensity": 1.0,
+      "position": [
+        34.5,
+        0.8000001907348633,
+        10.0
+      ],
+      "type": "directional"
+    }
+  ],
+  "objects": [
+    {
+      "asset": {
+        "path": "../../models/external/teapot.obj",
+        "type": "mesh"
+      },
+      "behavior": {
+        "rotation": {
+          "axis": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "degrees_per_second": 25.0,
+          "enabled": false
+        }
+      },
+      "behaviors": [
+        {
+          "axis": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "degrees_per_second": 30.0,
+          "type": "rotate"
+        }
+      ],
+      "id": "teapot",
+      "render": {
+        "ascii_simplify": {
+          "enabled": true,
+          "grid_size": 0.15
+        },
+        "edge_stride": 1,
+        "mode": "ascii_raster",
+        "stroke_character": ".",
+        "visible": true
+      },
+      "transform": {
+        "position": [
+          0.0,
+          0.0,
+          -2.5
+        ],
+        "rotation": [
+          350.0,
+          130.0,
+          100.0
+        ],
+        "rotation_degrees": [
+          0.0,
+          35.0,
+          0.0
+        ],
+        "scale": [
+          6.0,
+          6.0,
+          6.0
+        ]
+      }
+    }
+  ],
+  "title": "Static external OBJ teapot raster inspection",
+  "version": 1,
+  "viewport": {
+    "camera_view": {
+      "cell_aspect_ratio": 0.6,
+      "perspective_scale": 22.0
+    },
+    "show_camera3d": true,
+    "show_world_debug": true
+  },
+  "world": {
+    "physics": {
+      "bounds_max": [
+        8.0,
+        4.0,
+        8.0
+      ],
+      "bounds_min": [
+        -8.0,
+        -4.0,
+        -8.0
+      ],
+      "damping": 0.01,
+      "gravity": [
+        0.0,
+        -9.8,
+        0.0
+      ]
+    }
+  }
+}
