@@ -80,8 +80,11 @@
       "render": {
         "visible": true,
         "stroke_character": ".",
-        "edge_stride": 5,
-        "max_camera_cells": 900
+        "edge_stride": 1,
+        "ascii_simplify": {
+          "enabled": true,
+          "grid_size": 0.15
+        }
       }
     }
   ]

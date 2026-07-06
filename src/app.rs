@@ -1353,7 +1353,47 @@ fn loaded_a3d_object_edge_stride(root: &Path, object: &crate::a3d::SceneObject) 
     loaded_a3d_object_render_usize(root, &object.id, "edge_stride", 1)
 }
 
-fn load_loaded_a3d_mesh(root: &Path, relative_path: &str) -> io::Result<Mesh> {
+fn loaded_a3d_object_ascii_simplify_grid_size(
+    root: &Path,
+    object: &crate::a3d::SceneObject,
+) -> Option<f32> {
+    let scene_path = root.join("scene.a3d");
+    let source = std::fs::read_to_string(&scene_path).ok()?;
+    let json = serde_json::from_str::<serde_json::Value>(&source).ok()?;
+    let objects = json.get("objects").and_then(serde_json::Value::as_array)?;
+
+    let render = objects
+        .iter()
+        .find(|entry| {
+            entry
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|id| id == object.id)
+        })
+        .and_then(|entry| entry.get("render"))?;
+
+    let simplify = render.get("ascii_simplify")?;
+
+    if simplify
+        .get("enabled")
+        .and_then(serde_json::Value::as_bool)
+        .is_some_and(|enabled| !enabled)
+    {
+        return None;
+    }
+
+    simplify
+        .get("grid_size")
+        .and_then(serde_json::Value::as_f64)
+        .map(|value| value as f32)
+        .filter(|value| value.is_finite() && *value > 0.0)
+}
+
+fn load_loaded_a3d_mesh(
+    root: &Path,
+    relative_path: &str,
+    object: &crate::a3d::SceneObject,
+) -> io::Result<Mesh> {
     let mesh_path = resolve_a3d_asset_path(root, relative_path)?;
     let mut mesh = load_obj(Path::new(&mesh_path)).map_err(|error| {
         io::Error::other(format!("failed to load A3D mesh {}: {}", mesh_path, error))
@@ -1366,6 +1406,10 @@ fn load_loaded_a3d_mesh(root: &Path, relative_path: &str) -> io::Result<Mesh> {
             "could not normalize A3D mesh {}",
             mesh_path
         )));
+    }
+
+    if let Some(grid_size) = loaded_a3d_object_ascii_simplify_grid_size(root, object) {
+        mesh = mesh.simplify_by_vertex_grid(grid_size);
     }
 
     Ok(mesh)
@@ -1385,7 +1429,7 @@ fn draw_loaded_a3d_mesh_object_in_ws(
         return Ok(());
     };
 
-    let mesh = load_loaded_a3d_mesh(root, path)?;
+    let mesh = load_loaded_a3d_mesh(root, path, object)?;
     let object_world = object.transform.matrix();
 
     for (from_index, to_index) in mesh.unique_edges() {
@@ -1418,7 +1462,7 @@ fn draw_loaded_a3d_mesh_object(
         return Ok(());
     };
 
-    let mesh = load_loaded_a3d_mesh(root, path)?;
+    let mesh = load_loaded_a3d_mesh(root, path, object)?;
     let object_world = object.transform.matrix();
     let character = object.render.stroke_character.unwrap_or('#');
     let edge_stride = loaded_a3d_object_edge_stride(root, object);
