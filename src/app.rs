@@ -1446,6 +1446,447 @@ fn draw_loaded_a3d_mesh_object_in_ws(
     Ok(())
 }
 
+struct LoadedA3dLightGizmo {
+    visible: bool,
+    length: f32,
+    source_character: char,
+    ray_character: char,
+}
+
+struct LoadedA3dLight {
+    id: String,
+    position: Vec3,
+    direction: Vec3,
+    intensity: f32,
+    gizmo: LoadedA3dLightGizmo,
+}
+
+fn read_json_vec3(value: &serde_json::Value) -> Option<Vec3> {
+    let values = value.as_array()?;
+
+    if values.len() != 3 {
+        return None;
+    }
+
+    Some(Vec3::new(
+        values[0].as_f64()? as f32,
+        values[1].as_f64()? as f32,
+        values[2].as_f64()? as f32,
+    ))
+}
+
+fn read_json_char(value: Option<&serde_json::Value>, default_value: char) -> char {
+    value
+        .and_then(serde_json::Value::as_str)
+        .and_then(|text| text.chars().next())
+        .unwrap_or(default_value)
+}
+
+fn loaded_a3d_lights(root: &Path) -> io::Result<Vec<LoadedA3dLight>> {
+    let scene_path = root.join("scene.a3d");
+    let source = std::fs::read_to_string(&scene_path)?;
+    let json = serde_json::from_str::<serde_json::Value>(&source).map_err(|error| {
+        io::Error::other(format!(
+            "failed to parse A3D lights from {}: {}",
+            scene_path.display(),
+            error
+        ))
+    })?;
+
+    let Some(lights) = json.get("lights").and_then(serde_json::Value::as_array) else {
+        return Ok(Vec::new());
+    };
+
+    let mut parsed_lights = Vec::new();
+
+    for light in lights {
+        let id = light
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("light")
+            .to_string();
+
+        let position = light
+            .get("position")
+            .and_then(read_json_vec3)
+            .unwrap_or_else(|| Vec3::new(0.0, 0.0, 0.0));
+
+        let direction = light
+            .get("direction")
+            .and_then(read_json_vec3)
+            .unwrap_or_else(|| Vec3::new(-1.0, -1.0, -1.0));
+
+        let intensity = light
+            .get("intensity")
+            .and_then(serde_json::Value::as_f64)
+            .map(|value| value as f32)
+            .filter(|value| value.is_finite() && *value >= 0.0)
+            .unwrap_or(1.0);
+
+        let gizmo = light.get("gizmo").unwrap_or(&serde_json::Value::Null);
+        let visible = gizmo
+            .get("visible")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true);
+
+        let length = gizmo
+            .get("length")
+            .and_then(serde_json::Value::as_f64)
+            .map(|value| value as f32)
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .unwrap_or(1.5);
+
+        let source_character = read_json_char(gizmo.get("source_character"), 'L');
+        let ray_character = read_json_char(gizmo.get("ray_character"), '-');
+
+        parsed_lights.push(LoadedA3dLight {
+            id,
+            position,
+            direction,
+            intensity,
+            gizmo: LoadedA3dLightGizmo {
+                visible,
+                length,
+                source_character,
+                ray_character,
+            },
+        });
+    }
+
+    Ok(parsed_lights)
+}
+
+fn normalized_light_direction(direction: Vec3) -> Option<Vec3> {
+    let length =
+        (direction.x * direction.x + direction.y * direction.y + direction.z * direction.z).sqrt();
+
+    if length <= f32::EPSILON {
+        return None;
+    }
+
+    Some(direction * (1.0 / length))
+}
+
+fn draw_loaded_a3d_light_gizmos(
+    canvas: &mut Canvas,
+    depth_buffer: &mut CameraViewportDepthBuffer,
+    state: &AppState,
+    root: &Path,
+    inner: ClipRect,
+) -> io::Result<()> {
+    let origin = Vec3::new(0.0, 0.0, 0.0);
+
+    for light in loaded_a3d_lights(root)? {
+        if !light.gizmo.visible {
+            continue;
+        }
+
+        // Camera viewport still uses a short world-space ray toward origin for
+        // now. The worldspace debug gizmo above uses fixed screen-cell length.
+        let source = light.position;
+        let to_origin = origin - source;
+
+        let Some(gizmo_direction) = normalized_light_direction(to_origin) else {
+            continue;
+        };
+
+        let tip = source + gizmo_direction * light.gizmo.length;
+
+        draw_camera_viewport_depth_line(
+            canvas,
+            depth_buffer,
+            state,
+            inner,
+            source,
+            tip,
+            light.gizmo.ray_character,
+        );
+
+        let Some(source_camera) = world_to_camera_space(state, source) else {
+            continue;
+        };
+
+        let Some((source_screen, source_depth)) = project_camera_space_to_viewport_with_depth(
+            source_camera,
+            inner,
+            camera_viewport_cell_aspect_ratio(state),
+            camera_viewport_perspective_scale(state),
+        ) else {
+            continue;
+        };
+
+        if depth_buffer.try_update(source_screen, source_depth) {
+            canvas.set(source_screen, light.gizmo.source_character);
+        } else {
+            canvas.set(source_screen, light.gizmo.source_character);
+        }
+    }
+
+    Ok(())
+}
+
+fn draw_loaded_a3d_light_gizmos_in_ws(
+    canvas: &mut Canvas,
+    projector: &ObliqueProjector,
+    root: &Path,
+) -> io::Result<()> {
+    let origin_screen = projector.project(Vec3::new(0.0, 0.0, 0.0));
+    let visual_length_cells = 8.0;
+
+    for light in loaded_a3d_lights(root)? {
+        if !light.gizmo.visible {
+            continue;
+        }
+
+        // The worldspace light gizmo is a fixed-screen-length visual cue:
+        // project the light source and world origin, then draw only a short
+        // cell-space segment from the source toward the origin. This avoids
+        // huge cluttery rays when the source is far away in world units.
+        let source_screen = projector.project(light.position);
+
+        let dx = (origin_screen.x - source_screen.x) as f32;
+        let dy = (origin_screen.y - source_screen.y) as f32;
+        let distance = (dx * dx + dy * dy).sqrt();
+
+        if distance <= f32::EPSILON {
+            canvas.set(source_screen, light.gizmo.source_character);
+            continue;
+        }
+
+        let step_x = dx / distance;
+        let step_y = dy / distance;
+
+        let tip = Point2::new(
+            source_screen.x + (step_x * visual_length_cells).round() as i32,
+            source_screen.y + (step_y * visual_length_cells).round() as i32,
+        );
+
+        canvas.draw_line(source_screen, tip, light.gizmo.ray_character);
+
+        // Draw source after the ray so the L marker wins visually.
+        canvas.set(source_screen, light.gizmo.source_character);
+    }
+
+    Ok(())
+}
+
+fn loaded_a3d_object_render_mode(root: &Path, object: &crate::a3d::SceneObject) -> Option<String> {
+    let scene_path = root.join("scene.a3d");
+    let source = std::fs::read_to_string(&scene_path).ok()?;
+    let json = serde_json::from_str::<serde_json::Value>(&source).ok()?;
+    let objects = json.get("objects").and_then(serde_json::Value::as_array)?;
+
+    objects
+        .iter()
+        .find(|entry| {
+            entry
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|id| id == object.id)
+        })
+        .and_then(|entry| entry.get("render"))
+        .and_then(|render| render.get("mode"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+}
+
+fn loaded_a3d_object_mesh_path(root: &Path, object: &crate::a3d::SceneObject) -> Option<String> {
+    let scene_path = root.join("scene.a3d");
+    let source = std::fs::read_to_string(&scene_path).ok()?;
+    let json = serde_json::from_str::<serde_json::Value>(&source).ok()?;
+    let objects = json.get("objects").and_then(serde_json::Value::as_array)?;
+
+    objects
+        .iter()
+        .find(|entry| {
+            entry
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|id| id == object.id)
+        })
+        .and_then(|entry| entry.get("asset"))
+        .filter(|asset| {
+            asset
+                .get("type")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|asset_type| asset_type == "mesh")
+        })
+        .and_then(|asset| asset.get("path"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+}
+
+fn dot_vec3(a: Vec3, b: Vec3) -> f32 {
+    a.x * b.x + a.y * b.y + a.z * b.z
+}
+
+fn cross_vec3(a: Vec3, b: Vec3) -> Vec3 {
+    Vec3::new(
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x,
+    )
+}
+
+fn normalize_vec3(value: Vec3) -> Option<Vec3> {
+    let length = dot_vec3(value, value).sqrt();
+
+    if length <= f32::EPSILON {
+        return None;
+    }
+
+    Some(value * (1.0 / length))
+}
+
+fn loaded_a3d_primary_light_direction(root: &Path) -> io::Result<Vec3> {
+    for light in loaded_a3d_lights(root)? {
+        if light.intensity <= 0.0 {
+            continue;
+        }
+
+        if let Some(direction) = normalize_vec3(light.direction) {
+            return Ok(direction);
+        }
+    }
+
+    Ok(Vec3::new(-1.0, -1.0, -1.0))
+}
+
+fn shade_character_for_brightness(brightness: f32) -> char {
+    const RAMP: &[u8] = b" .,-~:;=!*#$@";
+
+    let brightness = brightness.clamp(0.0, 1.0);
+    let index = (brightness * (RAMP.len().saturating_sub(1)) as f32).round() as usize;
+
+    RAMP[index.min(RAMP.len().saturating_sub(1))] as char
+}
+
+fn edge_function(a: Point2, b: Point2, point: Point2) -> f32 {
+    ((point.x - a.x) as f32 * (b.y - a.y) as f32) - ((point.y - a.y) as f32 * (b.x - a.x) as f32)
+}
+
+fn draw_loaded_a3d_mesh_object_raster(
+    canvas: &mut Canvas,
+    depth_buffer: &mut CameraViewportDepthBuffer,
+    state: &AppState,
+    root: &Path,
+    inner: ClipRect,
+    object: &crate::a3d::SceneObject,
+) -> io::Result<()> {
+    let Some(path) = loaded_a3d_object_mesh_path(root, object) else {
+        return Ok(());
+    };
+
+    let mesh = load_loaded_a3d_mesh(root, &path, object)?;
+    let object_world = object.transform.matrix();
+    let light_direction = loaded_a3d_primary_light_direction(root)?;
+    let light_to_surface = light_direction * -1.0;
+
+    for primitive in &mesh.faces {
+        if primitive.len() < 3 {
+            continue;
+        }
+
+        let first_index = primitive[0];
+
+        for triangle_index in 1..primitive.len().saturating_sub(1) {
+            let indexes = [
+                first_index,
+                primitive[triangle_index],
+                primitive[triangle_index + 1],
+            ];
+
+            if indexes.iter().any(|index| *index >= mesh.vertices.len()) {
+                continue;
+            }
+
+            let world = [
+                object_world.transform_point(mesh.vertices[indexes[0]]),
+                object_world.transform_point(mesh.vertices[indexes[1]]),
+                object_world.transform_point(mesh.vertices[indexes[2]]),
+            ];
+
+            let normal = cross_vec3(world[1] - world[0], world[2] - world[0]);
+            let Some(normal) = normalize_vec3(normal) else {
+                continue;
+            };
+
+            let diffuse = dot_vec3(normal, light_to_surface).abs();
+            let brightness = (0.18 + diffuse * 0.82).clamp(0.0, 1.0);
+            let character = shade_character_for_brightness(brightness);
+
+            let Some(camera0) = world_to_camera_space(state, world[0]) else {
+                continue;
+            };
+            let Some(camera1) = world_to_camera_space(state, world[1]) else {
+                continue;
+            };
+            let Some(camera2) = world_to_camera_space(state, world[2]) else {
+                continue;
+            };
+
+            let Some((p0, z0)) = project_camera_space_to_viewport_with_depth(
+                camera0,
+                inner,
+                camera_viewport_cell_aspect_ratio(state),
+                camera_viewport_perspective_scale(state),
+            ) else {
+                continue;
+            };
+
+            let Some((p1, z1)) = project_camera_space_to_viewport_with_depth(
+                camera1,
+                inner,
+                camera_viewport_cell_aspect_ratio(state),
+                camera_viewport_perspective_scale(state),
+            ) else {
+                continue;
+            };
+
+            let Some((p2, z2)) = project_camera_space_to_viewport_with_depth(
+                camera2,
+                inner,
+                camera_viewport_cell_aspect_ratio(state),
+                camera_viewport_perspective_scale(state),
+            ) else {
+                continue;
+            };
+
+            let min_x = p0.x.min(p1.x).min(p2.x);
+            let max_x = p0.x.max(p1.x).max(p2.x);
+            let min_y = p0.y.min(p1.y).min(p2.y);
+            let max_y = p0.y.max(p1.y).max(p2.y);
+
+            let area = edge_function(p0, p1, p2);
+
+            if area.abs() <= f32::EPSILON {
+                continue;
+            }
+
+            for y in min_y..=max_y {
+                for x in min_x..=max_x {
+                    let point = Point2::new(x, y);
+                    let w0 = edge_function(p1, p2, point) / area;
+                    let w1 = edge_function(p2, p0, point) / area;
+                    let w2 = edge_function(p0, p1, point) / area;
+
+                    if w0 < -0.001 || w1 < -0.001 || w2 < -0.001 {
+                        continue;
+                    }
+
+                    let depth = z0 * w0 + z1 * w1 + z2 * w2;
+
+                    if depth_buffer.try_update(point, depth) {
+                        canvas.set(point, character);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn draw_loaded_a3d_mesh_object(
     canvas: &mut Canvas,
     depth_buffer: &mut CameraViewportDepthBuffer,
@@ -1454,6 +1895,17 @@ fn draw_loaded_a3d_mesh_object(
     inner: ClipRect,
     object: &crate::a3d::SceneObject,
 ) -> io::Result<()> {
+    if loaded_a3d_object_render_mode(root, object).as_deref() == Some("ascii_raster") {
+        return draw_loaded_a3d_mesh_object_raster(
+            canvas,
+            depth_buffer,
+            state,
+            root,
+            inner,
+            object,
+        );
+    }
+
     if !object.render.visible {
         return Ok(());
     }
@@ -1759,6 +2211,8 @@ fn draw_loaded_a3d_objects_in_ws(
         draw_loaded_a3d_mesh_object_in_ws(canvas, projector, root, object)?;
     }
 
+    draw_loaded_a3d_light_gizmos_in_ws(canvas, projector, root)?;
+
     Ok(())
 }
 
@@ -1842,9 +2296,6 @@ fn render_loaded_a3d_ws_camera_workspace(
         '/',
     );
 
-    canvas.draw_text(projector.project(positive_x), "+X");
-    canvas.draw_text(projector.project(positive_y), "+Y");
-    canvas.draw_text(projector.project(negative_z), "-Z");
     canvas.set(projector.project(origin), 'O');
 
     let forward = camera_forward_from_yaw_pitch(
@@ -1866,12 +2317,6 @@ fn render_loaded_a3d_ws_camera_workspace(
     canvas.set(near_center_screen, 'N');
     canvas.draw_line(eye_screen, near_center_screen, '.');
     canvas.draw_line(near_left_screen, near_right_screen, '=');
-
-    canvas.draw_text(Point2::new(2, 3), "WS: LoadedA3d clean worldspace");
-    canvas.draw_text(
-        Point2::new(2, 4),
-        "Only .a3d objects are drawn here; no hardcoded demo letters",
-    );
 }
 
 fn render_loaded_a3d_studio_world(

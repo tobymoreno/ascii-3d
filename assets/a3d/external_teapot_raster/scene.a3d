@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "title": "External OBJ teapot demo",
+  "title": "External OBJ teapot raster demo",
   "world": {
     "physics": {
       "gravity": [
@@ -80,11 +80,12 @@
       "render": {
         "visible": true,
         "stroke_character": ".",
-        "edge_stride": 1,
         "ascii_simplify": {
           "enabled": true,
           "grid_size": 0.15
-        }
+        },
+        "edge_stride": 1,
+        "mode": "ascii_raster"
       }
     }
   ],
@@ -93,8 +94,8 @@
       "id": "key-light",
       "type": "directional",
       "position": [
-        22.0,
-        3.0,
+        4.0,
+        1.8,
         -2.5
       ],
       "direction": [
@@ -105,10 +106,10 @@
       "intensity": 1.0,
       "gizmo": {
         "visible": true,
-        "length": 5.0,
+        "length": 4.0,
         "source_character": "L",
         "ray_character": "-"
       }
     }
   ]
-}\n
+}
