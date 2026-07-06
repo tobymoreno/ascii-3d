@@ -30,11 +30,11 @@ impl MenuKind {
 
     pub const fn hotkey(self) -> &'static str {
         match self {
-            Self::File => "x",
+            Self::File => "f",
             Self::Scenes => "m",
             Self::Control => "c",
             Self::Glyphs => "g",
-            Self::Physics => "f",
+            Self::Physics => "p",
             Self::Debug => "d",
             Self::Help => "h/?",
         }
@@ -161,6 +161,26 @@ const CONTROL_ITEMS: &[MenuItem] = &[
     MenuItem::real("World mode", AppCommand::SetControlModeScene),
     MenuItem::real("Camera mode", AppCommand::SetControlModeCamera),
     MenuItem::real("Light mode", AppCommand::SetControlModeLight),
+    MenuItem::real("Rotate world +X  [x]", AppCommand::RotateWorldPositiveX),
+    MenuItem::real("Rotate world -X  [X]", AppCommand::RotateWorldNegativeX),
+    MenuItem::real("Rotate world +Y  [y]", AppCommand::RotateWorldPositiveY),
+    MenuItem::real("Rotate world -Y  [Y]", AppCommand::RotateWorldNegativeY),
+    MenuItem::real("Rotate world +Z  [z]", AppCommand::RotateWorldPositiveZ),
+    MenuItem::real("Rotate world -Z  [Z]", AppCommand::RotateWorldNegativeZ),
+    MenuItem::real(
+        "Move origin -X  [Ctrl+Left]",
+        AppCommand::MoveWorldOriginLeft,
+    ),
+    MenuItem::real(
+        "Move origin +X  [Ctrl+Right]",
+        AppCommand::MoveWorldOriginRight,
+    ),
+    MenuItem::real("Move origin +Y  [Ctrl+Up]", AppCommand::MoveWorldOriginUp),
+    MenuItem::real(
+        "Move origin -Y  [Ctrl+Down]",
+        AppCommand::MoveWorldOriginDown,
+    ),
+    MenuItem::real("Reset world axes/origin", AppCommand::ResetWorldAxes),
 ];
 
 const GLYPH_ITEMS: &[MenuItem] = &[
@@ -189,7 +209,7 @@ const DEBUG_ITEMS: &[MenuItem] = &[
 
 const HELP_ITEMS: &[MenuItem] = &[
     MenuItem::placeholder(
-        "Control menu: C, choose World/Camera/Light",
+        "World axes: x/X y/Y z/Z rotate; Ctrl+arrows move origin",
         AppCommand::CloseMenu,
     ),
     MenuItem::placeholder("Camera mode: WASD/QE move camera", AppCommand::CloseMenu),
