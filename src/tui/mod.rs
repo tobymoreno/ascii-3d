@@ -22,8 +22,7 @@ pub struct FilePickerView<'a> {
 const MENU_KINDS: &[MenuKind] = &[
     MenuKind::File,
     MenuKind::Scenes,
-    MenuKind::Camera,
-    MenuKind::World,
+    MenuKind::Control,
     MenuKind::Glyphs,
     MenuKind::Physics,
     MenuKind::Debug,
@@ -64,7 +63,11 @@ pub fn draw(
         draw_debug_popup(
             frame,
             lines,
-            top_right_rect(50, lines.len() as u16 + 6, area),
+            centered_rect(
+                86,
+                (lines.len() as u16 + 4).min(area.height.saturating_sub(4)),
+                area,
+            ),
         );
     }
 

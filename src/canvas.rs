@@ -28,6 +28,14 @@ pub struct Canvas {
 }
 
 impl Canvas {
+    pub const fn width(&self) -> usize {
+        self.width
+    }
+
+    pub const fn height(&self) -> usize {
+        self.height
+    }
+
     pub fn new(width: usize, height: usize) -> Self {
         Self {
             width,

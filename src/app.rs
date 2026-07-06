@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     io::{self, Write, stdout},
     path::{Path, PathBuf},
     time::{Duration, Instant},
@@ -8,7 +9,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
-    event::{self, Event, KeyCode, KeyEventKind},
+    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
     terminal::{
         Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
@@ -25,7 +26,8 @@ use crate::{
         GlyphAsset, GlyphMetadata, GlyphSegment, WordAsset, read_json, transform_matrix, vec3,
     },
     input::{
-        AppCommand, camera_mode_command_for_key, menu_command_for_key, scene_mode_command_for_key,
+        AppCommand, camera_mode_command_for_key, light_mode_command_for_key, menu_command_for_key,
+        scene_mode_command_for_key,
     },
     math::{Mat4, Vec3},
     menu::MenuState,
@@ -43,6 +45,7 @@ use crate::{
         render_world_camera_spaces,
     },
     tui::FilePickerView,
+    xyz_control::{XyzControl, XyzControlEvent},
 };
 
 const CANVAS_WIDTH: usize = 80;
@@ -71,6 +74,9 @@ const CAMERA_VIEWPORT: ViewportRect = ViewportRect {
     width: CANVAS_WIDTH,
     height: 18,
 };
+
+const DEBUG_CONSOLE_HEIGHT: i32 = 9;
+const DEBUG_CONSOLE_MAX_LINES: usize = 500;
 
 const FOOTER_ROW: i32 = 43;
 
@@ -186,13 +192,54 @@ fn camera_right_from_forward(forward: Vec3) -> Vec3 {
 enum ControlMode {
     Scene,
     Camera,
+    Light,
+}
+
+fn next_menu_kind(kind: crate::menu::MenuKind) -> crate::menu::MenuKind {
+    match kind {
+        crate::menu::MenuKind::File => crate::menu::MenuKind::Scenes,
+        crate::menu::MenuKind::Scenes => crate::menu::MenuKind::Control,
+        crate::menu::MenuKind::Control => crate::menu::MenuKind::Glyphs,
+        crate::menu::MenuKind::Glyphs => crate::menu::MenuKind::Physics,
+        crate::menu::MenuKind::Physics => crate::menu::MenuKind::Debug,
+        crate::menu::MenuKind::Debug => crate::menu::MenuKind::Help,
+        crate::menu::MenuKind::Help => crate::menu::MenuKind::File,
+    }
+}
+
+fn previous_menu_kind(kind: crate::menu::MenuKind) -> crate::menu::MenuKind {
+    match kind {
+        crate::menu::MenuKind::File => crate::menu::MenuKind::Help,
+        crate::menu::MenuKind::Scenes => crate::menu::MenuKind::File,
+        crate::menu::MenuKind::Control => crate::menu::MenuKind::Scenes,
+        crate::menu::MenuKind::Glyphs => crate::menu::MenuKind::Control,
+        crate::menu::MenuKind::Physics => crate::menu::MenuKind::Glyphs,
+        crate::menu::MenuKind::Debug => crate::menu::MenuKind::Physics,
+        crate::menu::MenuKind::Help => crate::menu::MenuKind::Debug,
+    }
+}
+
+fn menu_kind_for_hotkey(key_code: KeyCode) -> Option<crate::menu::MenuKind> {
+    match key_code {
+        KeyCode::Char('f') | KeyCode::Char('F') => Some(crate::menu::MenuKind::File),
+        KeyCode::Char('m') | KeyCode::Char('M') => Some(crate::menu::MenuKind::Scenes),
+        KeyCode::Char('c') | KeyCode::Char('C') => Some(crate::menu::MenuKind::Control),
+        KeyCode::Char('g') | KeyCode::Char('G') => Some(crate::menu::MenuKind::Glyphs),
+        KeyCode::Char('p') | KeyCode::Char('P') => Some(crate::menu::MenuKind::Physics),
+        KeyCode::Char('d') | KeyCode::Char('D') => Some(crate::menu::MenuKind::Debug),
+        KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Char('?') => {
+            Some(crate::menu::MenuKind::Help)
+        }
+        _ => None,
+    }
 }
 
 impl ControlMode {
     fn label(self) -> &'static str {
         match self {
-            Self::Scene => "Scene",
+            Self::Scene => "World",
             Self::Camera => "Camera",
+            Self::Light => "Light",
         }
     }
 }
@@ -391,10 +438,12 @@ struct AppState {
     box_angle_degrees: f32,
     glyph_stroke_index: usize,
     control_mode: ControlMode,
+    xyz_control: XyzControl,
     active_menu: Option<MenuState>,
     world_camera_position: Vec3,
     world_camera_yaw_degrees: f32,
     world_camera_pitch_degrees: f32,
+    world_origin: Vec3,
     loaded_a3d_world: Option<LoadedWorld>,
     loaded_a3d_root: Option<PathBuf>,
     loaded_a3d_manifest_path: Option<PathBuf>,
@@ -402,7 +451,13 @@ struct AppState {
     loaded_a3d_error: Option<String>,
     a3d_file_picker: Option<A3dFilePicker>,
     show_frame_timing: bool,
+    show_debug_console: bool,
+    confirm_exit: bool,
     frame_timings: FrameTimings,
+    last_input_event_trace: Option<String>,
+    debug_console_lines: VecDeque<String>,
+    debug_console_scroll: usize,
+    debug_console_horizontal_scroll: usize,
 }
 
 impl AppState {
@@ -418,10 +473,12 @@ impl AppState {
             box_angle_degrees: 0.0,
             glyph_stroke_index: DEFAULT_GLYPH_STROKE_INDEX,
             control_mode: ControlMode::Scene,
+            xyz_control: XyzControl::default(),
             active_menu: None,
             world_camera_position,
             world_camera_yaw_degrees,
             world_camera_pitch_degrees,
+            world_origin: Vec3::zero(),
             loaded_a3d_world: None,
             loaded_a3d_root: None,
             loaded_a3d_manifest_path: None,
@@ -429,8 +486,138 @@ impl AppState {
             loaded_a3d_error: None,
             a3d_file_picker: None,
             show_frame_timing: false,
+            show_debug_console: false,
+            confirm_exit: false,
             frame_timings: FrameTimings::default(),
+            last_input_event_trace: None,
+            debug_console_lines: VecDeque::from([
+                "debug console attached to main workspace".to_string(),
+                "world/object debug print statements appear here".to_string(),
+                "x/X y/Y z/Z rotate; Ctrl+arrows move origin".to_string(),
+            ]),
+            debug_console_scroll: 0,
+            debug_console_horizontal_scroll: 0,
         }
+    }
+
+    fn push_world_debug_lines(&mut self) {
+        let mut lines = vec![
+            format!("world debug: scene={}", self.current_scene().title()),
+            format!(
+                "world debug: camera pos [{:.2}, {:.2}, {:.2}] yaw {:.1} pitch {:.1}",
+                self.world_camera_position.x,
+                self.world_camera_position.y,
+                self.world_camera_position.z,
+                self.world_camera_yaw_degrees,
+                self.world_camera_pitch_degrees,
+            ),
+            format!(
+                "world debug: control_mode={} menu={}",
+                self.control_mode.label(),
+                self.active_menu
+                    .as_ref()
+                    .map(|menu| menu.kind().title())
+                    .unwrap_or("closed"),
+            ),
+        ];
+
+        if let Some(world) = self.loaded_a3d_world.as_ref() {
+            lines.push(format!(
+                "world debug: loaded_a3d title='{}' objects={}",
+                world.title,
+                world.objects.len(),
+            ));
+
+            lines.extend(world.objects.iter().map(|object| {
+                format!(
+                    "world debug: object={} pos=[{:.2},{:.2},{:.2}] rot=[{:.1},{:.1},{:.1}] scale=[{:.2},{:.2},{:.2}]",
+                    object.id,
+                    object.transform.position[0],
+                    object.transform.position[1],
+                    object.transform.position[2],
+                    object.transform.rotation_degrees[0],
+                    object.transform.rotation_degrees[1],
+                    object.transform.rotation_degrees[2],
+                    object.transform.scale[0],
+                    object.transform.scale[1],
+                    object.transform.scale[2],
+                )
+            }));
+        } else {
+            lines.push("world debug: no loaded_a3d world".to_string());
+        }
+
+        for line in lines {
+            self.push_debug_console_line(line);
+        }
+    }
+
+    fn open_exit_confirm(&mut self) {
+        self.confirm_exit = true;
+        self.close_menu();
+        self.close_a3d_file_picker();
+    }
+
+    fn close_exit_confirm(&mut self) {
+        self.confirm_exit = false;
+    }
+
+    fn close_debug_console(&mut self) {
+        self.show_debug_console = false;
+    }
+
+    fn toggle_debug_console(&mut self) {
+        self.show_debug_console = !self.show_debug_console;
+        if self.show_debug_console {
+            self.push_world_debug_lines();
+        }
+        self.push_debug_console_line(format!(
+            "debug console: {}",
+            if self.show_debug_console {
+                "shown"
+            } else {
+                "hidden"
+            }
+        ));
+    }
+
+    fn push_debug_console_line(&mut self, message: impl Into<String>) {
+        self.debug_console_lines.push_back(message.into());
+
+        while self.debug_console_lines.len() > DEBUG_CONSOLE_MAX_LINES {
+            self.debug_console_lines.pop_front();
+        }
+
+        self.debug_console_scroll = 0;
+    }
+
+    fn debug_console_visible_rows(&self) -> usize {
+        DEBUG_CONSOLE_HEIGHT.saturating_sub(3) as usize
+    }
+
+    fn debug_console_max_scroll(&self) -> usize {
+        self.debug_console_lines
+            .len()
+            .saturating_sub(self.debug_console_visible_rows())
+    }
+
+    fn scroll_debug_console_up(&mut self, amount: usize) {
+        self.debug_console_scroll =
+            (self.debug_console_scroll + amount).min(self.debug_console_max_scroll());
+    }
+
+    fn scroll_debug_console_down(&mut self, amount: usize) {
+        self.debug_console_scroll = self.debug_console_scroll.saturating_sub(amount);
+    }
+
+    fn scroll_debug_console_left(&mut self, amount: usize) {
+        self.debug_console_horizontal_scroll =
+            self.debug_console_horizontal_scroll.saturating_sub(amount);
+    }
+
+    fn scroll_debug_console_right(&mut self, amount: usize) {
+        self.debug_console_horizontal_scroll =
+            self.debug_console_horizontal_scroll.saturating_add(amount);
     }
 
     fn current_scene(&self) -> Scene {
@@ -484,12 +671,70 @@ impl AppState {
     fn toggle_control_mode(&mut self) {
         self.control_mode = match self.control_mode {
             ControlMode::Scene => ControlMode::Camera,
-            ControlMode::Camera => ControlMode::Scene,
+            ControlMode::Camera => ControlMode::Light,
+            ControlMode::Light => ControlMode::Scene,
         };
+
+        self.push_debug_console_line(format!("control mode: {}", self.control_mode.label()));
+    }
+
+    fn set_control_mode(&mut self, control_mode: ControlMode) {
+        self.control_mode = control_mode;
+        self.push_debug_console_line(format!("control mode: {}", self.control_mode.label()));
+    }
+
+    fn control_mode_menu_index(&self) -> usize {
+        match self.control_mode {
+            ControlMode::Scene => 0,
+            ControlMode::Camera => 1,
+            ControlMode::Light => 2,
+        }
     }
 
     fn open_menu(&mut self, kind: crate::menu::MenuKind) {
-        self.active_menu = Some(MenuState::new(kind));
+        let selected_index = match kind {
+            crate::menu::MenuKind::Control => self.control_mode_menu_index(),
+            _ => 0,
+        };
+
+        self.active_menu = Some(MenuState::with_selected(kind, selected_index));
+    }
+
+    fn toggle_menu_bar(&mut self) {
+        if self.active_menu.is_some() {
+            self.close_menu();
+        } else {
+            self.open_menu(crate::menu::MenuKind::File);
+        }
+    }
+
+    fn open_menu_for_hotkey(&mut self, key_code: KeyCode) -> bool {
+        let Some(kind) = menu_kind_for_hotkey(key_code) else {
+            return false;
+        };
+
+        self.open_menu(kind);
+        true
+    }
+
+    fn open_next_menu(&mut self) {
+        let next_kind = self
+            .active_menu
+            .as_ref()
+            .map(|menu| next_menu_kind(menu.kind()))
+            .unwrap_or(crate::menu::MenuKind::File);
+
+        self.active_menu = Some(MenuState::with_selected(next_kind, 0));
+    }
+
+    fn open_previous_menu(&mut self) {
+        let previous_kind = self
+            .active_menu
+            .as_ref()
+            .map(|menu| previous_menu_kind(menu.kind()))
+            .unwrap_or(crate::menu::MenuKind::File);
+
+        self.active_menu = Some(MenuState::with_selected(previous_kind, 0));
     }
 
     fn close_menu(&mut self) {
@@ -550,12 +795,268 @@ impl AppState {
         self.move_world_camera(Vec3::new(0.0, amount, 0.0));
     }
 
+    fn move_world_origin(&mut self, delta: Vec3) {
+        self.world_origin = Vec3::new(
+            self.world_origin.x + delta.x,
+            self.world_origin.y + delta.y,
+            self.world_origin.z + delta.z,
+        );
+
+        self.push_debug_console_line(format!(
+            "world origin: [{:.2}, {:.2}, {:.2}]",
+            self.world_origin.x, self.world_origin.y, self.world_origin.z
+        ));
+    }
+
+    fn reset_world_axes(&mut self) -> bool {
+        self.world_origin = Vec3::zero();
+        let rotated = self.reset_loaded_a3d_world_object();
+        self.push_debug_console_line("world axes: reset origin and rotation".to_string());
+        rotated
+    }
+
     fn rotate_world_camera(&mut self, yaw_delta_degrees: f32, pitch_delta_degrees: f32) {
         self.world_camera_yaw_degrees += yaw_delta_degrees;
         self.world_camera_yaw_degrees %= FULL_ROTATION_DEGREES;
 
         self.world_camera_pitch_degrees =
             (self.world_camera_pitch_degrees + pitch_delta_degrees).clamp(-80.0, 80.0);
+    }
+
+    fn apply_xyz_control_event(&mut self, event: XyzControlEvent) -> bool {
+        match self.control_mode {
+            ControlMode::Scene => match event {
+                XyzControlEvent::Rotate { axis, direction } => {
+                    let delta = self.xyz_control.rotation_delta(axis, direction);
+                    let handled = self.rotate_loaded_a3d_world_object(delta);
+                    self.push_debug_console_line(format!(
+                        "xyzcontrol/world: {} handled={handled}",
+                        event.label()
+                    ));
+                    handled
+                }
+                XyzControlEvent::MoveOrigin { axis, direction } => {
+                    let delta = self.xyz_control.origin_delta(axis, direction);
+                    self.move_world_origin(delta);
+                    self.push_debug_console_line(format!("xyzcontrol/world: {}", event.label()));
+                    true
+                }
+                XyzControlEvent::Reset => self.reset_world_axes(),
+            },
+            ControlMode::Camera => {
+                self.push_debug_console_line(format!(
+                    "xyzcontrol/camera: {} binding pending",
+                    event.label()
+                ));
+                true
+            }
+            ControlMode::Light => {
+                self.push_debug_console_line(format!(
+                    "xyzcontrol/light: {} binding pending",
+                    event.label()
+                ));
+                true
+            }
+        }
+    }
+
+    fn reset_active_control(&mut self) -> bool {
+        match self.control_mode {
+            ControlMode::Scene => self.reset_world_axes(),
+            ControlMode::Camera => {
+                self.reset_world_camera();
+                true
+            }
+            ControlMode::Light => self.reset_loaded_a3d_light(),
+        }
+    }
+
+    fn loaded_a3d_manifest_path_for_edit(&self) -> Option<PathBuf> {
+        self.loaded_a3d_manifest_path.clone().or_else(|| {
+            self.loaded_a3d_root
+                .as_ref()
+                .map(|root| root.join("scene.a3d"))
+        })
+    }
+
+    fn edit_loaded_a3d_manifest<F>(&mut self, edit: F) -> bool
+    where
+        F: FnOnce(&mut serde_json::Value) -> bool,
+    {
+        let Some(manifest_path) = self.loaded_a3d_manifest_path_for_edit() else {
+            return false;
+        };
+
+        let Ok(source) = std::fs::read_to_string(&manifest_path) else {
+            return false;
+        };
+
+        let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&source) else {
+            return false;
+        };
+
+        if !edit(&mut json) {
+            return false;
+        }
+
+        let serialized =
+            serde_json::to_string_pretty(&json).unwrap_or_else(|_| source.clone()) + "\n";
+
+        if std::fs::write(&manifest_path, serialized).is_err() {
+            return false;
+        }
+
+        // World and light controls edit the active .a3d manifest on disk.
+        // Reload immediately so the cached LoadedWorld and rendered objects
+        // reflect the new transform/light data on the next draw.
+        self.load_a3d_file(manifest_path);
+
+        true
+    }
+
+    fn edit_first_loaded_a3d_light_position<F>(&mut self, edit: F) -> bool
+    where
+        F: FnOnce([f32; 3]) -> [f32; 3],
+    {
+        self.edit_loaded_a3d_manifest(|json| {
+            let Some(lights) = json
+                .get_mut("lights")
+                .and_then(serde_json::Value::as_array_mut)
+            else {
+                return false;
+            };
+
+            let Some(light) = lights.first_mut() else {
+                return false;
+            };
+
+            let Some(position) = light
+                .get_mut("position")
+                .and_then(serde_json::Value::as_array_mut)
+            else {
+                return false;
+            };
+
+            if position.len() != 3 {
+                return false;
+            }
+
+            let current = [
+                position[0].as_f64().unwrap_or(0.0) as f32,
+                position[1].as_f64().unwrap_or(0.0) as f32,
+                position[2].as_f64().unwrap_or(0.0) as f32,
+            ];
+
+            let next = edit(current);
+
+            position[0] = serde_json::json!(next[0]);
+            position[1] = serde_json::json!(next[1]);
+            position[2] = serde_json::json!(next[2]);
+
+            true
+        })
+    }
+
+    fn move_loaded_a3d_light(&mut self, delta: Vec3) -> bool {
+        self.edit_first_loaded_a3d_light_position(|current| {
+            [
+                current[0] + delta.x,
+                current[1] + delta.y,
+                current[2] + delta.z,
+            ]
+        })
+    }
+
+    fn reset_loaded_a3d_light(&mut self) -> bool {
+        self.edit_first_loaded_a3d_light_position(|_| [5.0, 2.0, -2.5])
+    }
+
+    fn move_loaded_a3d_light_forward(&mut self, amount: f32) -> bool {
+        self.move_loaded_a3d_light(Vec3::new(0.0, 0.0, -amount))
+    }
+
+    fn move_loaded_a3d_light_right(&mut self, amount: f32) -> bool {
+        self.move_loaded_a3d_light(Vec3::new(amount, 0.0, 0.0))
+    }
+
+    fn move_loaded_a3d_light_up(&mut self, amount: f32) -> bool {
+        self.move_loaded_a3d_light(Vec3::new(0.0, amount, 0.0))
+    }
+
+    fn edit_first_loaded_a3d_object_rotation<F>(&mut self, edit: F) -> bool
+    where
+        F: FnOnce([f32; 3]) -> [f32; 3],
+    {
+        self.edit_loaded_a3d_manifest(|json| {
+            let Some(objects) = json
+                .get_mut("objects")
+                .and_then(serde_json::Value::as_array_mut)
+            else {
+                return false;
+            };
+
+            let Some(object) = objects.first_mut() else {
+                return false;
+            };
+
+            if object.get("transform").is_none() {
+                object["transform"] = serde_json::json!({});
+            }
+
+            let Some(transform) = object
+                .get_mut("transform")
+                .and_then(serde_json::Value::as_object_mut)
+            else {
+                return false;
+            };
+
+            if !transform.contains_key("rotation") {
+                transform.insert("rotation".to_string(), serde_json::json!([0.0, 0.0, 0.0]));
+            }
+
+            let Some(rotation) = transform
+                .get_mut("rotation")
+                .and_then(serde_json::Value::as_array_mut)
+            else {
+                return false;
+            };
+
+            if rotation.len() != 3 {
+                *rotation = vec![
+                    serde_json::json!(0.0),
+                    serde_json::json!(0.0),
+                    serde_json::json!(0.0),
+                ];
+            }
+
+            let current = [
+                rotation[0].as_f64().unwrap_or(0.0) as f32,
+                rotation[1].as_f64().unwrap_or(0.0) as f32,
+                rotation[2].as_f64().unwrap_or(0.0) as f32,
+            ];
+
+            let next = edit(current);
+
+            rotation[0] = serde_json::json!(next[0]);
+            rotation[1] = serde_json::json!(next[1]);
+            rotation[2] = serde_json::json!(next[2]);
+
+            true
+        })
+    }
+
+    fn rotate_loaded_a3d_world_object(&mut self, delta: Vec3) -> bool {
+        self.edit_first_loaded_a3d_object_rotation(|current| {
+            [
+                current[0] + delta.x,
+                current[1] + delta.y,
+                current[2] + delta.z,
+            ]
+        })
+    }
+
+    fn reset_loaded_a3d_world_object(&mut self) -> bool {
+        self.edit_first_loaded_a3d_object_rotation(|_| [0.0, 0.0, 0.0])
     }
 
     fn toggle_frame_timing(&mut self) {
@@ -669,6 +1170,56 @@ impl AppState {
         };
 
         self.load_a3d_root(root);
+        if self.show_debug_console {
+            self.push_debug_console_line("world debug: reloaded active .a3d world".to_string());
+            self.push_world_debug_lines();
+        }
+    }
+
+    fn loaded_a3d_has_enabled_rotation_behavior(&self) -> bool {
+        let Some(manifest_path) = self.loaded_a3d_manifest_path.clone().or_else(|| {
+            self.loaded_a3d_root
+                .as_ref()
+                .map(|root| root.join("scene.a3d"))
+        }) else {
+            return true;
+        };
+
+        let Ok(source) = std::fs::read_to_string(manifest_path) else {
+            return true;
+        };
+
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(&source) else {
+            return true;
+        };
+
+        let Some(objects) = json.get("objects").and_then(serde_json::Value::as_array) else {
+            return true;
+        };
+
+        let mut saw_rotation_behavior = false;
+
+        for object in objects {
+            let enabled = object
+                .get("behavior")
+                .and_then(|behavior| behavior.get("rotation"))
+                .and_then(|rotation| rotation.get("enabled"))
+                .and_then(serde_json::Value::as_bool);
+
+            let Some(enabled) = enabled else {
+                continue;
+            };
+
+            saw_rotation_behavior = true;
+
+            if enabled {
+                return true;
+            }
+        }
+
+        // Backward-compatible default:
+        // old scenes without behavior.rotation metadata keep their existing update behavior.
+        !saw_rotation_behavior
     }
 
     fn update(&mut self, elapsed: Duration) -> bool {
@@ -680,8 +1231,10 @@ impl AppState {
 
         match self.current_scene() {
             Scene::LoadedA3d => {
-                if let Some(world) = &mut self.loaded_a3d_world {
-                    world.update(elapsed.as_secs_f32());
+                if self.loaded_a3d_has_enabled_rotation_behavior() {
+                    if let Some(world) = &mut self.loaded_a3d_world {
+                        world.update(elapsed.as_secs_f32());
+                    }
                 }
                 true
             }
@@ -1446,6 +1999,447 @@ fn draw_loaded_a3d_mesh_object_in_ws(
     Ok(())
 }
 
+struct LoadedA3dLightGizmo {
+    visible: bool,
+    length: f32,
+    source_character: char,
+    ray_character: char,
+}
+
+struct LoadedA3dLight {
+    id: String,
+    position: Vec3,
+    direction: Vec3,
+    intensity: f32,
+    gizmo: LoadedA3dLightGizmo,
+}
+
+fn read_json_vec3(value: &serde_json::Value) -> Option<Vec3> {
+    let values = value.as_array()?;
+
+    if values.len() != 3 {
+        return None;
+    }
+
+    Some(Vec3::new(
+        values[0].as_f64()? as f32,
+        values[1].as_f64()? as f32,
+        values[2].as_f64()? as f32,
+    ))
+}
+
+fn read_json_char(value: Option<&serde_json::Value>, default_value: char) -> char {
+    value
+        .and_then(serde_json::Value::as_str)
+        .and_then(|text| text.chars().next())
+        .unwrap_or(default_value)
+}
+
+fn loaded_a3d_lights(root: &Path) -> io::Result<Vec<LoadedA3dLight>> {
+    let scene_path = root.join("scene.a3d");
+    let source = std::fs::read_to_string(&scene_path)?;
+    let json = serde_json::from_str::<serde_json::Value>(&source).map_err(|error| {
+        io::Error::other(format!(
+            "failed to parse A3D lights from {}: {}",
+            scene_path.display(),
+            error
+        ))
+    })?;
+
+    let Some(lights) = json.get("lights").and_then(serde_json::Value::as_array) else {
+        return Ok(Vec::new());
+    };
+
+    let mut parsed_lights = Vec::new();
+
+    for light in lights {
+        let id = light
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("light")
+            .to_string();
+
+        let position = light
+            .get("position")
+            .and_then(read_json_vec3)
+            .unwrap_or_else(|| Vec3::new(0.0, 0.0, 0.0));
+
+        let direction = light
+            .get("direction")
+            .and_then(read_json_vec3)
+            .unwrap_or_else(|| Vec3::new(-1.0, -1.0, -1.0));
+
+        let intensity = light
+            .get("intensity")
+            .and_then(serde_json::Value::as_f64)
+            .map(|value| value as f32)
+            .filter(|value| value.is_finite() && *value >= 0.0)
+            .unwrap_or(1.0);
+
+        let gizmo = light.get("gizmo").unwrap_or(&serde_json::Value::Null);
+        let visible = gizmo
+            .get("visible")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true);
+
+        let length = gizmo
+            .get("length")
+            .and_then(serde_json::Value::as_f64)
+            .map(|value| value as f32)
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .unwrap_or(1.5);
+
+        let source_character = read_json_char(gizmo.get("source_character"), 'L');
+        let ray_character = read_json_char(gizmo.get("ray_character"), '-');
+
+        parsed_lights.push(LoadedA3dLight {
+            id,
+            position,
+            direction,
+            intensity,
+            gizmo: LoadedA3dLightGizmo {
+                visible,
+                length,
+                source_character,
+                ray_character,
+            },
+        });
+    }
+
+    Ok(parsed_lights)
+}
+
+fn normalized_light_direction(direction: Vec3) -> Option<Vec3> {
+    let length =
+        (direction.x * direction.x + direction.y * direction.y + direction.z * direction.z).sqrt();
+
+    if length <= f32::EPSILON {
+        return None;
+    }
+
+    Some(direction * (1.0 / length))
+}
+
+fn draw_loaded_a3d_light_gizmos(
+    canvas: &mut Canvas,
+    depth_buffer: &mut CameraViewportDepthBuffer,
+    state: &AppState,
+    root: &Path,
+    inner: ClipRect,
+) -> io::Result<()> {
+    let origin = Vec3::new(0.0, 0.0, 0.0);
+
+    for light in loaded_a3d_lights(root)? {
+        if !light.gizmo.visible {
+            continue;
+        }
+
+        // Camera viewport still uses a short world-space ray toward origin for
+        // now. The worldspace debug gizmo above uses fixed screen-cell length.
+        let source = light.position;
+        let to_origin = origin - source;
+
+        let Some(gizmo_direction) = normalized_light_direction(to_origin) else {
+            continue;
+        };
+
+        let tip = source + gizmo_direction * light.gizmo.length;
+
+        draw_camera_viewport_depth_line(
+            canvas,
+            depth_buffer,
+            state,
+            inner,
+            source,
+            tip,
+            light.gizmo.ray_character,
+        );
+
+        let Some(source_camera) = world_to_camera_space(state, source) else {
+            continue;
+        };
+
+        let Some((source_screen, source_depth)) = project_camera_space_to_viewport_with_depth(
+            source_camera,
+            inner,
+            camera_viewport_cell_aspect_ratio(state),
+            camera_viewport_perspective_scale(state),
+        ) else {
+            continue;
+        };
+
+        if depth_buffer.try_update(source_screen, source_depth) {
+            canvas.set(source_screen, light.gizmo.source_character);
+        } else {
+            canvas.set(source_screen, light.gizmo.source_character);
+        }
+    }
+
+    Ok(())
+}
+
+fn draw_loaded_a3d_light_gizmos_in_ws(
+    canvas: &mut Canvas,
+    projector: &ObliqueProjector,
+    root: &Path,
+) -> io::Result<()> {
+    let origin_screen = projector.project(Vec3::new(0.0, 0.0, 0.0));
+    let visual_length_cells = 8.0;
+
+    for light in loaded_a3d_lights(root)? {
+        if !light.gizmo.visible {
+            continue;
+        }
+
+        // The worldspace light gizmo is a fixed-screen-length visual cue:
+        // project the light source and world origin, then draw only a short
+        // cell-space segment from the source toward the origin. This avoids
+        // huge cluttery rays when the source is far away in world units.
+        let source_screen = projector.project(light.position);
+
+        let dx = (origin_screen.x - source_screen.x) as f32;
+        let dy = (origin_screen.y - source_screen.y) as f32;
+        let distance = (dx * dx + dy * dy).sqrt();
+
+        if distance <= f32::EPSILON {
+            canvas.set(source_screen, light.gizmo.source_character);
+            continue;
+        }
+
+        let step_x = dx / distance;
+        let step_y = dy / distance;
+
+        let tip = Point2::new(
+            source_screen.x + (step_x * visual_length_cells).round() as i32,
+            source_screen.y + (step_y * visual_length_cells).round() as i32,
+        );
+
+        canvas.draw_line(source_screen, tip, light.gizmo.ray_character);
+
+        // Draw source after the ray so the L marker wins visually.
+        canvas.set(source_screen, light.gizmo.source_character);
+    }
+
+    Ok(())
+}
+
+fn loaded_a3d_object_render_mode(root: &Path, object: &crate::a3d::SceneObject) -> Option<String> {
+    let scene_path = root.join("scene.a3d");
+    let source = std::fs::read_to_string(&scene_path).ok()?;
+    let json = serde_json::from_str::<serde_json::Value>(&source).ok()?;
+    let objects = json.get("objects").and_then(serde_json::Value::as_array)?;
+
+    objects
+        .iter()
+        .find(|entry| {
+            entry
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|id| id == object.id)
+        })
+        .and_then(|entry| entry.get("render"))
+        .and_then(|render| render.get("mode"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+}
+
+fn loaded_a3d_object_mesh_path(root: &Path, object: &crate::a3d::SceneObject) -> Option<String> {
+    let scene_path = root.join("scene.a3d");
+    let source = std::fs::read_to_string(&scene_path).ok()?;
+    let json = serde_json::from_str::<serde_json::Value>(&source).ok()?;
+    let objects = json.get("objects").and_then(serde_json::Value::as_array)?;
+
+    objects
+        .iter()
+        .find(|entry| {
+            entry
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|id| id == object.id)
+        })
+        .and_then(|entry| entry.get("asset"))
+        .filter(|asset| {
+            asset
+                .get("type")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|asset_type| asset_type == "mesh")
+        })
+        .and_then(|asset| asset.get("path"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+}
+
+fn dot_vec3(a: Vec3, b: Vec3) -> f32 {
+    a.x * b.x + a.y * b.y + a.z * b.z
+}
+
+fn cross_vec3(a: Vec3, b: Vec3) -> Vec3 {
+    Vec3::new(
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x,
+    )
+}
+
+fn normalize_vec3(value: Vec3) -> Option<Vec3> {
+    let length = dot_vec3(value, value).sqrt();
+
+    if length <= f32::EPSILON {
+        return None;
+    }
+
+    Some(value * (1.0 / length))
+}
+
+fn loaded_a3d_primary_light_direction(root: &Path) -> io::Result<Vec3> {
+    for light in loaded_a3d_lights(root)? {
+        if light.intensity <= 0.0 {
+            continue;
+        }
+
+        if let Some(direction) = normalize_vec3(light.direction) {
+            return Ok(direction);
+        }
+    }
+
+    Ok(Vec3::new(-1.0, -1.0, -1.0))
+}
+
+fn shade_character_for_brightness(brightness: f32) -> char {
+    const RAMP: &[u8] = b" .,-~:;=!*#$@";
+
+    let brightness = brightness.clamp(0.0, 1.0);
+    let index = (brightness * (RAMP.len().saturating_sub(1)) as f32).round() as usize;
+
+    RAMP[index.min(RAMP.len().saturating_sub(1))] as char
+}
+
+fn edge_function(a: Point2, b: Point2, point: Point2) -> f32 {
+    ((point.x - a.x) as f32 * (b.y - a.y) as f32) - ((point.y - a.y) as f32 * (b.x - a.x) as f32)
+}
+
+fn draw_loaded_a3d_mesh_object_raster(
+    canvas: &mut Canvas,
+    depth_buffer: &mut CameraViewportDepthBuffer,
+    state: &AppState,
+    root: &Path,
+    inner: ClipRect,
+    object: &crate::a3d::SceneObject,
+) -> io::Result<()> {
+    let Some(path) = loaded_a3d_object_mesh_path(root, object) else {
+        return Ok(());
+    };
+
+    let mesh = load_loaded_a3d_mesh(root, &path, object)?;
+    let object_world = object.transform.matrix();
+    let light_direction = loaded_a3d_primary_light_direction(root)?;
+    let light_to_surface = light_direction * -1.0;
+
+    for primitive in &mesh.faces {
+        if primitive.len() < 3 {
+            continue;
+        }
+
+        let first_index = primitive[0];
+
+        for triangle_index in 1..primitive.len().saturating_sub(1) {
+            let indexes = [
+                first_index,
+                primitive[triangle_index],
+                primitive[triangle_index + 1],
+            ];
+
+            if indexes.iter().any(|index| *index >= mesh.vertices.len()) {
+                continue;
+            }
+
+            let world = [
+                object_world.transform_point(mesh.vertices[indexes[0]]),
+                object_world.transform_point(mesh.vertices[indexes[1]]),
+                object_world.transform_point(mesh.vertices[indexes[2]]),
+            ];
+
+            let normal = cross_vec3(world[1] - world[0], world[2] - world[0]);
+            let Some(normal) = normalize_vec3(normal) else {
+                continue;
+            };
+
+            let diffuse = dot_vec3(normal, light_to_surface).abs();
+            let brightness = (0.18 + diffuse * 0.82).clamp(0.0, 1.0);
+            let character = shade_character_for_brightness(brightness);
+
+            let Some(camera0) = world_to_camera_space(state, world[0]) else {
+                continue;
+            };
+            let Some(camera1) = world_to_camera_space(state, world[1]) else {
+                continue;
+            };
+            let Some(camera2) = world_to_camera_space(state, world[2]) else {
+                continue;
+            };
+
+            let Some((p0, z0)) = project_camera_space_to_viewport_with_depth(
+                camera0,
+                inner,
+                camera_viewport_cell_aspect_ratio(state),
+                camera_viewport_perspective_scale(state),
+            ) else {
+                continue;
+            };
+
+            let Some((p1, z1)) = project_camera_space_to_viewport_with_depth(
+                camera1,
+                inner,
+                camera_viewport_cell_aspect_ratio(state),
+                camera_viewport_perspective_scale(state),
+            ) else {
+                continue;
+            };
+
+            let Some((p2, z2)) = project_camera_space_to_viewport_with_depth(
+                camera2,
+                inner,
+                camera_viewport_cell_aspect_ratio(state),
+                camera_viewport_perspective_scale(state),
+            ) else {
+                continue;
+            };
+
+            let min_x = p0.x.min(p1.x).min(p2.x);
+            let max_x = p0.x.max(p1.x).max(p2.x);
+            let min_y = p0.y.min(p1.y).min(p2.y);
+            let max_y = p0.y.max(p1.y).max(p2.y);
+
+            let area = edge_function(p0, p1, p2);
+
+            if area.abs() <= f32::EPSILON {
+                continue;
+            }
+
+            for y in min_y..=max_y {
+                for x in min_x..=max_x {
+                    let point = Point2::new(x, y);
+                    let w0 = edge_function(p1, p2, point) / area;
+                    let w1 = edge_function(p2, p0, point) / area;
+                    let w2 = edge_function(p0, p1, point) / area;
+
+                    if w0 < -0.001 || w1 < -0.001 || w2 < -0.001 {
+                        continue;
+                    }
+
+                    let depth = z0 * w0 + z1 * w1 + z2 * w2;
+
+                    if depth_buffer.try_update(point, depth) {
+                        canvas.set(point, character);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn draw_loaded_a3d_mesh_object(
     canvas: &mut Canvas,
     depth_buffer: &mut CameraViewportDepthBuffer,
@@ -1454,6 +2448,17 @@ fn draw_loaded_a3d_mesh_object(
     inner: ClipRect,
     object: &crate::a3d::SceneObject,
 ) -> io::Result<()> {
+    if loaded_a3d_object_render_mode(root, object).as_deref() == Some("ascii_raster") {
+        return draw_loaded_a3d_mesh_object_raster(
+            canvas,
+            depth_buffer,
+            state,
+            root,
+            inner,
+            object,
+        );
+    }
+
     if !object.render.visible {
         return Ok(());
     }
@@ -1759,6 +2764,8 @@ fn draw_loaded_a3d_objects_in_ws(
         draw_loaded_a3d_mesh_object_in_ws(canvas, projector, root, object)?;
     }
 
+    draw_loaded_a3d_light_gizmos_in_ws(canvas, projector, root)?;
+
     Ok(())
 }
 
@@ -1821,10 +2828,10 @@ fn render_loaded_a3d_ws_camera_workspace(
     state: &AppState,
     projector: &ObliqueProjector,
 ) {
-    let origin = Vec3::zero();
-    let positive_x = Vec3::new(4.0, 0.0, 0.0);
-    let positive_y = Vec3::new(0.0, 3.0, 0.0);
-    let negative_z = Vec3::new(0.0, 0.0, -4.0);
+    let origin = state.world_origin;
+    let positive_x = Vec3::new(origin.x + 4.0, origin.y, origin.z);
+    let positive_y = Vec3::new(origin.x, origin.y + 3.0, origin.z);
+    let negative_z = Vec3::new(origin.x, origin.y, origin.z - 4.0);
 
     canvas.draw_line(
         projector.project(origin),
@@ -1842,9 +2849,6 @@ fn render_loaded_a3d_ws_camera_workspace(
         '/',
     );
 
-    canvas.draw_text(projector.project(positive_x), "+X");
-    canvas.draw_text(projector.project(positive_y), "+Y");
-    canvas.draw_text(projector.project(negative_z), "-Z");
     canvas.set(projector.project(origin), 'O');
 
     let forward = camera_forward_from_yaw_pitch(
@@ -1866,12 +2870,6 @@ fn render_loaded_a3d_ws_camera_workspace(
     canvas.set(near_center_screen, 'N');
     canvas.draw_line(eye_screen, near_center_screen, '.');
     canvas.draw_line(near_left_screen, near_right_screen, '=');
-
-    canvas.draw_text(Point2::new(2, 3), "WS: LoadedA3d clean worldspace");
-    canvas.draw_text(
-        Point2::new(2, 4),
-        "Only .a3d objects are drawn here; no hardcoded demo letters",
-    );
 }
 
 fn render_loaded_a3d_studio_world(
@@ -2063,7 +3061,7 @@ fn render_scene_frame(state: &AppState, assets: &SceneAssets) -> io::Result<Canv
     canvas.draw_text(
         Point2::new(2, FOOTER_ROW),
         &format!(
-            "[{}/{}] {} | Mode: {} | Glyph '{}' | Menu: {} | h help | Esc quit",
+            "[{}/{}] {} | Mode: {} | Glyph '{}' | Menu: {} | Event: {} | h help | Esc quit",
             state.scene_position + 1,
             Scene::ALL.len(),
             state.current_scene().title(),
@@ -2074,6 +3072,7 @@ fn render_scene_frame(state: &AppState, assets: &SceneAssets) -> io::Result<Canv
                 .as_ref()
                 .map(|menu| menu.kind().title())
                 .unwrap_or("closed"),
+            state.last_input_event_trace.as_deref().unwrap_or("none"),
         ),
     );
 
@@ -2094,6 +3093,59 @@ fn dismiss_loaded_a3d_debug_popup(state: &mut AppState) -> bool {
     } else {
         false
     }
+}
+fn exit_confirm_popup_lines(state: &AppState) -> Option<Vec<String>> {
+    state.confirm_exit.then(|| {
+        vec![
+            "Exit ascii-3d".to_string(),
+            String::new(),
+            "Do you really want to exit?".to_string(),
+            String::new(),
+            "Enter / y  = Yes, exit".to_string(),
+            "Esc / n / c = Cancel".to_string(),
+        ]
+    })
+}
+
+fn debug_console_popup_lines(state: &AppState) -> Option<Vec<String>> {
+    if !state.show_debug_console {
+        return None;
+    }
+
+    let visible_rows = 24usize;
+    let max_scroll = state.debug_console_max_scroll();
+    let start = state
+        .debug_console_lines
+        .len()
+        .saturating_sub(visible_rows)
+        .saturating_sub(state.debug_console_scroll);
+    let end = (start + visible_rows).min(state.debug_console_lines.len());
+
+    let mut lines = vec![
+        format!(
+            "Debug Console v[{}/{}] h[{}] PageUp/PageDown Left/Right",
+            max_scroll.saturating_sub(state.debug_console_scroll),
+            max_scroll,
+            state.debug_console_horizontal_scroll
+        ),
+        "Debug menu -> Toggle debug console hides this popup".to_string(),
+        String::new(),
+    ];
+
+    lines.extend(
+        state
+            .debug_console_lines
+            .iter()
+            .skip(start)
+            .take(end - start)
+            .map(|line| {
+                line.chars()
+                    .skip(state.debug_console_horizontal_scroll)
+                    .collect::<String>()
+            }),
+    );
+
+    Some(lines)
 }
 
 fn loaded_a3d_debug_popup_lines(state: &AppState) -> Option<Vec<String>> {
@@ -2140,7 +3192,8 @@ fn render_scene(
     };
     let camera_viewport = camera_start.elapsed();
 
-    let debug_popup_lines = loaded_a3d_debug_popup_lines(state);
+    let debug_popup_lines =
+        exit_confirm_popup_lines(state).or_else(|| debug_console_popup_lines(state));
     let frame_timing_lines = state.frame_timing_lines();
     let file_picker_labels = state.a3d_file_picker.as_ref().map(|picker| picker.labels());
     let file_picker_current_dir = state
@@ -2195,9 +3248,120 @@ enum KeyHandling {
     Quit,
 }
 
+fn describe_key_code_for_trace(key_code: KeyCode) -> String {
+    match key_code {
+        KeyCode::Backspace => "Backspace".to_string(),
+        KeyCode::Enter => "Enter".to_string(),
+        KeyCode::Left => "Left".to_string(),
+        KeyCode::Right => "Right".to_string(),
+        KeyCode::Up => "Up".to_string(),
+        KeyCode::Down => "Down".to_string(),
+        KeyCode::Home => "Home".to_string(),
+        KeyCode::End => "End".to_string(),
+        KeyCode::PageUp => "PageUp".to_string(),
+        KeyCode::PageDown => "PageDown".to_string(),
+        KeyCode::Tab => "Tab".to_string(),
+        KeyCode::BackTab => "BackTab".to_string(),
+        KeyCode::Delete => "Delete".to_string(),
+        KeyCode::Insert => "Insert".to_string(),
+        KeyCode::Esc => "Esc".to_string(),
+        KeyCode::Char(character) => format!("'{character}'"),
+        KeyCode::F(number) => format!("F{number}"),
+        other => format!("{other:?}"),
+    }
+}
+
+fn trace_key_event(state: &mut AppState, route: &str, key_code: KeyCode) {
+    state.last_input_event_trace = Some(format!(
+        "{route}: key {} | scene {} | mode {} | menu {}",
+        describe_key_code_for_trace(key_code),
+        state.current_scene().title(),
+        state.control_mode.label(),
+        state
+            .active_menu
+            .as_ref()
+            .map(|menu| menu.kind().title())
+            .unwrap_or("closed"),
+    ));
+}
+
+fn trace_command_event(state: &mut AppState, route: &str, command: AppCommand) {
+    state.last_input_event_trace = Some(format!(
+        "{route}: command {command:?} | scene {} | mode {} | menu {}",
+        state.current_scene().title(),
+        state.control_mode.label(),
+        state
+            .active_menu
+            .as_ref()
+            .map(|menu| menu.kind().title())
+            .unwrap_or("closed"),
+    ));
+}
+
+fn describe_key_code_for_debug_console(key_code: KeyCode) -> String {
+    match key_code {
+        KeyCode::Backspace => "Backspace".to_string(),
+        KeyCode::Enter => "Enter".to_string(),
+        KeyCode::Left => "Left".to_string(),
+        KeyCode::Right => "Right".to_string(),
+        KeyCode::Up => "Up".to_string(),
+        KeyCode::Down => "Down".to_string(),
+        KeyCode::Home => "Home".to_string(),
+        KeyCode::End => "End".to_string(),
+        KeyCode::PageUp => "PageUp".to_string(),
+        KeyCode::PageDown => "PageDown".to_string(),
+        KeyCode::Tab => "Tab".to_string(),
+        KeyCode::BackTab => "BackTab".to_string(),
+        KeyCode::Delete => "Delete".to_string(),
+        KeyCode::Insert => "Insert".to_string(),
+        KeyCode::Esc => "Esc".to_string(),
+        KeyCode::Char(character) => format!("'{character}'"),
+        KeyCode::F(number) => format!("F{number}"),
+        other => format!("{other:?}"),
+    }
+}
+
+fn push_key_debug_trace(state: &mut AppState, route: &str, key_code: KeyCode) {
+    state.push_debug_console_line(format!(
+        "{route}: key {} | scene {} | mode {} | menu {}",
+        describe_key_code_for_debug_console(key_code),
+        state.current_scene().title(),
+        state.control_mode.label(),
+        state
+            .active_menu
+            .as_ref()
+            .map(|menu| menu.kind().title())
+            .unwrap_or("closed"),
+    ));
+}
+
+fn push_command_debug_trace(state: &mut AppState, route: &str, command: AppCommand) {
+    state.push_debug_console_line(format!(
+        "{route}: command {command:?} | scene {} | mode {} | menu {}",
+        state.current_scene().title(),
+        state.control_mode.label(),
+        state
+            .active_menu
+            .as_ref()
+            .map(|menu| menu.kind().title())
+            .unwrap_or("closed"),
+    ));
+}
+
 fn apply_app_command(state: &mut AppState, command: AppCommand) -> KeyHandling {
     match command {
-        AppCommand::Quit => KeyHandling::Quit,
+        AppCommand::Quit => {
+            state.open_exit_confirm();
+            KeyHandling::Handled
+        }
+
+        AppCommand::XyzControl(event) => {
+            if state.apply_xyz_control_event(event) {
+                KeyHandling::Handled
+            } else {
+                KeyHandling::Ignored
+            }
+        }
 
         AppCommand::OpenA3dFilePicker => {
             state.open_a3d_file_picker();
@@ -2215,6 +3379,11 @@ fn apply_app_command(state: &mut AppState, command: AppCommand) -> KeyHandling {
             KeyHandling::Handled
         }
 
+        AppCommand::ToggleDebugConsole => {
+            state.toggle_debug_console();
+            KeyHandling::Handled
+        }
+
         AppCommand::ToggleFrameTiming => {
             state.toggle_frame_timing();
             KeyHandling::Handled
@@ -2222,6 +3391,24 @@ fn apply_app_command(state: &mut AppState, command: AppCommand) -> KeyHandling {
 
         AppCommand::ToggleControlMode => {
             state.toggle_control_mode();
+            KeyHandling::Handled
+        }
+
+        AppCommand::SetControlModeScene => {
+            state.set_control_mode(ControlMode::Scene);
+            state.close_menu();
+            KeyHandling::Handled
+        }
+
+        AppCommand::SetControlModeCamera => {
+            state.set_control_mode(ControlMode::Camera);
+            state.close_menu();
+            KeyHandling::Handled
+        }
+
+        AppCommand::SetControlModeLight => {
+            state.set_control_mode(ControlMode::Light);
+            state.close_menu();
             KeyHandling::Handled
         }
 
@@ -2233,6 +3420,14 @@ fn apply_app_command(state: &mut AppState, command: AppCommand) -> KeyHandling {
         AppCommand::PreviousScene => {
             state.previous_scene();
             KeyHandling::Handled
+        }
+
+        AppCommand::ResetActiveControl => {
+            if state.reset_active_control() {
+                KeyHandling::Handled
+            } else {
+                KeyHandling::Ignored
+            }
         }
 
         AppCommand::ResetWorldCamera | AppCommand::ResetCamera => {
@@ -2270,6 +3465,16 @@ fn apply_app_command(state: &mut AppState, command: AppCommand) -> KeyHandling {
             KeyHandling::Handled
         }
 
+        AppCommand::MenuLeft => {
+            state.open_previous_menu();
+            KeyHandling::Handled
+        }
+
+        AppCommand::MenuRight => {
+            state.open_next_menu();
+            KeyHandling::Handled
+        }
+
         AppCommand::MenuSelect => {
             let Some(menu) = &state.active_menu else {
                 return KeyHandling::Ignored;
@@ -2278,6 +3483,82 @@ fn apply_app_command(state: &mut AppState, command: AppCommand) -> KeyHandling {
             let selected_command = menu.selected_command();
             state.close_menu();
             apply_app_command(state, selected_command)
+        }
+
+        AppCommand::RotateWorldPositiveX => {
+            if state.rotate_loaded_a3d_world_object(Vec3::new(5.0, 0.0, 0.0)) {
+                KeyHandling::Handled
+            } else {
+                KeyHandling::Ignored
+            }
+        }
+
+        AppCommand::RotateWorldNegativeX => {
+            if state.rotate_loaded_a3d_world_object(Vec3::new(-5.0, 0.0, 0.0)) {
+                KeyHandling::Handled
+            } else {
+                KeyHandling::Ignored
+            }
+        }
+
+        AppCommand::RotateWorldPositiveY => {
+            if state.rotate_loaded_a3d_world_object(Vec3::new(0.0, 5.0, 0.0)) {
+                KeyHandling::Handled
+            } else {
+                KeyHandling::Ignored
+            }
+        }
+
+        AppCommand::RotateWorldNegativeY => {
+            if state.rotate_loaded_a3d_world_object(Vec3::new(0.0, -5.0, 0.0)) {
+                KeyHandling::Handled
+            } else {
+                KeyHandling::Ignored
+            }
+        }
+
+        AppCommand::RotateWorldPositiveZ => {
+            if state.rotate_loaded_a3d_world_object(Vec3::new(0.0, 0.0, 5.0)) {
+                KeyHandling::Handled
+            } else {
+                KeyHandling::Ignored
+            }
+        }
+
+        AppCommand::RotateWorldNegativeZ => {
+            if state.rotate_loaded_a3d_world_object(Vec3::new(0.0, 0.0, -5.0)) {
+                KeyHandling::Handled
+            } else {
+                KeyHandling::Ignored
+            }
+        }
+
+        AppCommand::MoveWorldOriginLeft => {
+            state.move_world_origin(Vec3::new(-0.25, 0.0, 0.0));
+            KeyHandling::Handled
+        }
+
+        AppCommand::MoveWorldOriginRight => {
+            state.move_world_origin(Vec3::new(0.25, 0.0, 0.0));
+            KeyHandling::Handled
+        }
+
+        AppCommand::MoveWorldOriginUp => {
+            state.move_world_origin(Vec3::new(0.0, 0.25, 0.0));
+            KeyHandling::Handled
+        }
+
+        AppCommand::MoveWorldOriginDown => {
+            state.move_world_origin(Vec3::new(0.0, -0.25, 0.0));
+            KeyHandling::Handled
+        }
+
+        AppCommand::ResetWorldAxes => {
+            if state.reset_world_axes() {
+                KeyHandling::Handled
+            } else {
+                KeyHandling::Ignored
+            }
         }
 
         AppCommand::MoveCameraForward => {
@@ -2330,6 +3611,54 @@ fn apply_app_command(state: &mut AppState, command: AppCommand) -> KeyHandling {
             KeyHandling::Handled
         }
 
+        AppCommand::MoveLightForward => {
+            if state.move_loaded_a3d_light_forward(0.25) {
+                KeyHandling::Handled
+            } else {
+                KeyHandling::Ignored
+            }
+        }
+
+        AppCommand::MoveLightBackward => {
+            if state.move_loaded_a3d_light_forward(-0.25) {
+                KeyHandling::Handled
+            } else {
+                KeyHandling::Ignored
+            }
+        }
+
+        AppCommand::MoveLightLeft => {
+            if state.move_loaded_a3d_light_right(-0.25) {
+                KeyHandling::Handled
+            } else {
+                KeyHandling::Ignored
+            }
+        }
+
+        AppCommand::MoveLightRight => {
+            if state.move_loaded_a3d_light_right(0.25) {
+                KeyHandling::Handled
+            } else {
+                KeyHandling::Ignored
+            }
+        }
+
+        AppCommand::MoveLightDown => {
+            if state.move_loaded_a3d_light_up(-0.25) {
+                KeyHandling::Handled
+            } else {
+                KeyHandling::Ignored
+            }
+        }
+
+        AppCommand::MoveLightUp => {
+            if state.move_loaded_a3d_light_up(0.25) {
+                KeyHandling::Handled
+            } else {
+                KeyHandling::Ignored
+            }
+        }
+
         // Cross-term menu placeholders. They intentionally render as handled
         // so the menu stack, hotkeys, and help text can be wired before the
         // feature-specific behavior exists.
@@ -2347,7 +3676,42 @@ fn apply_app_command(state: &mut AppState, command: AppCommand) -> KeyHandling {
     }
 }
 
-fn handle_key_press(state: &mut AppState, key_code: KeyCode) -> KeyHandling {
+fn handle_key_press(state: &mut AppState, key: KeyEvent) -> KeyHandling {
+    let key_code = key.code;
+
+    if state.confirm_exit {
+        match key_code {
+            KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                return KeyHandling::Quit;
+            }
+            KeyCode::Esc
+            | KeyCode::Char('n')
+            | KeyCode::Char('N')
+            | KeyCode::Char('c')
+            | KeyCode::Char('C') => {
+                state.close_exit_confirm();
+                return KeyHandling::Handled;
+            }
+            _ => {
+                return KeyHandling::Handled;
+            }
+        }
+    }
+
+    if key.modifiers.contains(KeyModifiers::ALT) {
+        if state.active_menu.is_some() {
+            state.toggle_menu_bar();
+            return KeyHandling::Handled;
+        }
+
+        if state.open_menu_for_hotkey(key_code) {
+            return KeyHandling::Handled;
+        }
+
+        state.open_menu(crate::menu::MenuKind::File);
+        return KeyHandling::Handled;
+    }
+
     if state.a3d_file_picker.is_some() {
         match key_code {
             KeyCode::Esc => {
@@ -2374,6 +3738,56 @@ fn handle_key_press(state: &mut AppState, key_code: KeyCode) -> KeyHandling {
         }
     }
 
+    // Menus are modal and must keep priority over the floating debug console.
+    if state.active_menu.is_some() {
+        return menu_command_for_key(key_code)
+            .map(|command| apply_app_command(state, command))
+            .unwrap_or(KeyHandling::Ignored);
+    }
+
+    // XyzControl is the primitive axis/origin input layer. It routes through
+    // the currently active control target inside apply_xyz_control_event().
+    if let Some(event) = state.xyz_control.event_for_key(key) {
+        return apply_app_command(state, AppCommand::XyzControl(event));
+    }
+
+    if state.show_debug_console {
+        match key_code {
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('o') | KeyCode::Char('O') => {
+                state.close_debug_console();
+                return KeyHandling::Handled;
+            }
+            KeyCode::Tab => {
+                return apply_app_command(state, AppCommand::ToggleControlMode);
+            }
+            KeyCode::Char('c') | KeyCode::Char('C') => {
+                return apply_app_command(
+                    state,
+                    AppCommand::OpenMenu(crate::menu::MenuKind::Control),
+                );
+            }
+            KeyCode::PageUp => {
+                state.scroll_debug_console_up(6);
+                return KeyHandling::Handled;
+            }
+            KeyCode::PageDown => {
+                state.scroll_debug_console_down(6);
+                return KeyHandling::Handled;
+            }
+            KeyCode::Left => {
+                state.scroll_debug_console_left(8);
+                return KeyHandling::Handled;
+            }
+            KeyCode::Right => {
+                state.scroll_debug_console_right(8);
+                return KeyHandling::Handled;
+            }
+            _ => {
+                return KeyHandling::Handled;
+            }
+        }
+    }
+
     if is_loaded_a3d_debug_popup_visible(state) {
         match key_code {
             KeyCode::Enter | KeyCode::Esc | KeyCode::Char('o') | KeyCode::Char('O') => {
@@ -2384,15 +3798,12 @@ fn handle_key_press(state: &mut AppState, key_code: KeyCode) -> KeyHandling {
         }
     }
 
-    if state.active_menu.is_some() {
-        return menu_command_for_key(key_code)
-            .map(|command| apply_app_command(state, command))
-            .unwrap_or(KeyHandling::Ignored);
-    }
+    trace_key_event(state, "active scene key", key_code);
 
     let command = match state.control_mode {
         ControlMode::Scene => scene_mode_command_for_key(key_code),
         ControlMode::Camera => camera_mode_command_for_key(key_code),
+        ControlMode::Light => light_mode_command_for_key(key_code),
     };
 
     command
@@ -2441,7 +3852,7 @@ pub fn run() -> io::Result<()> {
             continue;
         }
 
-        match handle_key_press(&mut state, key.code) {
+        match handle_key_press(&mut state, key) {
             KeyHandling::Quit => break,
             KeyHandling::Handled => {
                 previous_time = Instant::now();
