@@ -48,9 +48,15 @@ pub fn draw(
     draw_menu_bar(frame, shell[0], active_menu.map(MenuState::kind));
 
     if let Some(camera_viewport_canvas) = camera_viewport_canvas {
+        let max_camera_panel_height = shell[1].height.saturating_sub(1).max(1);
+        let camera_panel_height = (camera_viewport_canvas.height() as u16)
+            .saturating_add(2)
+            .min(max_camera_panel_height)
+            .max(1);
+
         let content = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(1), Constraint::Length(18)])
+            .constraints([Constraint::Min(1), Constraint::Length(camera_panel_height)])
             .split(shell[1]);
 
         draw_scene(frame, scene_canvas, content[0]);
@@ -142,12 +148,18 @@ impl Widget for CanvasWidget<'_> {
 }
 
 fn draw_camera_viewport_block(frame: &mut Frame<'_>, canvas: &Canvas, area: Rect) {
+    let viewport_area = centered_rect(
+        (canvas.width() as u16).saturating_add(2),
+        (canvas.height() as u16).saturating_add(2),
+        area,
+    );
+
     let block = Block::default()
         .title("Camera3D viewport")
         .borders(Borders::ALL);
 
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let inner = block.inner(viewport_area);
+    frame.render_widget(block, viewport_area);
     frame.render_widget(CanvasWidget { canvas }, inner);
 }
 

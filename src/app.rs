@@ -1672,6 +1672,120 @@ fn camera_viewport_perspective_scale(state: &AppState) -> f32 {
     )
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CameraViewportAspectRatio {
+    width: u16,
+    height: u16,
+}
+
+impl CameraViewportAspectRatio {
+    const DEFAULT: Self = Self {
+        width: 16,
+        height: 9,
+    };
+
+    const fn new(width: u16, height: u16) -> Self {
+        Self { width, height }
+    }
+}
+
+fn parse_camera_viewport_aspect_ratio(value: &serde_json::Value) -> Option<CameraViewportAspectRatio> {
+    if let Some(text) = value.as_str() {
+        let (width, height) = text.split_once(':')?;
+        let width = width.trim().parse::<u16>().ok()?;
+        let height = height.trim().parse::<u16>().ok()?;
+
+        return (width > 0 && height > 0).then_some(CameraViewportAspectRatio::new(width, height));
+    }
+
+    let width = value
+        .get("width")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u16::try_from(value).ok())?;
+    let height = value
+        .get("height")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u16::try_from(value).ok())?;
+
+    (width > 0 && height > 0).then_some(CameraViewportAspectRatio::new(width, height))
+}
+
+fn loaded_a3d_camera_view_aspect_ratio(state: &AppState) -> CameraViewportAspectRatio {
+    let Some(root) = state.loaded_a3d_root.as_deref() else {
+        return CameraViewportAspectRatio::DEFAULT;
+    };
+
+    let scene_path = root.join("scene.a3d");
+    let Ok(source) = std::fs::read_to_string(&scene_path) else {
+        return CameraViewportAspectRatio::DEFAULT;
+    };
+
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&source) else {
+        return CameraViewportAspectRatio::DEFAULT;
+    };
+
+    json.get("viewport")
+        .and_then(|viewport| viewport.get("camera_view"))
+        .and_then(|camera_view| camera_view.get("aspect_ratio"))
+        .and_then(parse_camera_viewport_aspect_ratio)
+        .unwrap_or(CameraViewportAspectRatio::DEFAULT)
+}
+
+fn fit_aspect_dimensions(
+    available_width: u16,
+    available_height: u16,
+    aspect: CameraViewportAspectRatio,
+    cell_aspect_ratio: f32,
+) -> (usize, usize) {
+    if available_width == 0 || available_height == 0 || aspect.width == 0 || aspect.height == 0 {
+        return (0, 0);
+    }
+
+    let cell_aspect_ratio = if cell_aspect_ratio.is_finite() && cell_aspect_ratio > 0.0 {
+        cell_aspect_ratio
+    } else {
+        1.0
+    };
+
+    // Terminal cells are not square. To make the viewport look visually like
+    // 16:9 or 4:3, the cell width budget must be widened by the cell aspect.
+    let visual_width_ratio = aspect.width as f32 * cell_aspect_ratio;
+    let visual_height_ratio = aspect.height as f32;
+
+    let width_limited_height =
+        (available_width as f32 * visual_height_ratio / visual_width_ratio).floor() as u16;
+
+    if width_limited_height <= available_height {
+        return (available_width as usize, width_limited_height.max(1) as usize);
+    }
+
+    let height_limited_width =
+        (available_height as f32 * visual_width_ratio / visual_height_ratio).floor() as u16;
+
+    (height_limited_width.max(1) as usize, available_height as usize)
+}
+
+fn camera_viewport_canvas_size(
+    state: &AppState,
+    terminal_width: u16,
+    terminal_height: u16,
+) -> (usize, usize) {
+    let aspect = loaded_a3d_camera_view_aspect_ratio(state);
+    let cell_aspect_ratio = camera_viewport_cell_aspect_ratio(state);
+
+    // The camera viewport lives in the bottom third of the app content area.
+    // The world/debug scene keeps the remaining two thirds.
+    //
+    // terminal_height includes the menu row, and the Ratatui block adds a
+    // one-cell border around the camera canvas.
+    let app_content_height = terminal_height.saturating_sub(1).max(1);
+    let camera_panel_height = (app_content_height / 3).max(8);
+    let available_width = terminal_width.saturating_sub(4).max(8);
+    let available_height = camera_panel_height.saturating_sub(2).max(6);
+
+    fit_aspect_dimensions(available_width, available_height, aspect, cell_aspect_ratio)
+}
+
 struct CameraViewportDepthBuffer {
     rect: ClipRect,
     depths: Vec<f32>,
@@ -1932,19 +2046,23 @@ fn draw_camera_viewport(canvas: &mut Canvas, state: &AppState) -> io::Result<()>
     Ok(())
 }
 
-fn render_camera_viewport_canvas(state: &AppState) -> io::Result<Canvas> {
-    const VIEWPORT_CONTENT_WIDTH: usize = 78;
-    const VIEWPORT_CONTENT_HEIGHT: usize = 16;
+fn render_camera_viewport_canvas(
+    state: &AppState,
+    viewport_width: usize,
+    viewport_height: usize,
+) -> io::Result<Canvas> {
+    let viewport_width = viewport_width.max(8);
+    let viewport_height = viewport_height.max(6);
 
-    let mut canvas = Canvas::new(VIEWPORT_CONTENT_WIDTH, VIEWPORT_CONTENT_HEIGHT);
+    let mut canvas = Canvas::new(viewport_width, viewport_height);
 
     canvas.draw_text(Point2::new(1, 0), "Camera3D viewport content");
 
     let inner = ClipRect {
         x: 1,
         y: 2,
-        width: VIEWPORT_CONTENT_WIDTH.saturating_sub(2),
-        height: VIEWPORT_CONTENT_HEIGHT.saturating_sub(5),
+        width: viewport_width.saturating_sub(2),
+        height: viewport_height.saturating_sub(5),
     };
 
     let mut depth_buffer = CameraViewportDepthBuffer::new(inner);
@@ -1970,7 +2088,7 @@ fn render_camera_viewport_canvas(state: &AppState) -> io::Result<Canvas> {
     })?;
 
     canvas.draw_text(
-        Point2::new(1, VIEWPORT_CONTENT_HEIGHT as i32 - 2),
+        Point2::new(1, viewport_height as i32 - 2),
         &format!(
             "pos [{:.2},{:.2},{:.2}] yaw {:.1} pitch {:.1} | P2 depth test",
             state.world_camera_position.x,
@@ -2907,19 +3025,23 @@ fn draw_loaded_a3d_objects_in_ws(
     Ok(())
 }
 
-fn render_loaded_a3d_camera_viewport_canvas(state: &AppState) -> io::Result<Canvas> {
-    const VIEWPORT_CONTENT_WIDTH: usize = 78;
-    const VIEWPORT_CONTENT_HEIGHT: usize = 16;
+fn render_loaded_a3d_camera_viewport_canvas(
+    state: &AppState,
+    viewport_width: usize,
+    viewport_height: usize,
+) -> io::Result<Canvas> {
+    let viewport_width = viewport_width.max(8);
+    let viewport_height = viewport_height.max(6);
 
-    let mut canvas = Canvas::new(VIEWPORT_CONTENT_WIDTH, VIEWPORT_CONTENT_HEIGHT);
+    let mut canvas = Canvas::new(viewport_width, viewport_height);
 
     canvas.draw_text(Point2::new(1, 0), "LoadedA3d Camera3D viewport");
 
     let inner = ClipRect {
         x: 1,
         y: 2,
-        width: VIEWPORT_CONTENT_WIDTH.saturating_sub(2),
-        height: VIEWPORT_CONTENT_HEIGHT.saturating_sub(5),
+        width: viewport_width.saturating_sub(2),
+        height: viewport_height.saturating_sub(5),
     };
 
     let Some(root) = state.loaded_a3d_root.as_deref() else {
@@ -2944,17 +3066,18 @@ fn render_loaded_a3d_camera_viewport_canvas(state: &AppState) -> io::Result<Canv
     })?;
 
     canvas.draw_text(
-        Point2::new(1, VIEWPORT_CONTENT_HEIGHT as i32 - 2),
+        Point2::new(1, viewport_height as i32 - 2),
         &format!(
-            "{} | pos [{:.2},{:.2},{:.2}] yaw {:.1} pitch {:.1} | cell {:.2} persp {:.1}",
+            "{} | viewport {}x{} aspect {}:{} cell {:.2} | pos [{:.2},{:.2},{:.2}]",
             world.title,
+            viewport_width,
+            viewport_height,
+            loaded_a3d_camera_view_aspect_ratio(state).width,
+            loaded_a3d_camera_view_aspect_ratio(state).height,
+            camera_viewport_cell_aspect_ratio(state),
             state.world_camera_position.x,
             state.world_camera_position.y,
             state.world_camera_position.z,
-            state.world_camera_yaw_degrees,
-            state.world_camera_pitch_degrees,
-            camera_viewport_cell_aspect_ratio(state),
-            camera_viewport_perspective_scale(state),
         ),
     );
 
@@ -3014,8 +3137,9 @@ fn render_loaded_a3d_studio_world(
     canvas: &mut Canvas,
     state: &AppState,
     projector: &ObliqueProjector,
+    world_debug_viewport: ClipRect,
 ) -> io::Result<()> {
-    canvas.with_viewport(WORLD_DEBUG_VIEWPORT, |canvas| {
+    canvas.with_viewport(world_debug_viewport, |canvas| {
         render_loaded_a3d_ws_camera_workspace(canvas, state, projector);
         draw_loaded_a3d_objects_in_ws(canvas, state, projector)
     })?;
@@ -3023,17 +3147,30 @@ fn render_loaded_a3d_studio_world(
     Ok(())
 }
 
-fn render_scene_frame(state: &AppState, assets: &SceneAssets) -> io::Result<Canvas> {
-    let mut canvas = Canvas::new(CANVAS_WIDTH, CANVAS_HEIGHT);
+fn render_scene_frame(
+    state: &AppState,
+    assets: &SceneAssets,
+    viewport_width: usize,
+    viewport_height: usize,
+) -> io::Result<Canvas> {
+    let viewport_width = viewport_width.max(CANVAS_WIDTH);
+    let viewport_height = viewport_height.max(CANVAS_HEIGHT);
+    let mut canvas = Canvas::new(viewport_width, viewport_height);
     let projector = projector_from_config(&assets.projection_config);
+    let world_debug_viewport = ClipRect {
+        x: WORLD_DEBUG_VIEWPORT.x,
+        y: WORLD_DEBUG_VIEWPORT.y,
+        width: viewport_width,
+        height: WORLD_DEBUG_VIEWPORT.height,
+    };
 
     match state.current_scene() {
         Scene::LoadedA3d => {
-            render_loaded_a3d_studio_world(&mut canvas, state, &projector)?;
+            render_loaded_a3d_studio_world(&mut canvas, state, &projector, world_debug_viewport)?;
         }
 
         Scene::WorldCameraSpaces => {
-            canvas.with_viewport(WORLD_DEBUG_VIEWPORT, |canvas| {
+            canvas.with_viewport(world_debug_viewport, |canvas| {
                 render_world_camera_spaces(
                     canvas,
                     state.world_camera_position,
@@ -3318,14 +3455,32 @@ fn render_scene(
 ) -> io::Result<RenderTimings> {
     let total_start = Instant::now();
 
+    let terminal_area = terminal.size()?;
+
     let scene_start = Instant::now();
-    let scene_canvas = render_scene_frame(state, assets)?;
+    let scene_canvas = render_scene_frame(
+        state,
+        assets,
+        terminal_area.width as usize,
+        terminal_area.height.saturating_sub(1) as usize,
+    )?;
     let scene_frame = scene_start.elapsed();
 
     let camera_start = Instant::now();
+    let (camera_viewport_width, camera_viewport_height) =
+        camera_viewport_canvas_size(state, terminal_area.width, terminal_area.height);
+
     let camera_viewport_canvas = match state.current_scene() {
-        Scene::LoadedA3d => Some(render_loaded_a3d_camera_viewport_canvas(state)?),
-        Scene::WorldCameraSpaces => Some(render_camera_viewport_canvas(state)?),
+        Scene::LoadedA3d => Some(render_loaded_a3d_camera_viewport_canvas(
+            state,
+            camera_viewport_width,
+            camera_viewport_height,
+        )?),
+        Scene::WorldCameraSpaces => Some(render_camera_viewport_canvas(
+            state,
+            camera_viewport_width,
+            camera_viewport_height,
+        )?),
         _ => None,
     };
     let camera_viewport = camera_start.elapsed();
@@ -4101,6 +4256,71 @@ mod tests {
     #[test]
     fn projection_config_exists() {
         assert!(asset_path("projection.default.json").is_file());
+    }
+
+    #[test]
+    fn fit_aspect_dimensions_uses_full_width_for_16_9_when_height_allows() {
+        assert_eq!(
+            super::fit_aspect_dimensions(80, 60, super::CameraViewportAspectRatio::new(16, 9), 1.0),
+            (80, 45)
+        );
+    }
+
+    #[test]
+    fn fit_aspect_dimensions_limits_by_height_for_16_9() {
+        assert_eq!(
+            super::fit_aspect_dimensions(160, 40, super::CameraViewportAspectRatio::new(16, 9), 1.0),
+            (71, 40)
+        );
+    }
+
+    #[test]
+    fn fit_aspect_dimensions_limits_by_height_for_4_3() {
+        assert_eq!(
+            super::fit_aspect_dimensions(120, 30, super::CameraViewportAspectRatio::new(4, 3), 1.0),
+            (40, 30)
+        );
+    }
+
+    #[test]
+    fn camera_viewport_canvas_size_uses_bottom_third_height_budget_with_default_cell_aspect() {
+        let state = AppState::new();
+
+        assert_eq!(
+            super::camera_viewport_canvas_size(&state, 180, 60),
+            (15, 17)
+        );
+    }
+
+    #[test]
+    fn fit_aspect_dimensions_uses_cell_aspect_ratio_for_visual_16_9() {
+        assert_eq!(
+            super::fit_aspect_dimensions(180, 17, super::CameraViewportAspectRatio::new(16, 9), 2.0),
+            (60, 17)
+        );
+    }
+
+    #[test]
+    fn parse_camera_viewport_aspect_ratio_accepts_string() {
+        let value = serde_json::json!("4:3");
+
+        assert_eq!(
+            super::parse_camera_viewport_aspect_ratio(&value),
+            Some(super::CameraViewportAspectRatio::new(4, 3))
+        );
+    }
+
+    #[test]
+    fn parse_camera_viewport_aspect_ratio_accepts_object() {
+        let value = serde_json::json!({
+            "width": 16,
+            "height": 9
+        });
+
+        assert_eq!(
+            super::parse_camera_viewport_aspect_ratio(&value),
+            Some(super::CameraViewportAspectRatio::new(16, 9))
+        );
     }
 
     #[test]
