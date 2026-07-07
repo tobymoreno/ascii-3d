@@ -493,7 +493,7 @@ impl AppState {
             debug_console_lines: VecDeque::from([
                 "debug console attached to main workspace".to_string(),
                 "world/object debug print statements appear here".to_string(),
-                "x/X y/Y z/Z rotate; Ctrl+arrows move origin".to_string(),
+                "x/X y/Y z/Z rotate; Ctrl/Shift+arrows move origin".to_string(),
             ]),
             debug_console_scroll: 0,
             debug_console_horizontal_scroll: 0,

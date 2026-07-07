@@ -168,16 +168,19 @@ const CONTROL_ITEMS: &[MenuItem] = &[
     MenuItem::real("Rotate world +Z  [z]", AppCommand::RotateWorldPositiveZ),
     MenuItem::real("Rotate world -Z  [Z]", AppCommand::RotateWorldNegativeZ),
     MenuItem::real(
-        "Move origin -X  [Ctrl+Left]",
+        "Move origin -X  [Ctrl/Shift+Left]",
         AppCommand::MoveWorldOriginLeft,
     ),
     MenuItem::real(
-        "Move origin +X  [Ctrl+Right]",
+        "Move origin +X  [Ctrl/Shift+Right]",
         AppCommand::MoveWorldOriginRight,
     ),
-    MenuItem::real("Move origin +Y  [Ctrl+Up]", AppCommand::MoveWorldOriginUp),
     MenuItem::real(
-        "Move origin -Y  [Ctrl+Down]",
+        "Move origin +Y  [Ctrl/Shift+Up]",
+        AppCommand::MoveWorldOriginUp,
+    ),
+    MenuItem::real(
+        "Move origin -Y  [Ctrl/Shift+Down]",
         AppCommand::MoveWorldOriginDown,
     ),
     MenuItem::real("Reset world axes/origin", AppCommand::ResetWorldAxes),

@@ -83,7 +83,9 @@ impl Default for XyzControl {
 
 impl XyzControl {
     pub fn event_for_key(self, key: KeyEvent) -> Option<XyzControlEvent> {
-        if key.modifiers.contains(KeyModifiers::CONTROL) {
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            || key.modifiers.contains(KeyModifiers::SHIFT)
+        {
             return match key.code {
                 KeyCode::Left => Some(XyzControlEvent::MoveOrigin {
                     axis: XyzAxis::X,
