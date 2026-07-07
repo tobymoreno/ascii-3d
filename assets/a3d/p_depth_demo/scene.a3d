@@ -1,27 +1,6 @@
 {
-  "version": 1,
-  "title": "PITT CREW depth stack demo",
-  "world": {
-    "physics": {
-      "gravity": [
-        0.0,
-        -9.8,
-        0.0
-      ],
-      "damping": 0.01,
-      "bounds_min": [
-        -8.0,
-        -2.0,
-        -8.0
-      ],
-      "bounds_max": [
-        8.0,
-        3.0,
-        1.0
-      ]
-    }
-  },
   "camera": {
+    "fov_degrees": 60.0,
     "position": [
       0.65,
       0.55,
@@ -31,44 +10,49 @@
       0.0,
       0.1,
       -2.5
-    ],
-    "fov_degrees": 60.0
-  },
-  "viewport": {
-    "show_world_debug": true,
-    "show_camera3d": true
+    ]
   },
   "objects": [
     {
-      "id": "letter_p",
       "asset": {
-        "type": "word",
-        "path": "../../words/single_p.word.json"
+        "path": "../../words/single_p.word.json",
+        "type": "word"
       },
+      "behaviors": [
+        {
+          "type": "static"
+        }
+      ],
+      "id": "letter_p",
       "transform": {
         "position": [
           -3.5,
           0.1,
           -1.8
         ],
+        "rotation": [
+          5.0,
+          0.0,
+          0.0
+        ],
         "scale": [
           1.0,
           1.0,
           1.0
         ]
+      }
+    },
+    {
+      "asset": {
+        "path": "../../words/single_i.word.json",
+        "type": "word"
       },
       "behaviors": [
         {
           "type": "static"
         }
-      ]
-    },
-    {
+      ],
       "id": "letter_i",
-      "asset": {
-        "type": "word",
-        "path": "../../words/single_i.word.json"
-      },
       "transform": {
         "position": [
           -2.5,
@@ -80,19 +64,19 @@
           1.0,
           1.0
         ]
+      }
+    },
+    {
+      "asset": {
+        "path": "../../words/single_t.word.json",
+        "type": "word"
       },
       "behaviors": [
         {
           "type": "static"
         }
-      ]
-    },
-    {
+      ],
       "id": "letter_t_1",
-      "asset": {
-        "type": "word",
-        "path": "../../words/single_t.word.json"
-      },
       "transform": {
         "position": [
           -1.5,
@@ -104,19 +88,19 @@
           1.0,
           1.0
         ]
+      }
+    },
+    {
+      "asset": {
+        "path": "../../words/single_t.word.json",
+        "type": "word"
       },
       "behaviors": [
         {
           "type": "static"
         }
-      ]
-    },
-    {
+      ],
       "id": "letter_t_2",
-      "asset": {
-        "type": "word",
-        "path": "../../words/single_t.word.json"
-      },
       "transform": {
         "position": [
           -0.5,
@@ -128,19 +112,19 @@
           1.0,
           1.0
         ]
+      }
+    },
+    {
+      "asset": {
+        "path": "../../words/single_c.word.json",
+        "type": "word"
       },
       "behaviors": [
         {
           "type": "static"
         }
-      ]
-    },
-    {
+      ],
       "id": "letter_c",
-      "asset": {
-        "type": "word",
-        "path": "../../words/single_c.word.json"
-      },
       "transform": {
         "position": [
           0.5,
@@ -152,19 +136,19 @@
           1.0,
           1.0
         ]
+      }
+    },
+    {
+      "asset": {
+        "path": "../../words/single_r.word.json",
+        "type": "word"
       },
       "behaviors": [
         {
           "type": "static"
         }
-      ]
-    },
-    {
+      ],
       "id": "letter_r",
-      "asset": {
-        "type": "word",
-        "path": "../../words/single_r.word.json"
-      },
       "transform": {
         "position": [
           1.5,
@@ -176,19 +160,19 @@
           1.0,
           1.0
         ]
+      }
+    },
+    {
+      "asset": {
+        "path": "../../words/single_e.word.json",
+        "type": "word"
       },
       "behaviors": [
         {
           "type": "static"
         }
-      ]
-    },
-    {
+      ],
       "id": "letter_e",
-      "asset": {
-        "type": "word",
-        "path": "../../words/single_e.word.json"
-      },
       "transform": {
         "position": [
           2.5,
@@ -200,19 +184,19 @@
           1.0,
           1.0
         ]
+      }
+    },
+    {
+      "asset": {
+        "path": "../../words/single_w.word.json",
+        "type": "word"
       },
       "behaviors": [
         {
           "type": "static"
         }
-      ]
-    },
-    {
+      ],
       "id": "letter_w",
-      "asset": {
-        "type": "word",
-        "path": "../../words/single_w.word.json"
-      },
       "transform": {
         "position": [
           3.5,
@@ -224,12 +208,33 @@
           1.0,
           1.0
         ]
-      },
-      "behaviors": [
-        {
-          "type": "static"
-        }
+      }
+    }
+  ],
+  "title": "PITT CREW depth stack demo",
+  "version": 1,
+  "viewport": {
+    "show_camera3d": true,
+    "show_world_debug": true
+  },
+  "world": {
+    "physics": {
+      "bounds_max": [
+        8.0,
+        3.0,
+        1.0
+      ],
+      "bounds_min": [
+        -8.0,
+        -2.0,
+        -8.0
+      ],
+      "damping": 0.01,
+      "gravity": [
+        0.0,
+        -9.8,
+        0.0
       ]
     }
-  ]
+  }
 }

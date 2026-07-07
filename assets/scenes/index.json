@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "default": "loaded_a3d",
+  "scenes": [
+    {
+      "id": "loaded_a3d"
+    },
+    {
+      "id": "world_camera_spaces"
+    },
+    {
+      "id": "pitt_crew"
+    },
+    {
+      "id": "crew"
+    },
+    {
+      "id": "pitt"
+    },
+    {
+      "id": "single_e"
+    },
+    {
+      "id": "single_w"
+    },
+    {
+      "id": "single_c"
+    },
+    {
+      "id": "single_r"
+    },
+    {
+      "id": "single_t"
+    },
+    {
+      "id": "single_i"
+    },
+    {
+      "id": "single_p"
+    },
+    {
+      "id": "bezier_axes"
+    },
+    {
+      "id": "asset_axes_rotate_x"
+    },
+    {
+      "id": "asset_axes_rotate_y"
+    },
+    {
+      "id": "asset_axes_rotate_z"
+    },
+    {
+      "id": "quad4"
+    },
+    {
+      "id": "camera_motion"
+    },
+    {
+      "id": "camera_turntable"
+    },
+    {
+      "id": "camera_look_at"
+    },
+    {
+      "id": "obj_box"
+    },
+    {
+      "id": "rotate_axes_z"
+    },
+    {
+      "id": "rotate_axes_y"
+    },
+    {
+      "id": "rotate_axes_x"
+    },
+    {
+      "id": "cross_negative_z"
+    },
+    {
+      "id": "cross_positive_z"
+    },
+    {
+      "id": "arbitrary_vector"
+    },
+    {
+      "id": "axes"
+    }
+  ]
+}

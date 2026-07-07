@@ -621,17 +621,17 @@ impl AppState {
     }
 
     fn current_scene(&self) -> Scene {
-        Scene::ALL[self.scene_position]
+        crate::scenes::scene_at(self.scene_position)
     }
 
     fn next_scene(&mut self) {
-        self.scene_position = (self.scene_position + 1) % Scene::ALL.len();
+        self.scene_position = (self.scene_position + 1) % crate::scenes::scene_count();
         self.reset_animation();
     }
 
     fn previous_scene(&mut self) {
         self.scene_position = if self.scene_position == 0 {
-            Scene::ALL.len() - 1
+            crate::scenes::scene_count() - 1
         } else {
             self.scene_position - 1
         };
@@ -3063,7 +3063,7 @@ fn render_scene_frame(state: &AppState, assets: &SceneAssets) -> io::Result<Canv
         &format!(
             "[{}/{}] {} | Mode: {} | Glyph '{}' | Menu: {} | Event: {} | h help | Esc quit",
             state.scene_position + 1,
-            Scene::ALL.len(),
+            crate::scenes::scene_count(),
             state.current_scene().title(),
             state.control_mode.label(),
             state.glyph_stroke_character(),
