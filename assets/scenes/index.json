@@ -9,6 +9,9 @@
       "a3d_root": "assets/a3d/glyph_ab"
     },
     {
+      "id": "logo_quads"
+    },
+    {
       "id": "loaded_a3d"
     },
     {

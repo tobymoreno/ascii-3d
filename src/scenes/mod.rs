@@ -11,6 +11,7 @@ mod camera_motion;
 mod camera_turntable;
 mod crew;
 mod cross_product;
+mod logo_quads;
 mod obj_box;
 mod pitt;
 mod pitt_crew;
@@ -37,6 +38,7 @@ pub use crew::render as render_crew;
 pub use cross_product::{
     render_negative_z as render_cross_negative_z, render_positive_z as render_cross_positive_z,
 };
+pub use logo_quads::render as render_logo_quads;
 pub use obj_box::render as render_obj_box;
 pub use pitt::render as render_pitt;
 pub use pitt_crew::render as render_pitt_crew;
@@ -64,6 +66,7 @@ pub struct SceneDescriptor {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scene {
     LoadedA3d,
+    LogoQuads,
     WorldCameraSpaces,
     PittCrew,
     Crew,
@@ -95,8 +98,9 @@ pub enum Scene {
 
 impl Scene {
     /// Scenes are ordered newest-first.
-    pub const ALL: [Self; 28] = [
+    pub const ALL: [Self; 29] = [
         Self::LoadedA3d,
+        Self::LogoQuads,
         Self::WorldCameraSpaces,
         Self::PittCrew,
         Self::Crew,
@@ -129,6 +133,7 @@ impl Scene {
     pub const fn id(self) -> &'static str {
         match self {
             Self::LoadedA3d => "loaded_a3d",
+            Self::LogoQuads => "logo_quads",
             Self::WorldCameraSpaces => "world_camera_spaces",
             Self::PittCrew => "pitt_crew",
             Self::Crew => "crew",
@@ -162,6 +167,7 @@ impl Scene {
     pub fn from_id(id: &str) -> Option<Self> {
         match id {
             "loaded_a3d" => Some(Self::LoadedA3d),
+            "logo_quads" => Some(Self::LogoQuads),
             "world_camera_spaces" => Some(Self::WorldCameraSpaces),
             "pitt_crew" => Some(Self::PittCrew),
             "crew" => Some(Self::Crew),
@@ -207,6 +213,7 @@ impl Scene {
     pub const fn title(self) -> &'static str {
         match self {
             Self::LoadedA3d => "Loaded .a3d data-driven world",
+            Self::LogoQuads => "KM logo from reusable quad4 planes",
             Self::WorldCameraSpaces => "world space and Camera3D foundation",
             Self::PittCrew => "PITT CREW word parent with P/I/T/T SPACE C/R/E/W glyphs",
             Self::Crew => "CREW word parent with C/R/E/W glyphs",
@@ -241,6 +248,7 @@ impl Scene {
         matches!(
             self,
             Self::LoadedA3d
+                | Self::LogoQuads
                 | Self::AssetAxesRotateX
                 | Self::AssetAxesRotateY
                 | Self::AssetAxesRotateZ
@@ -344,8 +352,9 @@ mod tests {
 
     #[test]
     fn next_scene_after_loaded_a3d_is_world_camera_spaces() {
-        assert_eq!(Scene::ALL[1], Scene::WorldCameraSpaces);
-        assert_eq!(Scene::ALL[2], Scene::PittCrew);
+        assert_eq!(Scene::ALL[1], Scene::LogoQuads);
+        assert_eq!(Scene::ALL[2], Scene::WorldCameraSpaces);
+        assert_eq!(Scene::ALL[3], Scene::PittCrew);
     }
 
     #[test]
@@ -365,7 +374,7 @@ mod tests {
 
     #[test]
     fn scene_count_matches_scene_all() {
-        assert_eq!(Scene::ALL.len(), 28);
+        assert_eq!(Scene::ALL.len(), 29);
     }
 
     #[test]
@@ -403,6 +412,7 @@ mod tests {
     #[test]
     fn animated_scenes_are_identified() {
         assert!(Scene::LoadedA3d.is_animated());
+        assert!(Scene::LogoQuads.is_animated());
         assert!(!Scene::WorldCameraSpaces.is_animated());
         assert!(!Scene::PittCrew.is_animated());
         assert!(!Scene::Crew.is_animated());

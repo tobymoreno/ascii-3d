@@ -35,13 +35,16 @@ use crate::{
     obj::load_obj,
     projection::ObliqueProjector,
     projection_config::{ProjectionConfig, load_projection_config},
-    scene_config::{Quad4SceneConfig, load_quad4_scene_config},
+    scene_config::{
+        MultiQuadSceneConfig, Quad4SceneConfig, load_multi_quad_scene_config,
+        load_quad4_scene_config,
+    },
     scenes::{
         RotationAxis, Scene, render_arbitrary_vector, render_asset_axes_rotation, render_axes,
         render_bezier_axes, render_camera, render_camera_motion, render_camera_turntable,
         render_crew, render_cross_negative_z, render_cross_positive_z, render_obj_box, render_pitt,
         render_pitt_crew, render_quad4, render_rotation, render_single_c, render_single_e,
-        render_single_i, render_single_p, render_single_r, render_single_t, render_single_w,
+        render_logo_quads, render_single_i, render_single_p, render_single_r, render_single_t, render_single_w,
         render_world_camera_spaces,
     },
     tui::FilePickerView,
@@ -120,6 +123,7 @@ impl Drop for TerminalGuard {
 const CAMERA_MOVE_STEP: f32 = 0.10;
 
 const SINGLE_P_WORD_ASSET: &str = "assets/words/single_p.word.json";
+const KM_LOGO_QUADS_SCENE_ASSET: &str = "assets/scenes/km_logo_quads.scene.json";
 
 const P_WORD_WORLD_X: f32 = 0.35;
 const P_WORD_WORLD_Y: f32 = 0.10;
@@ -1409,6 +1413,7 @@ struct SceneAssets {
     box_mesh: Mesh,
     quad4_mesh: Mesh,
     quad4_scene_config: Quad4SceneConfig,
+    logo_quads_scene_config: MultiQuadSceneConfig,
     projection_config: ProjectionConfig,
     cartesian_axes_mesh: Mesh,
     cartesian_axes_metadata: crate::axis_metadata::CartesianAxesMetadata,
@@ -1475,6 +1480,14 @@ fn load_scene_assets() -> io::Result<SceneAssets> {
     }
 
     let quad4_scene_config = load_quad4_scene_config(asset_path("quad4.scene.json"))?;
+    let logo_quads_scene_config = load_multi_quad_scene_config(asset_path(KM_LOGO_QUADS_SCENE_ASSET))?;
+
+    if logo_quads_scene_config.mesh_asset != "models/quad4.obj" {
+        return Err(io::Error::other(format!(
+            "km_logo_quads.scene.json references unexpected mesh asset '{}'",
+            logo_quads_scene_config.mesh_asset,
+        )));
+    }
 
     if quad4_scene_config.mesh_asset != "models/quad4.obj" {
         return Err(io::Error::other(format!(
@@ -1527,6 +1540,7 @@ fn load_scene_assets() -> io::Result<SceneAssets> {
         box_mesh,
         quad4_mesh,
         quad4_scene_config,
+        logo_quads_scene_config,
         projection_config,
         cartesian_axes_mesh,
         cartesian_axes_metadata,
