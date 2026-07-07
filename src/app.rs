@@ -2364,7 +2364,7 @@ fn draw_loaded_a3d_mesh_object_raster(
                 continue;
             };
 
-            let diffuse = dot_vec3(normal, light_to_surface).abs();
+            let diffuse = dot_vec3(normal, light_to_surface).max(0.0);
             let brightness = (0.18 + diffuse * 0.82).clamp(0.0, 1.0);
             let character = shade_character_for_brightness(brightness);
 
