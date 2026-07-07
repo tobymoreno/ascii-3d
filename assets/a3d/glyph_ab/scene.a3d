@@ -1,0 +1,128 @@
+{
+  "camera": {
+    "fov_degrees": 60.0,
+    "position": [
+      0.65,
+      0.55,
+      0.35
+    ],
+    "target": [
+      0.0,
+      0.1,
+      -2.5
+    ]
+  },
+  "lights": [
+    {
+      "direction": [
+        -1.0,
+        -1.0,
+        -1.0
+      ],
+      "gizmo": {
+        "length": 2.5,
+        "ray_character": ".",
+        "source_character": "*",
+        "visible": true
+      },
+      "id": "key_light",
+      "intensity": 1.0,
+      "position": [
+        2.75,
+        2.25,
+        -2.5
+      ],
+      "type": "directional"
+    }
+  ],
+  "objects": [
+    {
+      "asset": {
+        "path": "../../words/single_a.word.json",
+        "type": "word"
+      },
+      "behaviors": [
+        {
+          "type": "static"
+        }
+      ],
+      "id": "letter_a",
+      "transform": {
+        "position": [
+          -0.75,
+          0.1,
+          -2.4
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "asset": {
+        "path": "../../words/single_b.word.json",
+        "type": "word"
+      },
+      "behaviors": [
+        {
+          "type": "static"
+        }
+      ],
+      "id": "letter_b",
+      "transform": {
+        "position": [
+          0.75,
+          0.1,
+          -2.4
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    }
+  ],
+  "title": "Glyph A and B",
+  "version": 1,
+  "viewport": {
+    "camera_view": {
+      "cell_aspect_ratio": 2.0,
+      "perspective_scale": 34.0
+    },
+    "show_camera3d": true,
+    "show_world_debug": true
+  },
+  "world": {
+    "physics": {
+      "bounds_max": [
+        4.0,
+        3.0,
+        1.0
+      ],
+      "bounds_min": [
+        -4.0,
+        -2.0,
+        -6.0
+      ],
+      "damping": 0.01,
+      "gravity": [
+        0.0,
+        -9.8,
+        0.0
+      ]
+    }
+  }
+}
