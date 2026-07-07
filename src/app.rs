@@ -2265,19 +2265,14 @@ fn draw_loaded_a3d_light_gizmos(
     root: &Path,
     inner: ClipRect,
 ) -> io::Result<()> {
-    let origin = Vec3::new(0.0, 0.0, 0.0);
-
     for light in loaded_a3d_lights(root)? {
         if !light.gizmo.visible {
             continue;
         }
 
-        // Camera viewport still uses a short world-space ray toward origin for
-        // now. The worldspace debug gizmo above uses fixed screen-cell length.
         let source = light.position;
-        let to_origin = origin - source;
 
-        let Some(gizmo_direction) = normalized_light_direction(to_origin) else {
+        let Some(gizmo_direction) = normalized_light_direction(light.direction) else {
             continue;
         };
 
@@ -2321,7 +2316,6 @@ fn draw_loaded_a3d_light_gizmos_in_ws(
     projector: &ObliqueProjector,
     root: &Path,
 ) -> io::Result<()> {
-    let origin_screen = projector.project(Vec3::new(0.0, 0.0, 0.0));
     let visual_length_cells = 8.0;
 
     for light in loaded_a3d_lights(root)? {
@@ -2329,14 +2323,20 @@ fn draw_loaded_a3d_light_gizmos_in_ws(
             continue;
         }
 
-        // The worldspace light gizmo is a fixed-screen-length visual cue:
-        // project the light source and world origin, then draw only a short
-        // cell-space segment from the source toward the origin. This avoids
-        // huge cluttery rays when the source is far away in world units.
-        let source_screen = projector.project(light.position);
+        // Keep the worldspace light gizmo fixed in screen-cell length, but aim
+        // it using the actual A3D light direction so XyzControl light rotation
+        // is visible immediately.
+        let source = light.position;
+        let source_screen = projector.project(source);
 
-        let dx = (origin_screen.x - source_screen.x) as f32;
-        let dy = (origin_screen.y - source_screen.y) as f32;
+        let Some(gizmo_direction) = normalized_light_direction(light.direction) else {
+            canvas.set(source_screen, light.gizmo.source_character);
+            continue;
+        };
+
+        let direction_tip_screen = projector.project(source + gizmo_direction);
+        let dx = (direction_tip_screen.x - source_screen.x) as f32;
+        let dy = (direction_tip_screen.y - source_screen.y) as f32;
         let distance = (dx * dx + dy * dy).sqrt();
 
         if distance <= f32::EPSILON {
