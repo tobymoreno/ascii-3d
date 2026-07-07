@@ -1,7 +1,9 @@
 mod event;
+mod loaded_a3d;
 mod response;
 
 pub use event::WorkspaceEvent;
+pub use loaded_a3d::LoadedA3dWorkspace;
 pub use response::WorkspaceResponse;
 
 /// Boundary for scene-specific workspace behavior.
