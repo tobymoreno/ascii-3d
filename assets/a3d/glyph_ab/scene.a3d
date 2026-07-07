@@ -28,7 +28,7 @@
       "id": "key_light",
       "intensity": 1.0,
       "position": [
-        2.75,
+        4.25,
         2.25,
         -2.5
       ],
@@ -100,7 +100,8 @@
   "viewport": {
     "camera_view": {
       "cell_aspect_ratio": 2.0,
-      "perspective_scale": 34.0
+      "perspective_scale": 34.0,
+      "aspect_ratio": "16:9"
     },
     "show_camera3d": true,
     "show_world_debug": true
