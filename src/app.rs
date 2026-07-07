@@ -1735,20 +1735,32 @@ fn fit_aspect_dimensions(
     available_width: u16,
     available_height: u16,
     aspect: CameraViewportAspectRatio,
+    cell_aspect_ratio: f32,
 ) -> (usize, usize) {
     if available_width == 0 || available_height == 0 || aspect.width == 0 || aspect.height == 0 {
         return (0, 0);
     }
 
+    let cell_aspect_ratio = if cell_aspect_ratio.is_finite() && cell_aspect_ratio > 0.0 {
+        cell_aspect_ratio
+    } else {
+        1.0
+    };
+
+    // Terminal cells are not square. To make the viewport look visually like
+    // 16:9 or 4:3, the cell width budget must be widened by the cell aspect.
+    let visual_width_ratio = aspect.width as f32 * cell_aspect_ratio;
+    let visual_height_ratio = aspect.height as f32;
+
     let width_limited_height =
-        (available_width as u32 * aspect.height as u32 / aspect.width as u32) as u16;
+        (available_width as f32 * visual_height_ratio / visual_width_ratio).floor() as u16;
 
     if width_limited_height <= available_height {
         return (available_width as usize, width_limited_height.max(1) as usize);
     }
 
     let height_limited_width =
-        (available_height as u32 * aspect.width as u32 / aspect.height as u32) as u16;
+        (available_height as f32 * visual_width_ratio / visual_height_ratio).floor() as u16;
 
     (height_limited_width.max(1) as usize, available_height as usize)
 }
@@ -1759,17 +1771,19 @@ fn camera_viewport_canvas_size(
     terminal_height: u16,
 ) -> (usize, usize) {
     let aspect = loaded_a3d_camera_view_aspect_ratio(state);
+    let cell_aspect_ratio = camera_viewport_cell_aspect_ratio(state);
 
-    // Leave one row for the menu, at least several rows for the world-space view,
-    // and two rows for the camera viewport border.
+    // The camera viewport lives in the bottom third of the app content area.
+    // The world/debug scene keeps the remaining two thirds.
+    //
+    // terminal_height includes the menu row, and the Ratatui block adds a
+    // one-cell border around the camera canvas.
+    let app_content_height = terminal_height.saturating_sub(1).max(1);
+    let camera_panel_height = (app_content_height / 3).max(8);
     let available_width = terminal_width.saturating_sub(4).max(8);
-    let available_height = terminal_height
-        .saturating_sub(1)
-        .saturating_sub(8)
-        .saturating_sub(2)
-        .max(6);
+    let available_height = camera_panel_height.saturating_sub(2).max(6);
 
-    fit_aspect_dimensions(available_width, available_height, aspect)
+    fit_aspect_dimensions(available_width, available_height, aspect, cell_aspect_ratio)
 }
 
 struct CameraViewportDepthBuffer {
@@ -3054,15 +3068,16 @@ fn render_loaded_a3d_camera_viewport_canvas(
     canvas.draw_text(
         Point2::new(1, viewport_height as i32 - 2),
         &format!(
-            "{} | pos [{:.2},{:.2},{:.2}] yaw {:.1} pitch {:.1} | cell {:.2} persp {:.1}",
+            "{} | viewport {}x{} aspect {}:{} cell {:.2} | pos [{:.2},{:.2},{:.2}]",
             world.title,
+            viewport_width,
+            viewport_height,
+            loaded_a3d_camera_view_aspect_ratio(state).width,
+            loaded_a3d_camera_view_aspect_ratio(state).height,
+            camera_viewport_cell_aspect_ratio(state),
             state.world_camera_position.x,
             state.world_camera_position.y,
             state.world_camera_position.z,
-            state.world_camera_yaw_degrees,
-            state.world_camera_pitch_degrees,
-            camera_viewport_cell_aspect_ratio(state),
-            camera_viewport_perspective_scale(state),
         ),
     );
 
@@ -4246,7 +4261,7 @@ mod tests {
     #[test]
     fn fit_aspect_dimensions_uses_full_width_for_16_9_when_height_allows() {
         assert_eq!(
-            super::fit_aspect_dimensions(80, 60, super::CameraViewportAspectRatio::new(16, 9)),
+            super::fit_aspect_dimensions(80, 60, super::CameraViewportAspectRatio::new(16, 9), 1.0),
             (80, 45)
         );
     }
@@ -4254,7 +4269,7 @@ mod tests {
     #[test]
     fn fit_aspect_dimensions_limits_by_height_for_16_9() {
         assert_eq!(
-            super::fit_aspect_dimensions(160, 40, super::CameraViewportAspectRatio::new(16, 9)),
+            super::fit_aspect_dimensions(160, 40, super::CameraViewportAspectRatio::new(16, 9), 1.0),
             (71, 40)
         );
     }
@@ -4262,8 +4277,26 @@ mod tests {
     #[test]
     fn fit_aspect_dimensions_limits_by_height_for_4_3() {
         assert_eq!(
-            super::fit_aspect_dimensions(120, 30, super::CameraViewportAspectRatio::new(4, 3)),
+            super::fit_aspect_dimensions(120, 30, super::CameraViewportAspectRatio::new(4, 3), 1.0),
             (40, 30)
+        );
+    }
+
+    #[test]
+    fn camera_viewport_canvas_size_uses_bottom_third_height_budget_with_default_cell_aspect() {
+        let state = AppState::new();
+
+        assert_eq!(
+            super::camera_viewport_canvas_size(&state, 180, 60),
+            (15, 17)
+        );
+    }
+
+    #[test]
+    fn fit_aspect_dimensions_uses_cell_aspect_ratio_for_visual_16_9() {
+        assert_eq!(
+            super::fit_aspect_dimensions(180, 17, super::CameraViewportAspectRatio::new(16, 9), 2.0),
+            (60, 17)
         );
     }
 
