@@ -502,7 +502,7 @@ impl AppState {
 
     fn push_world_debug_lines(&mut self) {
         let mut lines = vec![
-            format!("world debug: scene={}", self.current_scene().title()),
+            format!("world debug: scene={}", self.current_scene_title()),
             format!(
                 "world debug: camera pos [{:.2}, {:.2}, {:.2}] yaw {:.1} pitch {:.1}",
                 self.world_camera_position.x,
@@ -620,23 +620,55 @@ impl AppState {
             self.debug_console_horizontal_scroll.saturating_add(amount);
     }
 
+    fn current_scene_descriptor(&self) -> crate::scenes::SceneDescriptor {
+        crate::scenes::scene_descriptor_at(self.scene_position)
+    }
+
     fn current_scene(&self) -> Scene {
-        Scene::ALL[self.scene_position]
+        self.current_scene_descriptor().scene
+    }
+
+    fn current_scene_title(&self) -> String {
+        self.current_scene_descriptor().title
+    }
+
+    fn activate_current_scene_assets(&mut self) {
+        let descriptor = self.current_scene_descriptor();
+
+        if descriptor.scene != Scene::LoadedA3d {
+            return;
+        }
+
+        let Some(root) = descriptor.a3d_root else {
+            return;
+        };
+
+        if self
+            .loaded_a3d_root
+            .as_ref()
+            .is_some_and(|active_root| active_root == &root)
+        {
+            return;
+        }
+
+        self.load_a3d_root(root);
     }
 
     fn next_scene(&mut self) {
-        self.scene_position = (self.scene_position + 1) % Scene::ALL.len();
+        self.scene_position = (self.scene_position + 1) % crate::scenes::scene_count();
         self.reset_animation();
+        self.activate_current_scene_assets();
     }
 
     fn previous_scene(&mut self) {
         self.scene_position = if self.scene_position == 0 {
-            Scene::ALL.len() - 1
+            crate::scenes::scene_count() - 1
         } else {
             self.scene_position - 1
         };
 
         self.reset_animation();
+        self.activate_current_scene_assets();
     }
 
     fn reset_animation(&mut self) {
@@ -3161,7 +3193,7 @@ fn render_scene_frame(state: &AppState, assets: &SceneAssets) -> io::Result<Canv
 
     canvas.draw_text(
         Point2::new(2, HEADER_ROW),
-        &format!("Scene: {}", state.current_scene().title()),
+        &format!("Scene: {}", state.current_scene_title()),
     );
 
     canvas.draw_text(
@@ -3169,8 +3201,8 @@ fn render_scene_frame(state: &AppState, assets: &SceneAssets) -> io::Result<Canv
         &format!(
             "[{}/{}] {} | Mode: {} | Glyph '{}' | Menu: {} | Event: {} | h help | Esc quit",
             state.scene_position + 1,
-            Scene::ALL.len(),
-            state.current_scene().title(),
+            crate::scenes::scene_count(),
+            state.current_scene_title(),
             state.control_mode.label(),
             state.glyph_stroke_character(),
             state
@@ -3381,7 +3413,7 @@ fn trace_key_event(state: &mut AppState, route: &str, key_code: KeyCode) {
     state.last_input_event_trace = Some(format!(
         "{route}: key {} | scene {} | mode {} | menu {}",
         describe_key_code_for_trace(key_code),
-        state.current_scene().title(),
+        state.current_scene_title(),
         state.control_mode.label(),
         state
             .active_menu
@@ -3394,7 +3426,7 @@ fn trace_key_event(state: &mut AppState, route: &str, key_code: KeyCode) {
 fn trace_command_event(state: &mut AppState, route: &str, command: AppCommand) {
     state.last_input_event_trace = Some(format!(
         "{route}: command {command:?} | scene {} | mode {} | menu {}",
-        state.current_scene().title(),
+        state.current_scene_title(),
         state.control_mode.label(),
         state
             .active_menu
@@ -3431,7 +3463,7 @@ fn push_key_debug_trace(state: &mut AppState, route: &str, key_code: KeyCode) {
     state.push_debug_console_line(format!(
         "{route}: key {} | scene {} | mode {} | menu {}",
         describe_key_code_for_debug_console(key_code),
-        state.current_scene().title(),
+        state.current_scene_title(),
         state.control_mode.label(),
         state
             .active_menu
@@ -3444,7 +3476,7 @@ fn push_key_debug_trace(state: &mut AppState, route: &str, key_code: KeyCode) {
 fn push_command_debug_trace(state: &mut AppState, route: &str, command: AppCommand) {
     state.push_debug_console_line(format!(
         "{route}: command {command:?} | scene {} | mode {} | menu {}",
-        state.current_scene().title(),
+        state.current_scene_title(),
         state.control_mode.label(),
         state
             .active_menu
@@ -3925,6 +3957,7 @@ pub fn run() -> io::Result<()> {
 
     let mut state = AppState::new();
     state.load_a3d_root(initial_a3d_root_path_from_args());
+    state.activate_current_scene_assets();
     let mut previous_time = Instant::now();
     let mut previous_frame: Option<String> = None;
 
@@ -3987,19 +4020,23 @@ mod tests {
     }
 
     #[test]
-    fn application_starts_on_loaded_a3d_scene() {
+    fn application_starts_on_first_scene_index_entry() {
         let state = AppState::new();
+        let expected = crate::scenes::scene_descriptor_at(0);
 
-        assert_eq!(state.current_scene(), Scene::LoadedA3d);
+        assert_eq!(state.current_scene_descriptor().id, expected.id);
+        assert_eq!(state.current_scene(), expected.scene);
     }
 
     #[test]
-    fn next_scene_moves_to_world_camera_spaces_scene() {
+    fn next_scene_moves_to_second_registry_entry() {
         let mut state = AppState::new();
 
         state.next_scene();
 
-        assert_eq!(state.current_scene(), Scene::WorldCameraSpaces);
+        let expected = crate::scenes::scene_descriptor_at(1);
+        assert_eq!(state.current_scene_descriptor().id, expected.id);
+        assert_eq!(state.current_scene(), expected.scene);
     }
 
     #[test]

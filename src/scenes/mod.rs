@@ -1,3 +1,6 @@
+use serde::Deserialize;
+use std::{fs, io, path::{Path, PathBuf}};
+
 mod arbitrary_vector;
 mod asset_axes;
 mod asset_axes_rotation;
@@ -48,13 +51,14 @@ pub use single_t::render as render_single_t;
 pub use single_w::render as render_single_w;
 pub use world_camera_spaces::render as render_world_camera_spaces;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SceneDescriptor {
     pub scene: Scene,
-    pub id: &'static str,
-    pub title: &'static str,
+    pub id: String,
+    pub title: String,
     pub index: usize,
     pub animated: bool,
+    pub a3d_root: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,13 +159,48 @@ impl Scene {
         }
     }
 
-    pub const fn descriptor(self, index: usize) -> SceneDescriptor {
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "loaded_a3d" => Some(Self::LoadedA3d),
+            "world_camera_spaces" => Some(Self::WorldCameraSpaces),
+            "pitt_crew" => Some(Self::PittCrew),
+            "crew" => Some(Self::Crew),
+            "pitt" => Some(Self::Pitt),
+            "single_e" => Some(Self::SingleE),
+            "single_w" => Some(Self::SingleW),
+            "single_c" => Some(Self::SingleC),
+            "single_r" => Some(Self::SingleR),
+            "single_t" => Some(Self::SingleT),
+            "single_i" => Some(Self::SingleI),
+            "single_p" => Some(Self::SingleP),
+            "bezier_axes" => Some(Self::BezierAxes),
+            "asset_axes_rotate_x" => Some(Self::AssetAxesRotateX),
+            "asset_axes_rotate_y" => Some(Self::AssetAxesRotateY),
+            "asset_axes_rotate_z" => Some(Self::AssetAxesRotateZ),
+            "quad4" => Some(Self::Quad4),
+            "camera_motion" => Some(Self::CameraMotion),
+            "camera_turntable" => Some(Self::CameraTurntable),
+            "camera_look_at" => Some(Self::CameraLookAt),
+            "obj_box" => Some(Self::ObjBox),
+            "rotate_axes_z" => Some(Self::RotateAxesZ),
+            "rotate_axes_y" => Some(Self::RotateAxesY),
+            "rotate_axes_x" => Some(Self::RotateAxesX),
+            "cross_negative_z" => Some(Self::CrossNegativeZ),
+            "cross_positive_z" => Some(Self::CrossPositiveZ),
+            "arbitrary_vector" => Some(Self::ArbitraryVector),
+            "axes" => Some(Self::Axes),
+            _ => None,
+        }
+    }
+
+    pub fn descriptor(self, index: usize) -> SceneDescriptor {
         SceneDescriptor {
             scene: self,
-            id: self.id(),
-            title: self.title(),
+            id: self.id().to_string(),
+            title: self.title().to_string(),
             index,
             animated: self.is_animated(),
+            a3d_root: None,
         }
     }
 
@@ -215,12 +254,83 @@ impl Scene {
     }
 }
 
-pub fn registry() -> Vec<SceneDescriptor> {
+const SCENE_INDEX_ASSET: &str = "assets/scenes/index.json";
+
+#[derive(Debug, Deserialize)]
+struct SceneIndexAsset {
+    version: u32,
+    #[allow(dead_code)]
+    default: Option<String>,
+    scenes: Vec<SceneIndexEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SceneIndexEntry {
+    id: String,
+    scene: Option<String>,
+    title: Option<String>,
+    a3d_root: Option<PathBuf>,
+}
+
+fn builtin_registry() -> Vec<SceneDescriptor> {
     Scene::ALL
         .iter()
         .enumerate()
         .map(|(index, scene)| scene.descriptor(index))
         .collect()
+}
+
+pub fn registry_from_index_path(path: impl AsRef<Path>) -> io::Result<Vec<SceneDescriptor>> {
+    let source = fs::read_to_string(path)?;
+    let index: SceneIndexAsset = serde_json::from_str(&source)
+        .map_err(|error| io::Error::other(format!("failed to parse scene index: {error}")))?;
+
+    if index.version != 1 {
+        return Err(io::Error::other(format!(
+            "unsupported scene index version {}",
+            index.version
+        )));
+    }
+
+    let mut scenes = Vec::with_capacity(index.scenes.len());
+
+    for entry in index.scenes {
+        let scene_id = entry.scene.as_deref().unwrap_or(&entry.id);
+        let scene = Scene::from_id(scene_id)
+            .ok_or_else(|| io::Error::other(format!("unknown scene id '{}'", scene_id)))?;
+
+        scenes.push(SceneDescriptor {
+            scene,
+            id: entry.id,
+            title: entry.title.unwrap_or_else(|| scene.title().to_string()),
+            index: scenes.len(),
+            animated: scene.is_animated(),
+            a3d_root: entry.a3d_root,
+        });
+    }
+
+    if scenes.is_empty() {
+        return Err(io::Error::other("scene index must include at least one scene"));
+    }
+
+    Ok(scenes)
+}
+
+pub fn registry() -> Vec<SceneDescriptor> {
+    registry_from_index_path(SCENE_INDEX_ASSET).unwrap_or_else(|_| builtin_registry())
+}
+
+pub fn scene_count() -> usize {
+    registry().len()
+}
+
+pub fn scene_descriptor_at(index: usize) -> SceneDescriptor {
+    let registry = registry();
+    registry[index % registry.len()].clone()
+}
+
+pub fn scene_at(index: usize) -> Scene {
+    scene_descriptor_at(index).scene
 }
 
 #[cfg(test)]
@@ -259,15 +369,35 @@ mod tests {
     }
 
     #[test]
-    fn registry_contains_each_scene_in_all_order() {
+    fn registry_contains_dynamic_scene_index_order() {
         let registry = super::registry();
 
-        assert_eq!(registry.len(), Scene::ALL.len());
+        assert!(registry.len() >= Scene::ALL.len());
+        assert_eq!(registry[0].id, "glyph_ab");
         assert_eq!(registry[0].scene, Scene::LoadedA3d);
-        assert_eq!(registry[0].id, "loaded_a3d");
+        assert_eq!(registry[0].title, "Glyph A and B");
         assert_eq!(registry[0].index, 0);
-        assert_eq!(registry[1].scene, Scene::WorldCameraSpaces);
-        assert_eq!(registry[2].scene, Scene::PittCrew);
+        assert!(registry.iter().any(|descriptor| descriptor.id == "world_camera_spaces"));
+        assert!(registry.iter().any(|descriptor| descriptor.id == "pitt_crew"));
+    }
+
+    #[test]
+    fn scene_index_asset_loads_dynamic_scene_order() {
+        let registry = super::registry_from_index_path("assets/scenes/index.json")
+            .expect("scene index should load");
+
+        assert!(registry.len() >= Scene::ALL.len());
+        assert_eq!(registry[0].id, "glyph_ab");
+        assert_eq!(registry[0].scene, Scene::LoadedA3d);
+        assert_eq!(registry[0].a3d_root.as_deref(), Some(std::path::Path::new("assets/a3d/glyph_ab")));
+        assert_eq!(registry.last().map(|descriptor| descriptor.scene), Some(Scene::Axes));
+    }
+
+    #[test]
+    fn scene_ids_round_trip_from_index() {
+        for scene in Scene::ALL {
+            assert_eq!(Scene::from_id(scene.id()), Some(scene));
+        }
     }
 
     #[test]
