@@ -493,7 +493,7 @@ impl AppState {
             debug_console_lines: VecDeque::from([
                 "debug console attached to main workspace".to_string(),
                 "world/object debug print statements appear here".to_string(),
-                "x/X y/Y z/Z rotate; Ctrl+arrows move origin".to_string(),
+                "x/X y/Y z/Z rotate; Ctrl/Shift+arrows move origin".to_string(),
             ]),
             debug_console_scroll: 0,
             debug_console_horizontal_scroll: 0,
@@ -843,20 +843,103 @@ impl AppState {
                 }
                 XyzControlEvent::Reset => self.reset_world_axes(),
             },
-            ControlMode::Camera => {
-                self.push_debug_console_line(format!(
-                    "xyzcontrol/camera: {} binding pending",
-                    event.label()
-                ));
-                true
-            }
-            ControlMode::Light => {
-                self.push_debug_console_line(format!(
-                    "xyzcontrol/light: {} binding pending",
-                    event.label()
-                ));
-                true
-            }
+            ControlMode::Camera => match event {
+                XyzControlEvent::Rotate { axis, direction } => {
+                    let delta = self.xyz_control.rotation_delta(axis, direction);
+                    let mut handled = false;
+
+                    if delta.y != 0.0 {
+                        self.rotate_world_camera(delta.y, 0.0);
+                        handled = true;
+                    }
+
+                    if delta.x != 0.0 {
+                        self.rotate_world_camera(0.0, delta.x);
+                        handled = true;
+                    }
+
+                    if delta.z != 0.0 {
+                        self.push_debug_console_line(format!(
+                            "xyzcontrol/camera: {} roll pending",
+                            event.label()
+                        ));
+                        return true;
+                    }
+
+                    self.push_debug_console_line(format!(
+                        "xyzcontrol/camera: {} handled={handled}",
+                        event.label()
+                    ));
+                    handled
+                }
+                XyzControlEvent::MoveOrigin { axis, direction } => {
+                    let delta = self.xyz_control.origin_delta(axis, direction);
+
+                    if delta.x != 0.0 {
+                        self.move_world_camera_right(delta.x);
+                    }
+
+                    if delta.y != 0.0 {
+                        self.move_world_camera_up(delta.y);
+                    }
+
+                    if delta.z != 0.0 {
+                        self.move_world_camera_forward(-delta.z);
+                    }
+
+                    self.push_debug_console_line(format!(
+                        "xyzcontrol/camera: {} pos=[{:.2},{:.2},{:.2}]",
+                        event.label(),
+                        self.world_camera_position.x,
+                        self.world_camera_position.y,
+                        self.world_camera_position.z,
+                    ));
+                    true
+                }
+                XyzControlEvent::Reset => {
+                    self.reset_world_camera();
+                    self.push_debug_console_line("xyzcontrol/camera: reset".to_string());
+                    true
+                }
+            },
+            ControlMode::Light => match event {
+                XyzControlEvent::Rotate { .. } => {
+                    self.push_debug_console_line(format!(
+                        "xyzcontrol/light: {} rotation pending",
+                        event.label()
+                    ));
+                    true
+                }
+                XyzControlEvent::MoveOrigin { axis, direction } => {
+                    let delta = self.xyz_control.origin_delta(axis, direction);
+                    let mut handled = true;
+
+                    if delta.x != 0.0 {
+                        handled &= self.move_loaded_a3d_light_right(delta.x);
+                    }
+
+                    if delta.y != 0.0 {
+                        handled &= self.move_loaded_a3d_light_up(delta.y);
+                    }
+
+                    if delta.z != 0.0 {
+                        handled &= self.move_loaded_a3d_light_forward(-delta.z);
+                    }
+
+                    self.push_debug_console_line(format!(
+                        "xyzcontrol/light: {} handled={handled}",
+                        event.label()
+                    ));
+                    handled
+                }
+                XyzControlEvent::Reset => {
+                    let handled = self.reset_loaded_a3d_light();
+                    self.push_debug_console_line(format!(
+                        "xyzcontrol/light: reset handled={handled}"
+                    ));
+                    handled
+                }
+            },
         }
     }
 
