@@ -430,4 +430,158 @@ mod tests {
         assert!(!Scene::CameraLookAt.is_animated());
         assert!(!Scene::Axes.is_animated());
     }
+    #[test]
+    fn dynamic_scene_index_asset_exists_and_loads() {
+        let registry = super::registry_from_index_path("assets/scenes/index.json")
+            .expect("dynamic scene index should load");
+
+        assert!(!registry.is_empty());
+        assert_eq!(registry[0].id, "glyph_ab");
+        assert_eq!(registry[0].scene, Scene::LoadedA3d);
+        assert_eq!(registry[0].title, "Glyph A and B");
+        assert_eq!(
+            registry[0].a3d_root.as_deref(),
+            Some(std::path::Path::new("assets/a3d/glyph_ab"))
+        );
+    }
+
+    #[test]
+    fn dynamic_scene_index_a3d_roots_have_scene_manifests() {
+        let registry = super::registry_from_index_path("assets/scenes/index.json")
+            .expect("dynamic scene index should load");
+
+        let mut checked_roots = 0;
+
+        for descriptor in registry {
+            let Some(root) = descriptor.a3d_root else {
+                continue;
+            };
+
+            checked_roots += 1;
+            assert!(
+                root.join("scene.a3d").is_file(),
+                "dynamic scene '{}' points to missing manifest {}",
+                descriptor.id,
+                root.join("scene.a3d").display()
+            );
+        }
+
+        assert!(checked_roots > 0, "expected at least one dynamic a3d_root scene");
+    }
+
+    #[test]
+    fn dynamic_scene_index_entries_resolve_to_known_renderers() {
+        let source = std::fs::read_to_string("assets/scenes/index.json")
+            .expect("dynamic scene index should be readable");
+        let json: serde_json::Value =
+            serde_json::from_str(&source).expect("dynamic scene index should be valid JSON");
+
+        let scenes = json
+            .get("scenes")
+            .and_then(serde_json::Value::as_array)
+            .expect("scene index should contain scenes array");
+
+        assert!(!scenes.is_empty());
+
+        for entry in scenes {
+            let id = entry
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .expect("scene index entry should have id");
+
+            assert!(!id.trim().is_empty(), "scene index entry id should not be empty");
+
+            let renderer_id = entry
+                .get("scene")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(id);
+
+            assert!(
+                Scene::from_id(renderer_id).is_some(),
+                "scene index entry '{}' references unknown renderer '{}'",
+                id,
+                renderer_id
+            );
+        }
+    }
+
+    #[test]
+    fn glyph_ab_a3d_scene_references_existing_word_assets() {
+        let root = std::path::Path::new("assets/a3d/glyph_ab");
+        let manifest_path = root.join("scene.a3d");
+        let source = std::fs::read_to_string(&manifest_path)
+            .expect("glyph_ab scene manifest should be readable");
+        let json: serde_json::Value =
+            serde_json::from_str(&source).expect("glyph_ab scene manifest should be valid JSON");
+
+        let objects = json
+            .get("objects")
+            .and_then(serde_json::Value::as_array)
+            .expect("glyph_ab scene should contain objects");
+
+        let mut checked_word_assets = 0;
+
+        for object in objects {
+            let asset = object.get("asset").expect("object should have asset");
+            let asset_type = asset
+                .get("type")
+                .and_then(serde_json::Value::as_str)
+                .expect("object asset should have type");
+
+            if asset_type != "word" {
+                continue;
+            }
+
+            let relative_path = asset
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .expect("word asset should have path");
+
+            let resolved = root.join(relative_path);
+            checked_word_assets += 1;
+
+            assert!(
+                resolved.is_file(),
+                "glyph_ab references missing word asset {}",
+                resolved.display()
+            );
+        }
+
+        assert_eq!(checked_word_assets, 2, "glyph_ab should reference A and B word assets");
+    }
+
+    #[test]
+    fn single_a_and_b_word_assets_reference_existing_glyph_assets() {
+        for word_asset in [
+            "assets/words/single_a.word.json",
+            "assets/words/single_b.word.json",
+        ] {
+            let source = std::fs::read_to_string(word_asset)
+                .unwrap_or_else(|error| panic!("failed to read {word_asset}: {error}"));
+            let json: serde_json::Value =
+                serde_json::from_str(&source).expect("word asset should be valid JSON");
+
+            let children = json
+                .get("children")
+                .and_then(serde_json::Value::as_array)
+                .expect("word asset should contain children");
+
+            assert_eq!(children.len(), 1, "{word_asset} should contain one glyph child");
+
+            for child in children {
+                for key in ["glyph_asset", "metadata_asset"] {
+                    let asset_path = child
+                        .get(key)
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_else(|| panic!("{word_asset} child should have {key}"));
+
+                    assert!(
+                        std::path::Path::new(asset_path).is_file(),
+                        "{word_asset} references missing {key}: {asset_path}"
+                    );
+                }
+            }
+        }
+    }
+
 }
