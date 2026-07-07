@@ -903,12 +903,15 @@ impl AppState {
                 }
             },
             ControlMode::Light => match event {
-                XyzControlEvent::Rotate { .. } => {
+                XyzControlEvent::Rotate { axis, direction } => {
+                    let delta = self.xyz_control.rotation_delta(axis, direction);
+                    let handled = self.rotate_loaded_a3d_light_direction(delta);
+
                     self.push_debug_console_line(format!(
-                        "xyzcontrol/light: {} rotation pending",
+                        "xyzcontrol/light: {} direction handled={handled}",
                         event.label()
                     ));
-                    true
+                    handled
                 }
                 XyzControlEvent::MoveOrigin { axis, direction } => {
                     let delta = self.xyz_control.origin_delta(axis, direction);
@@ -997,9 +1000,9 @@ impl AppState {
         true
     }
 
-    fn edit_first_loaded_a3d_light_position<F>(&mut self, edit: F) -> bool
+    fn edit_first_loaded_a3d_light_vec3<F>(&mut self, key: &str, edit: F) -> bool
     where
-        F: FnOnce([f32; 3]) -> [f32; 3],
+        F: FnOnce(Vec3) -> Vec3,
     {
         self.edit_loaded_a3d_manifest(|json| {
             let Some(lights) = json
@@ -1013,45 +1016,65 @@ impl AppState {
                 return false;
             };
 
-            let Some(position) = light
-                .get_mut("position")
-                .and_then(serde_json::Value::as_array_mut)
-            else {
+            let Some(value) = light.get_mut(key).and_then(serde_json::Value::as_array_mut) else {
                 return false;
             };
 
-            if position.len() != 3 {
+            if value.len() != 3 {
                 return false;
             }
 
-            let current = [
-                position[0].as_f64().unwrap_or(0.0) as f32,
-                position[1].as_f64().unwrap_or(0.0) as f32,
-                position[2].as_f64().unwrap_or(0.0) as f32,
-            ];
+            let current = Vec3::new(
+                value[0].as_f64().unwrap_or(0.0) as f32,
+                value[1].as_f64().unwrap_or(0.0) as f32,
+                value[2].as_f64().unwrap_or(0.0) as f32,
+            );
 
             let next = edit(current);
 
-            position[0] = serde_json::json!(next[0]);
-            position[1] = serde_json::json!(next[1]);
-            position[2] = serde_json::json!(next[2]);
+            value[0] = serde_json::json!(next.x);
+            value[1] = serde_json::json!(next.y);
+            value[2] = serde_json::json!(next.z);
 
             true
         })
     }
 
+    fn edit_first_loaded_a3d_light_position<F>(&mut self, edit: F) -> bool
+    where
+        F: FnOnce(Vec3) -> Vec3,
+    {
+        self.edit_first_loaded_a3d_light_vec3("position", edit)
+    }
+
+    fn edit_first_loaded_a3d_light_direction<F>(&mut self, edit: F) -> bool
+    where
+        F: FnOnce(Vec3) -> Vec3,
+    {
+        self.edit_first_loaded_a3d_light_vec3("direction", edit)
+    }
+
+    fn rotate_loaded_a3d_light_direction(&mut self, delta: Vec3) -> bool {
+        self.edit_first_loaded_a3d_light_direction(|current| {
+            current
+                .rotate_x(delta.x.to_radians())
+                .rotate_y(delta.y.to_radians())
+                .rotate_z(delta.z.to_radians())
+        })
+    }
+
     fn move_loaded_a3d_light(&mut self, delta: Vec3) -> bool {
         self.edit_first_loaded_a3d_light_position(|current| {
-            [
-                current[0] + delta.x,
-                current[1] + delta.y,
-                current[2] + delta.z,
-            ]
+            Vec3::new(
+                current.x + delta.x,
+                current.y + delta.y,
+                current.z + delta.z,
+            )
         })
     }
 
     fn reset_loaded_a3d_light(&mut self) -> bool {
-        self.edit_first_loaded_a3d_light_position(|_| [5.0, 2.0, -2.5])
+        self.edit_first_loaded_a3d_light_position(|_| Vec3::new(5.0, 2.0, -2.5))
     }
 
     fn move_loaded_a3d_light_forward(&mut self, amount: f32) -> bool {
