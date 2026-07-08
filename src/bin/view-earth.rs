@@ -807,15 +807,177 @@ fn draw_map_overlay(
     scale: f32,
     origin: Vec3,
 ) {
+    let map_scale = scale * map_overlay.radius_scale;
+
+    // Decorative land fill first. This is intentionally not light-based;
+    // it is a sparse graphic texture inside each projected GeoJSON contour.
+    for line in &map_overlay.lines {
+        draw_lon_lat_fill(
+            frame,
+            &line.points_lon_lat,
+            rotation,
+            map_scale * 0.999,
+            origin,
+        );
+    }
+
+    // Draw the contour on top so the land edge stays crisp.
     for line in &map_overlay.lines {
         draw_lon_lat_line(
             frame,
             &line.points_lon_lat,
             line.marker,
             rotation,
-            scale * map_overlay.radius_scale,
+            map_scale,
             origin,
         );
+    }
+}
+
+fn draw_lon_lat_fill(
+    frame: &mut Frame,
+    points_lon_lat: &[(f32, f32)],
+    rotation: Mat3,
+    scale: f32,
+    origin: Vec3,
+) {
+    let polygon = projected_lon_lat_polygon(points_lon_lat, rotation, scale, origin);
+
+    if polygon.len() < 3 {
+        return;
+    }
+
+    let min_x = polygon
+        .iter()
+        .map(|point| point.0)
+        .min()
+        .unwrap_or(0)
+        .max(0);
+    let max_x = polygon
+        .iter()
+        .map(|point| point.0)
+        .max()
+        .unwrap_or(0)
+        .min(WIDTH as i32 - 1);
+    let min_y = polygon
+        .iter()
+        .map(|point| point.1)
+        .min()
+        .unwrap_or(0)
+        .max(0);
+    let max_y = polygon
+        .iter()
+        .map(|point| point.1)
+        .max()
+        .unwrap_or(0)
+        .min(HEIGHT as i32 - 1);
+
+    if min_x > max_x || min_y > max_y {
+        return;
+    }
+
+    let fill_depth = polygon
+        .iter()
+        .map(|point| point.2)
+        .fold(f32::INFINITY, f32::min);
+
+    if !fill_depth.is_finite() {
+        return;
+    }
+
+    for y in min_y..=max_y {
+        for x in min_x..=max_x {
+            if !point_in_polygon(x as f32 + 0.5, y as f32 + 0.5, &polygon) {
+                continue;
+            }
+
+            if let Some(ch) = land_fill_char(x, y) {
+                frame.set(x, y, fill_depth + 0.03, ch);
+            }
+        }
+    }
+}
+
+fn projected_lon_lat_polygon(
+    points_lon_lat: &[(f32, f32)],
+    rotation: Mat3,
+    scale: f32,
+    origin: Vec3,
+) -> Vec<(i32, i32, f32)> {
+    let mut polygon = Vec::new();
+
+    if points_lon_lat.len() < 3 {
+        return polygon;
+    }
+
+    for pair in points_lon_lat.windows(2) {
+        let (lon_a, lat_a) = pair[0];
+        let (lon_b, lat_b) = pair[1];
+        let steps = segment_steps(lon_a, lat_a, lon_b, lat_b);
+
+        for step in 0..=steps {
+            let t = step as f32 / steps as f32;
+            let lon = lerp_angle_degrees(lon_a, lon_b, t);
+            let lat = lat_a * (1.0 - t) + lat_b * t;
+
+            let local = lon_lat_to_sphere(lon, lat, 1.0);
+            let rotated = rotation.transform(local);
+
+            // Match the outline behavior: skip the far hemisphere so land
+            // texture does not bleed through the back of the globe.
+            if rotated.z > 0.10 {
+                continue;
+            }
+
+            let world = rotated.scaled(scale).translated(origin);
+
+            if let Some(projected) = project(world) {
+                if polygon
+                    .last()
+                    .map(|last: &(i32, i32, f32)| last.0 != projected.0 || last.1 != projected.1)
+                    .unwrap_or(true)
+                {
+                    polygon.push(projected);
+                }
+            }
+        }
+    }
+
+    polygon
+}
+
+fn point_in_polygon(px: f32, py: f32, polygon: &[(i32, i32, f32)]) -> bool {
+    let mut inside = false;
+    let mut previous = polygon.len() - 1;
+
+    for current in 0..polygon.len() {
+        let xi = polygon[current].0 as f32;
+        let yi = polygon[current].1 as f32;
+        let xj = polygon[previous].0 as f32;
+        let yj = polygon[previous].1 as f32;
+
+        let crosses = (yi > py) != (yj > py);
+        if crosses {
+            let x_at_y = (xj - xi) * (py - yi) / ((yj - yi).abs().max(0.0001)) + xi;
+            if px < x_at_y {
+                inside = !inside;
+            }
+        }
+
+        previous = current;
+    }
+
+    inside
+}
+
+fn land_fill_char(x: i32, y: i32) -> Option<char> {
+    // Stable pseudo-texture. Sparse by design so the sphere shade still shows.
+    let n = (x * 17 + y * 31 + x * y * 3).rem_euclid(11);
+
+    match n {
+        0 | 1 | 2 => Some('+'),
+        3 => Some(':'),
+        _ => None,
     }
 }
 
