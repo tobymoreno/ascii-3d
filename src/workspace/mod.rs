@@ -1,4 +1,5 @@
 mod event;
+pub mod gizmo;
 mod loaded_a3d;
 mod response;
 
