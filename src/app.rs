@@ -45,6 +45,7 @@ use crate::{
         render_world_camera_spaces,
     },
     tui::FilePickerView,
+    workspace::LoadedA3dWorkspace,
     xyz_control::{XyzControl, XyzControlEvent},
 };
 
@@ -450,6 +451,7 @@ struct AppState {
     loaded_a3d_debug_popup_until: Option<Instant>,
     loaded_a3d_error: Option<String>,
     a3d_file_picker: Option<A3dFilePicker>,
+    loaded_a3d_workspace: LoadedA3dWorkspace,
     show_frame_timing: bool,
     show_debug_console: bool,
     confirm_exit: bool,
@@ -485,6 +487,7 @@ impl AppState {
             loaded_a3d_debug_popup_until: None,
             loaded_a3d_error: None,
             a3d_file_picker: None,
+            loaded_a3d_workspace: LoadedA3dWorkspace::new(),
             show_frame_timing: false,
             show_debug_console: false,
             confirm_exit: false,
