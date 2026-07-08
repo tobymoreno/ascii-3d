@@ -1,0 +1,802 @@
+{
+  "type": "FeatureCollection",
+  "name": "basic_world_outlines",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "north_america_basic",
+        "marker": "N",
+        "description": "Very simplified North America outline for ASCII globe overlay."
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -168,
+              71
+            ],
+            [
+              -150,
+              70
+            ],
+            [
+              -135,
+              60
+            ],
+            [
+              -125,
+              50
+            ],
+            [
+              -124,
+              40
+            ],
+            [
+              -117,
+              32
+            ],
+            [
+              -105,
+              23
+            ],
+            [
+              -97,
+              18
+            ],
+            [
+              -88,
+              21
+            ],
+            [
+              -81,
+              25
+            ],
+            [
+              -75,
+              36
+            ],
+            [
+              -66,
+              45
+            ],
+            [
+              -60,
+              53
+            ],
+            [
+              -75,
+              60
+            ],
+            [
+              -95,
+              65
+            ],
+            [
+              -120,
+              70
+            ],
+            [
+              -145,
+              72
+            ],
+            [
+              -168,
+              71
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "europe_basic",
+        "marker": "E",
+        "description": "Very simplified Europe outline for ASCII globe overlay."
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -10,
+              72
+            ],
+            [
+              10,
+              70
+            ],
+            [
+              30,
+              66
+            ],
+            [
+              40,
+              58
+            ],
+            [
+              32,
+              45
+            ],
+            [
+              20,
+              36
+            ],
+            [
+              5,
+              36
+            ],
+            [
+              -6,
+              43
+            ],
+            [
+              -10,
+              52
+            ],
+            [
+              -20,
+              58
+            ],
+            [
+              -10,
+              72
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "asia_basic",
+        "marker": "A",
+        "description": "Very simplified Asia outline for ASCII globe overlay."
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              35,
+              72
+            ],
+            [
+              65,
+              72
+            ],
+            [
+              100,
+              70
+            ],
+            [
+              135,
+              62
+            ],
+            [
+              150,
+              50
+            ],
+            [
+              140,
+              35
+            ],
+            [
+              120,
+              22
+            ],
+            [
+              105,
+              10
+            ],
+            [
+              95,
+              0
+            ],
+            [
+              78,
+              8
+            ],
+            [
+              68,
+              24
+            ],
+            [
+              50,
+              30
+            ],
+            [
+              38,
+              42
+            ],
+            [
+              30,
+              55
+            ],
+            [
+              35,
+              72
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "india_basic",
+        "marker": "I",
+        "description": "Very simplified India outline for ASCII globe overlay."
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              68,
+              23
+            ],
+            [
+              70,
+              18
+            ],
+            [
+              72,
+              10
+            ],
+            [
+              76,
+              7
+            ],
+            [
+              80,
+              8
+            ],
+            [
+              84,
+              14
+            ],
+            [
+              87,
+              20
+            ],
+            [
+              90,
+              24
+            ],
+            [
+              88,
+              27
+            ],
+            [
+              82,
+              30
+            ],
+            [
+              76,
+              31
+            ],
+            [
+              71,
+              28
+            ],
+            [
+              68,
+              23
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "australia_basic",
+        "marker": "O",
+        "description": "Very simplified Australia outline for ASCII globe overlay."
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              113,
+              -22
+            ],
+            [
+              115,
+              -34
+            ],
+            [
+              124,
+              -38
+            ],
+            [
+              136,
+              -39
+            ],
+            [
+              147,
+              -35
+            ],
+            [
+              153,
+              -28
+            ],
+            [
+              152,
+              -18
+            ],
+            [
+              145,
+              -12
+            ],
+            [
+              134,
+              -11
+            ],
+            [
+              123,
+              -15
+            ],
+            [
+              113,
+              -22
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "north_pole_cap_basic",
+        "marker": "*",
+        "description": "Very simplified Arctic/polar cap outline for ASCII globe overlay."
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -180,
+              78
+            ],
+            [
+              -120,
+              84
+            ],
+            [
+              -60,
+              86
+            ],
+            [
+              0,
+              88
+            ],
+            [
+              60,
+              86
+            ],
+            [
+              120,
+              84
+            ],
+            [
+              180,
+              78
+            ],
+            [
+              -180,
+              78
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "south_pole_cap_basic",
+        "marker": "*",
+        "description": "Very simplified Antarctic/polar cap outline for ASCII globe overlay."
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -180,
+              -78
+            ],
+            [
+              -120,
+              -84
+            ],
+            [
+              -60,
+              -86
+            ],
+            [
+              0,
+              -88
+            ],
+            [
+              60,
+              -86
+            ],
+            [
+              120,
+              -84
+            ],
+            [
+              180,
+              -78
+            ],
+            [
+              -180,
+              -78
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "south_america_basic",
+        "marker": "S",
+        "description": "Very simplified South America outline for ASCII globe overlay."
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -81,
+              12
+            ],
+            [
+              -77,
+              6
+            ],
+            [
+              -74,
+              -2
+            ],
+            [
+              -72,
+              -10
+            ],
+            [
+              -70,
+              -18
+            ],
+            [
+              -67,
+              -26
+            ],
+            [
+              -64,
+              -34
+            ],
+            [
+              -62,
+              -42
+            ],
+            [
+              -58,
+              -50
+            ],
+            [
+              -52,
+              -54
+            ],
+            [
+              -47,
+              -49
+            ],
+            [
+              -44,
+              -38
+            ],
+            [
+              -42,
+              -24
+            ],
+            [
+              -40,
+              -12
+            ],
+            [
+              -38,
+              -3
+            ],
+            [
+              -42,
+              2
+            ],
+            [
+              -50,
+              6
+            ],
+            [
+              -60,
+              9
+            ],
+            [
+              -70,
+              11
+            ],
+            [
+              -81,
+              12
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "africa_basic",
+        "marker": "F",
+        "description": "Very simplified Africa outline for ASCII globe overlay."
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -17,
+              37
+            ],
+            [
+              -5,
+              35
+            ],
+            [
+              8,
+              37
+            ],
+            [
+              20,
+              33
+            ],
+            [
+              31,
+              30
+            ],
+            [
+              40,
+              20
+            ],
+            [
+              44,
+              10
+            ],
+            [
+              48,
+              -5
+            ],
+            [
+              43,
+              -18
+            ],
+            [
+              34,
+              -29
+            ],
+            [
+              24,
+              -34
+            ],
+            [
+              14,
+              -35
+            ],
+            [
+              5,
+              -30
+            ],
+            [
+              -2,
+              -20
+            ],
+            [
+              -8,
+              -6
+            ],
+            [
+              -13,
+              8
+            ],
+            [
+              -16,
+              20
+            ],
+            [
+              -17,
+              37
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "greenland_basic",
+        "marker": "G",
+        "description": "Very simplified Greenland outline for ASCII globe overlay."
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -74,
+              59
+            ],
+            [
+              -62,
+              66
+            ],
+            [
+              -52,
+              72
+            ],
+            [
+              -42,
+              78
+            ],
+            [
+              -30,
+              82
+            ],
+            [
+              -22,
+              78
+            ],
+            [
+              -24,
+              70
+            ],
+            [
+              -34,
+              63
+            ],
+            [
+              -46,
+              60
+            ],
+            [
+              -58,
+              58
+            ],
+            [
+              -74,
+              59
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "philippines_basic",
+        "marker": "P",
+        "description": "Very simplified Philippines island chain for ASCII globe overlay."
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              120,
+              18
+            ],
+            [
+              121,
+              16
+            ],
+            [
+              122,
+              14
+            ],
+            [
+              123,
+              12
+            ],
+            [
+              124,
+              10
+            ],
+            [
+              125,
+              8
+            ],
+            [
+              124,
+              6
+            ],
+            [
+              123,
+              8
+            ],
+            [
+              122,
+              10
+            ],
+            [
+              121,
+              12
+            ],
+            [
+              120,
+              15
+            ],
+            [
+              120,
+              18
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "hawaii_basic",
+        "marker": "H",
+        "description": "Very simplified Hawaii island chain for ASCII globe overlay."
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -161,
+              22
+            ],
+            [
+              -159,
+              22
+            ],
+            [
+              -157,
+              21
+            ],
+            [
+              -155,
+              20
+            ],
+            [
+              -154,
+              19
+            ],
+            [
+              -156,
+              19
+            ],
+            [
+              -158,
+              20
+            ],
+            [
+              -160,
+              21
+            ],
+            [
+              -161,
+              22
+            ]
+          ]
+        ]
+      }
+    }
+  ]
+}
