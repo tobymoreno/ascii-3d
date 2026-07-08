@@ -610,7 +610,7 @@ fn draw_quad_scene(frame: &mut Frame, scene: &MultiQuadScene, state: &ViewerStat
     frame.draw_text(
         2,
         HEIGHT - 2,
-        "controls: a axes | arrows move origin | PgUp/PgDn z-origin | +/- zoom | x/y/z rotate | 0 origin | r reset | q quit",
+        "controls: a axes on | A axes off | arrows origin | PgUp/PgDn z | +/- zoom | x/y/z rotate | 0 origin | r reset | q quit",
     );
 }
 
@@ -673,7 +673,8 @@ fn run_viewer(scene: MultiQuadScene) -> io::Result<()> {
                     KeyCode::Char('Y') => state.rotation_y_degrees -= 2.0,
                     KeyCode::Char('z') => state.rotation_z_degrees += 2.0,
                     KeyCode::Char('Z') => state.rotation_z_degrees -= 2.0,
-                    KeyCode::Char('a') => state.show_axes = !state.show_axes,
+                    KeyCode::Char('a') => state.show_axes = true,
+                    KeyCode::Char('A') => state.show_axes = false,
                     KeyCode::Char('+') | KeyCode::Char('=') => state.zoom *= 1.1,
                     KeyCode::Char('-') | KeyCode::Char('_') => state.zoom /= 1.1,
                     KeyCode::Left => state.origin_x -= 0.5,
