@@ -5,6 +5,7 @@ pub struct RenderScene {
     pub lighting: Option<RenderLighting>,
     pub objects: Vec<RenderObject>,
     pub overlays: Vec<RenderOverlay>,
+    pub groups: Vec<RenderGroup>,
     pub cameras: Vec<RenderCamera>,
     pub active_camera_id: Option<String>,
 }
@@ -17,6 +18,7 @@ impl RenderScene {
             lighting: None,
             objects: Vec::new(),
             overlays: Vec::new(),
+            groups: Vec::new(),
             cameras: Vec::new(),
             active_camera_id: None,
         }
@@ -227,5 +229,31 @@ mod scene_graph_behavior_tests {
         assert_eq!(spin.axis, RenderAxis::Y);
         assert_eq!(spin.degrees_per_second, 15.0);
         assert!(spin.enabled);
+    }
+}
+
+#[cfg(test)]
+mod render_scene_group_tests {
+    use super::{RenderDisplay, RenderGroup, RenderScene};
+
+    #[test]
+    fn render_scene_starts_with_empty_groups() {
+        let scene = RenderScene::new("test", RenderDisplay { world_scale: 1.0 });
+
+        assert_eq!(scene.name, "test");
+        assert!(scene.objects.is_empty());
+        assert!(scene.overlays.is_empty());
+        assert!(scene.groups.is_empty());
+    }
+
+    #[test]
+    fn render_scene_can_store_root_group() {
+        let mut scene = RenderScene::new("test", RenderDisplay { world_scale: 1.0 });
+
+        scene.groups.push(RenderGroup::new("root", "Root"));
+
+        assert_eq!(scene.groups.len(), 1);
+        assert_eq!(scene.groups[0].id, "root");
+        assert_eq!(scene.groups[0].name, "Root");
     }
 }
