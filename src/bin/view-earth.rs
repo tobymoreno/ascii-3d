@@ -1,4 +1,4 @@
-use ascii_3d::render::Frame;
+use ascii_3d::render::{Frame, Projection};
 use crossterm::{
     cursor,
     event::{self, Event, KeyCode, KeyModifiers},
@@ -11,13 +11,11 @@ use std::{
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
-    sync::OnceLock,
     time::{Duration, Instant},
 };
 
 const WIDTH: usize = 100;
 const HEIGHT: usize = 38;
-const DEFAULT_CELL_ASPECT_RATIO: f32 = 0.5;
 const SHADE_RAMP: &[u8] = b" .:-=+*#%@";
 
 #[derive(Debug, Deserialize)]
@@ -531,7 +529,7 @@ fn draw_earth(frame: &mut Frame, scene: &EarthScene, mesh: &Mesh, state: &Viewer
             state.origin_y,
             state.origin_z,
             state.zoom,
-            terminal_cell_aspect_ratio(),
+            Projection::terminal_cell_aspect_ratio(),
             if state.show_axes { "on" } else { "off" },
             if state.show_guides { "on" } else { "off" },
             if state.spin { "on" } else { "off" },
@@ -567,44 +565,8 @@ impl Scaled for Vec3 {
     }
 }
 
-fn terminal_cell_aspect_ratio() -> f32 {
-    static CELL_ASPECT_RATIO: OnceLock<f32> = OnceLock::new();
-
-    *CELL_ASPECT_RATIO.get_or_init(|| match terminal::window_size() {
-        Ok(size) if size.width > 0 && size.height > 0 && size.columns > 0 && size.rows > 0 => {
-            let cell_width = size.width as f32 / size.columns as f32;
-            let cell_height = size.height as f32 / size.rows as f32;
-
-            (cell_width / cell_height).clamp(0.25, 2.0)
-        }
-        _ => DEFAULT_CELL_ASPECT_RATIO,
-    })
-}
-
 fn project(point: Vec3) -> Option<(i32, i32, f32)> {
-    let camera_distance = 34.0;
-    let near_clip = 1.0;
-    let depth = camera_distance + point.z;
-
-    if !point.x.is_finite() || !point.y.is_finite() || !point.z.is_finite() || depth <= near_clip {
-        return None;
-    }
-
-    let perspective = camera_distance / depth;
-
-    if !perspective.is_finite() {
-        return None;
-    }
-
-    let aspect_correction = 1.0 / terminal_cell_aspect_ratio();
-    let x = point.x * perspective * aspect_correction + WIDTH as f32 * 0.5;
-    let y = HEIGHT as f32 * 0.54 - point.y * perspective;
-
-    if !x.is_finite() || !y.is_finite() {
-        return None;
-    }
-
-    Some((x.round() as i32, y.round() as i32, depth))
+    Projection::terminal(WIDTH, HEIGHT).project_xyz(point.x, point.y, point.z)
 }
 
 fn fill_triangle(
