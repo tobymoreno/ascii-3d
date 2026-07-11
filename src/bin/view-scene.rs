@@ -1,6 +1,7 @@
 use ascii_3d::{
     render::{draw_line_overlay, Frame, Projection, RenderObject, RenderQuad, RenderScene},
     scene::{load_scene_document, scene_document_to_render_scene},
+    viewer::ViewerState,
 };
 use crossterm::{
     cursor,
@@ -133,35 +134,6 @@ impl std::ops::Mul for Mat4 {
     }
 }
 
-struct ViewerState {
-    rotation_x_degrees: f32,
-    rotation_y_degrees: f32,
-    rotation_z_degrees: f32,
-    origin_x: f32,
-    origin_y: f32,
-    origin_z: f32,
-    zoom: f32,
-    show_axes: bool,
-    fps: f32,
-    frame_time_ms: f32,
-}
-
-impl Default for ViewerState {
-    fn default() -> Self {
-        Self {
-            rotation_x_degrees: 0.0,
-            rotation_y_degrees: 0.0,
-            rotation_z_degrees: 0.0,
-            origin_x: 0.0,
-            origin_y: 0.0,
-            origin_z: 0.0,
-            zoom: 1.0,
-            show_axes: false,
-            fps: 0.0,
-            frame_time_ms: 0.0,
-        }
-    }
-}
 fn validate_scene(scene: &RenderScene) -> io::Result<()> {
     if scene.name.trim().is_empty() {
         return Err(io::Error::new(
