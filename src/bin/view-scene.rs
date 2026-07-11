@@ -1,7 +1,7 @@
 use ascii_3d::{
     render::{
-        draw_line_overlay, Frame, Projection, RenderNode, RenderObject, RenderQuad,
-        RenderQuadGroup, RenderScene,
+        apply_render_behaviors_to_scene, draw_line_overlay, Frame, Projection, RenderNode,
+        RenderObject, RenderQuad, RenderQuadGroup, RenderScene,
     },
     scene::{load_scene_document, scene_document_to_render_scene},
     viewer::{handle_key, ViewerInput, ViewerState},
@@ -492,7 +492,7 @@ impl Drop for TerminalGuard {
     }
 }
 
-fn run_viewer(scene: RenderScene) -> io::Result<()> {
+fn run_viewer(mut scene: RenderScene) -> io::Result<()> {
     let _guard = TerminalGuard::enter()?;
     let mut stdout = io::stdout();
     let mut state = ViewerState::default();
@@ -508,6 +508,8 @@ fn run_viewer(scene: RenderScene) -> io::Result<()> {
         let frame_start = Instant::now();
         let delta = frame_start.duration_since(previous_frame_start);
         previous_frame_start = frame_start;
+
+        apply_render_behaviors_to_scene(&mut scene, delta.as_secs_f32());
 
         state.frame_time_ms = delta.as_secs_f32() * 1000.0;
         state.fps = if delta.as_secs_f32() > 0.0 {
