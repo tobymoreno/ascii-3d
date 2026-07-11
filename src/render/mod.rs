@@ -10,8 +10,9 @@ pub use lines::draw_line_overlay;
 
 mod model;
 
-pub use model::{RenderSpinBehavior, RenderObjectNode, RenderNode, RenderGroup, RenderBehavior, RenderAxis, 
-    RenderCamera, RenderDisplay, RenderGeoJsonMapOverlay, RenderLighting,
-    RenderMeshObject, RenderObject, RenderOverlay, RenderProjectionConfig,
-    RenderQuad, RenderQuadGroup, RenderScene, RenderTextOverlay, RenderTransform,
+pub use model::{
+    RenderAxis, RenderBehavior, RenderCamera, RenderDisplay, RenderGeoJsonMapOverlay, RenderGroup,
+    RenderLighting, RenderMeshObject, RenderNode, RenderObject, RenderObjectNode, RenderOverlay,
+    RenderProjectionConfig, RenderQuad, RenderQuadGroup, RenderScene, RenderSpinBehavior,
+    RenderTextOverlay, RenderTransform,
 };
