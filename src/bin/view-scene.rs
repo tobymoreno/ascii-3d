@@ -244,9 +244,17 @@ fn shade_char(color: Option<&str>, marker: char) -> char {
     }
 }
 
-fn screen_project(point: Vec3) -> Option<(i32, i32, f32)> {
-    Projection::terminal_with_camera(WIDTH, HEIGHT, 8.0, 0.25, 0.52)
-        .project_xyz(point.x, point.y, point.z)
+fn screen_project(scene: &RenderScene, point: Vec3) -> Option<(i32, i32, f32)> {
+    let camera = scene.active_camera()?;
+
+    Projection::terminal_with_camera(
+        WIDTH,
+        HEIGHT,
+        camera.projection.camera_distance,
+        camera.projection.near_clip,
+        camera.projection.vertical_center_ratio,
+    )
+    .project_xyz(point.x, point.y, point.z)
 }
 
 
@@ -329,20 +337,20 @@ fn draw_line(frame: &mut Frame, a: (i32, i32, f32), b: (i32, i32, f32), ch: char
 }
 
 
-fn draw_axes(frame: &mut Frame, world: Mat4) {
-    let Some(origin) = screen_project(world.transform_point(Vec3::new(0.0, 0.0, 0.0))) else {
+fn draw_axes(frame: &mut Frame, scene: &RenderScene, world: Mat4) {
+    let Some(origin) = screen_project(scene, world.transform_point(Vec3::new(0.0, 0.0, 0.0))) else {
         return;
     };
 
-    if let Some(x) = screen_project(world.transform_point(Vec3::new(2.0, 0.0, 0.0))) {
+    if let Some(x) = screen_project(scene, world.transform_point(Vec3::new(2.0, 0.0, 0.0))) {
         draw_line_overlay(frame, origin, x, 'x');
     }
 
-    if let Some(y) = screen_project(world.transform_point(Vec3::new(0.0, 2.0, 0.0))) {
+    if let Some(y) = screen_project(scene, world.transform_point(Vec3::new(0.0, 2.0, 0.0))) {
         draw_line_overlay(frame, origin, y, 'y');
     }
 
-    if let Some(z) = screen_project(world.transform_point(Vec3::new(0.0, 0.0, 2.0))) {
+    if let Some(z) = screen_project(scene, world.transform_point(Vec3::new(0.0, 0.0, 2.0))) {
         draw_line_overlay(frame, origin, z, 'z');
     }
 }
@@ -396,7 +404,7 @@ fn draw_quad_scene(frame: &mut Frame, scene: &RenderScene, state: &ViewerState) 
 
     for quad in &quad_group.quads {
         let world = quad_matrix(scene, quad, state);
-        let projected = local_corners.map(|corner| screen_project(world.transform_point(corner)));
+        let projected = local_corners.map(|corner| screen_project(scene, world.transform_point(corner)));
 
         let Some(p0) = projected[0] else { continue };
         let Some(p1) = projected[1] else { continue };
@@ -415,7 +423,7 @@ fn draw_quad_scene(frame: &mut Frame, scene: &RenderScene, state: &ViewerState) 
     }
 
     if state.show_axes {
-        draw_axes(frame, root);
+        draw_axes(frame, scene, root);
     }
 
     frame.draw_text(
