@@ -92,6 +92,30 @@ impl RenderSpinBehavior {
     }
 }
 
+pub fn apply_render_behaviors_to_group(group: &mut RenderGroup, elapsed_seconds: f32) {
+    if !elapsed_seconds.is_finite() {
+        return;
+    }
+
+    for behavior in &group.behaviors {
+        match behavior {
+            RenderBehavior::Spin(spin) => {
+                if !spin.enabled || !spin.degrees_per_second.is_finite() {
+                    continue;
+                }
+
+                let delta_degrees = spin.degrees_per_second * elapsed_seconds;
+
+                match spin.axis {
+                    RenderAxis::X => group.transform.rotation_degrees[0] += delta_degrees,
+                    RenderAxis::Y => group.transform.rotation_degrees[1] += delta_degrees,
+                    RenderAxis::Z => group.transform.rotation_degrees[2] += delta_degrees,
+                }
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct RenderGroup {
     pub id: String,
@@ -257,3 +281,58 @@ mod render_scene_group_tests {
         assert_eq!(scene.groups[0].name, "Root");
     }
 }
+
+#[cfg(test)]
+mod render_behavior_apply_tests {
+    use super::{
+        apply_render_behaviors_to_group, RenderAxis, RenderBehavior, RenderGroup,
+        RenderSpinBehavior,
+    };
+
+    #[test]
+    fn spin_behavior_rotates_group_around_y_axis() {
+        let mut earth = RenderGroup::new("earth", "Earth");
+
+        earth
+            .behaviors
+            .push(RenderBehavior::Spin(RenderSpinBehavior::new(
+                RenderAxis::Y,
+                15.0,
+            )));
+
+        apply_render_behaviors_to_group(&mut earth, 2.0);
+
+        assert_eq!(earth.transform.rotation_degrees, [0.0, 30.0, 0.0]);
+    }
+
+    #[test]
+    fn disabled_spin_behavior_does_not_change_transform() {
+        let mut earth = RenderGroup::new("earth", "Earth");
+
+        let mut spin = RenderSpinBehavior::new(RenderAxis::Y, 15.0);
+        spin.enabled = false;
+
+        earth.behaviors.push(RenderBehavior::Spin(spin));
+
+        apply_render_behaviors_to_group(&mut earth, 2.0);
+
+        assert_eq!(earth.transform.rotation_degrees, [0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn non_finite_elapsed_time_is_ignored() {
+        let mut earth = RenderGroup::new("earth", "Earth");
+
+        earth
+            .behaviors
+            .push(RenderBehavior::Spin(RenderSpinBehavior::new(
+                RenderAxis::Y,
+                15.0,
+            )));
+
+        apply_render_behaviors_to_group(&mut earth, f32::NAN);
+
+        assert_eq!(earth.transform.rotation_degrees, [0.0, 0.0, 0.0]);
+    }
+}
+
