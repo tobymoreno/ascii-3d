@@ -7,3 +7,11 @@ pub use projection::Projection;
 mod lines;
 
 pub use lines::draw_line_overlay;
+
+mod model;
+
+pub use model::{
+    RenderDisplay, RenderGeoJsonMapOverlay, RenderLighting, RenderMeshObject,
+    RenderObject, RenderOverlay, RenderQuad, RenderQuadGroup, RenderScene,
+    RenderTextOverlay, RenderTransform,
+};
