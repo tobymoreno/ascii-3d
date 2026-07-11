@@ -1,11 +1,11 @@
 use ascii_3d::{
     render::{draw_line_overlay, Frame, Projection, RenderObject, RenderQuad, RenderScene},
     scene::{load_scene_document, scene_document_to_render_scene},
-    viewer::ViewerState,
+    viewer::{handle_key, ViewerInput, ViewerState},
 };
 use crossterm::{
     cursor,
-    event::{self, Event, KeyCode},
+    event::{self, Event},
     execute, terminal,
 };
 use std::{
@@ -487,31 +487,8 @@ fn run_viewer(scene: RenderScene) -> io::Result<()> {
 
         while event::poll(Duration::from_millis(0))? {
             if let Event::Key(key) = event::read()? {
-                match key.code {
-                    KeyCode::Esc | KeyCode::Char('q') => return Ok(()),
-                    KeyCode::Char('x') => state.rotation_x_degrees += 2.0,
-                    KeyCode::Char('X') => state.rotation_x_degrees -= 2.0,
-                    KeyCode::Char('y') => state.rotation_y_degrees += 2.0,
-                    KeyCode::Char('Y') => state.rotation_y_degrees -= 2.0,
-                    KeyCode::Char('z') => state.rotation_z_degrees += 2.0,
-                    KeyCode::Char('Z') => state.rotation_z_degrees -= 2.0,
-                    KeyCode::Char('a') => state.show_axes = true,
-                    KeyCode::Char('A') => state.show_axes = false,
-                    KeyCode::Char('+') | KeyCode::Char('=') => state.zoom *= 1.1,
-                    KeyCode::Char('-') | KeyCode::Char('_') => state.zoom /= 1.1,
-                    KeyCode::Left => state.origin_x -= 0.5,
-                    KeyCode::Right => state.origin_x += 0.5,
-                    KeyCode::Up => state.origin_y += 0.5,
-                    KeyCode::Down => state.origin_y -= 0.5,
-                    KeyCode::PageUp => state.origin_z += 0.5,
-                    KeyCode::PageDown => state.origin_z -= 0.5,
-                    KeyCode::Char('0') => {
-                        state.origin_x = 0.0;
-                        state.origin_y = 0.0;
-                        state.origin_z = 0.0;
-                    }
-                    KeyCode::Char('r') => state = ViewerState::default(),
-                    _ => {}
+                if handle_key(key.code, &mut state) == ViewerInput::Quit {
+                    return Ok(());
                 }
             }
         }
