@@ -1,4 +1,4 @@
-use ascii_3d::render::Frame;
+use ascii_3d::render::{draw_line_overlay, Frame, Projection};
 use crossterm::{
     cursor,
     event::{self, Event, KeyCode},
@@ -275,30 +275,10 @@ fn shade_char(color: Option<&str>, marker: char) -> char {
 }
 
 fn screen_project(point: Vec3) -> Option<(i32, i32, f32)> {
-    let camera_distance = 8.0;
-    let near_clip = 0.25;
-    let depth = camera_distance + point.z;
-
-    if !point.x.is_finite() || !point.y.is_finite() || !point.z.is_finite() || depth <= near_clip {
-        return None;
-    }
-
-    let perspective = camera_distance / depth;
-
-    if !perspective.is_finite() {
-        return None;
-    }
-
-    let aspect_correction = 2.0;
-    let x = point.x * perspective * aspect_correction + WIDTH as f32 * 0.5;
-    let y = HEIGHT as f32 * 0.52 - point.y * perspective;
-
-    if !x.is_finite() || !y.is_finite() {
-        return None;
-    }
-
-    Some((x.round() as i32, y.round() as i32, point.z))
+    Projection::terminal_with_camera(WIDTH, HEIGHT, 8.0, 0.25, 0.52)
+        .project_xyz(point.x, point.y, point.z)
 }
+
 
 fn edge(a: (f32, f32), b: (f32, f32), p: (f32, f32)) -> f32 {
     (p.0 - a.0) * (b.1 - a.1) - (p.1 - a.1) * (b.0 - a.0)
@@ -375,36 +355,6 @@ fn draw_line(frame: &mut Frame, a: (i32, i32, f32), b: (i32, i32, f32), ch: char
         }
 
         step += 1.0;
-    }
-}
-
-fn draw_line_overlay(frame: &mut Frame, a: (i32, i32, f32), b: (i32, i32, f32), ch: char) {
-    let dx = (b.0 - a.0).abs();
-    let dy = -(b.1 - a.1).abs();
-    let sx = if a.0 < b.0 { 1 } else { -1 };
-    let sy = if a.1 < b.1 { 1 } else { -1 };
-    let mut err = dx + dy;
-    let mut x = a.0;
-    let mut y = a.1;
-
-    loop {
-        frame.set_overlay(x, y, ch);
-
-        if x == b.0 && y == b.1 {
-            break;
-        }
-
-        let e2 = 2 * err;
-
-        if e2 >= dy {
-            err += dy;
-            x += sx;
-        }
-
-        if e2 <= dx {
-            err += dx;
-            y += sy;
-        }
     }
 }
 

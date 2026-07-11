@@ -10,16 +10,28 @@ pub struct Projection {
     camera_distance: f32,
     near_clip: f32,
     cell_aspect_ratio: f32,
+    vertical_center_ratio: f32,
 }
 
 impl Projection {
     pub fn terminal(width: usize, height: usize) -> Self {
+        Self::terminal_with_camera(width, height, 34.0, 1.0, 0.54)
+    }
+
+    pub fn terminal_with_camera(
+        width: usize,
+        height: usize,
+        camera_distance: f32,
+        near_clip: f32,
+        vertical_center_ratio: f32,
+    ) -> Self {
         Self {
             width,
             height,
-            camera_distance: 34.0,
-            near_clip: 1.0,
+            camera_distance,
+            near_clip,
             cell_aspect_ratio: terminal_cell_aspect_ratio(),
+            vertical_center_ratio,
         }
     }
 
@@ -42,7 +54,7 @@ impl Projection {
 
         let aspect_correction = 1.0 / self.cell_aspect_ratio;
         let screen_x = x * perspective * aspect_correction + self.width as f32 * 0.5;
-        let screen_y = self.height as f32 * 0.54 - y * perspective;
+        let screen_y = self.height as f32 * self.vertical_center_ratio - y * perspective;
 
         if !screen_x.is_finite() || !screen_y.is_finite() {
             return None;
