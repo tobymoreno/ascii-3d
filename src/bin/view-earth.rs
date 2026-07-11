@@ -1,4 +1,4 @@
-use ascii_3d::render::{Frame, Projection};
+use ascii_3d::render::{draw_line_overlay, Frame, Projection};
 use crossterm::{
     cursor,
     event::{self, Event, KeyCode, KeyModifiers},
@@ -980,36 +980,6 @@ fn draw_axes(frame: &mut Frame, rotation: Mat3, scale: f32, origin_offset: Vec3)
 
     if let Some(z) = z {
         draw_line_overlay(frame, origin, z, 'z');
-    }
-}
-
-fn draw_line_overlay(frame: &mut Frame, a: (i32, i32, f32), b: (i32, i32, f32), ch: char) {
-    let dx = (b.0 - a.0).abs();
-    let dy = -(b.1 - a.1).abs();
-    let sx = if a.0 < b.0 { 1 } else { -1 };
-    let sy = if a.1 < b.1 { 1 } else { -1 };
-    let mut err = dx + dy;
-    let mut x = a.0;
-    let mut y = a.1;
-
-    loop {
-        frame.set_overlay(x, y, ch);
-
-        if x == b.0 && y == b.1 {
-            break;
-        }
-
-        let e2 = 2 * err;
-
-        if e2 >= dy {
-            err += dy;
-            x += sx;
-        }
-
-        if e2 <= dx {
-            err += dx;
-            y += sy;
-        }
     }
 }
 
