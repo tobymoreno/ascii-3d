@@ -1,5 +1,8 @@
 use ascii_3d::{
-    render::{draw_line_overlay, Frame, Projection, RenderObject, RenderQuad, RenderScene},
+    render::{
+        draw_line_overlay, Frame, Projection, RenderNode, RenderObject, RenderQuad,
+        RenderQuadGroup, RenderScene,
+    },
     scene::{load_scene_document, scene_document_to_render_scene},
     viewer::{handle_key, ViewerInput, ViewerState},
 };
@@ -327,6 +330,44 @@ fn draw_axes(frame: &mut Frame, scene: &RenderScene, world: Mat4) {
     }
 }
 
+
+fn find_quad_group_in_nodes<'a>(nodes: &'a [RenderNode]) -> Option<&'a RenderQuadGroup> {
+    for node in nodes {
+        match node {
+            RenderNode::Group(group) => {
+                if let Some(quad_group) = find_quad_group_in_nodes(&group.children) {
+                    return Some(quad_group);
+                }
+            }
+            RenderNode::Object(object_node) => {
+                if !object_node.visible {
+                    continue;
+                }
+
+                if let RenderObject::QuadGroup(group) = &object_node.object {
+                    return Some(group);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn find_quad_group(scene: &RenderScene) -> Option<&RenderQuadGroup> {
+    scene
+        .groups
+        .iter()
+        .filter(|group| group.visible)
+        .find_map(|group| find_quad_group_in_nodes(&group.children))
+        .or_else(|| {
+            scene.objects.iter().find_map(|object| match object {
+                RenderObject::QuadGroup(group) => Some(group),
+                _ => None,
+            })
+        })
+}
+
 fn quad_matrix(scene: &RenderScene, quad: &RenderQuad, state: &ViewerState) -> Mat4 {
     let root = Mat4::translation(Vec3::new(state.origin_x, state.origin_y, state.origin_z))
         * Mat4::rotation_x(state.rotation_x_degrees.to_radians())
@@ -349,10 +390,7 @@ fn quad_matrix(scene: &RenderScene, quad: &RenderQuad, state: &ViewerState) -> M
 fn draw_quad_scene(frame: &mut Frame, scene: &RenderScene, state: &ViewerState) {
     frame.clear();
 
-    let Some(quad_group) = scene.objects.iter().find_map(|object| match object {
-        RenderObject::QuadGroup(group) => Some(group),
-        _ => None,
-    }) else {
+    let Some(quad_group) = find_quad_group(scene) else {
         frame.draw_text(2, 1, &format!("view-scene: {} | no quad group", scene.name));
         return;
     };
@@ -402,9 +440,10 @@ fn draw_quad_scene(frame: &mut Frame, scene: &RenderScene, state: &ViewerState) 
         2,
         1,
         &format!(
-            "view-scene: {} | quads={} | objects={}",
+            "view-scene: {} | quads={} | groups={} | objects={}",
             scene.name,
             quad_group.quads.len(),
+            scene.groups.len(),
             scene.objects.len()
         ),
     );
