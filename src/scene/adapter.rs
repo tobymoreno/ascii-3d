@@ -1,8 +1,8 @@
 use super::SceneDocument;
 use crate::render::{
-    RenderCamera, RenderDisplay, RenderGeoJsonMapOverlay, RenderLighting, RenderObject,
-    RenderOverlay, RenderProjectionConfig, RenderQuad, RenderQuadGroup, RenderScene,
-    RenderTransform,
+    RenderCamera, RenderDisplay, RenderGeoJsonMapOverlay, RenderGroup, RenderLighting,
+    RenderNode, RenderObject, RenderObjectNode, RenderOverlay, RenderProjectionConfig,
+    RenderQuad, RenderQuadGroup, RenderScene, RenderTransform,
 };
 
 const DEFAULT_CAMERA_ID: &str = "default";
@@ -34,8 +34,10 @@ pub fn scene_document_to_render_scene(document: SceneDocument) -> RenderScene {
         primary_light_direction: lighting.primary_light_direction,
     });
 
+    let mut root_group = RenderGroup::new("root", "Root");
+
     if !document.quads.is_empty() {
-        scene.objects.push(RenderObject::QuadGroup(RenderQuadGroup {
+        let quad_group = RenderQuadGroup {
             quads: document
                 .quads
                 .into_iter()
@@ -49,8 +51,18 @@ pub fn scene_document_to_render_scene(document: SceneDocument) -> RenderScene {
                 })
                 .collect(),
             transform: RenderTransform::default(),
-        }));
+        };
+
+        scene.objects.push(RenderObject::QuadGroup(quad_group.clone()));
+
+        root_group.children.push(RenderNode::Object(RenderObjectNode::new(
+            "quads",
+            "Quads",
+            RenderObject::QuadGroup(quad_group),
+        )));
     }
+
+    scene.groups.push(root_group);
 
     if let Some(map_overlay) = document.map_overlay {
         scene
@@ -64,3 +76,72 @@ pub fn scene_document_to_render_scene(document: SceneDocument) -> RenderScene {
 
     scene
 }
+
+#[cfg(test)]
+mod tests {
+    use super::scene_document_to_render_scene;
+    use crate::{
+        render::{RenderNode, RenderObject},
+        scene::{DisplayDocument, QuadDocument, SceneDocument},
+    };
+
+    #[test]
+    fn adapter_wraps_empty_scene_in_root_group() {
+        let scene = scene_document_to_render_scene(SceneDocument {
+            name: "test".to_string(),
+            mesh_asset: "unused.obj".to_string(),
+            display: DisplayDocument {
+                world_scale: 1.0,
+                rotation_y_degrees_per_turn: None,
+            },
+            lighting: None,
+            map_overlay: None,
+            quads: Vec::new(),
+        });
+
+        assert_eq!(scene.groups.len(), 1);
+        assert_eq!(scene.groups[0].id, "root");
+        assert_eq!(scene.groups[0].name, "Root");
+        assert!(scene.groups[0].children.is_empty());
+    }
+
+    #[test]
+    fn adapter_keeps_compatibility_objects_and_group_nodes() {
+        let scene = scene_document_to_render_scene(SceneDocument {
+            name: "test".to_string(),
+            mesh_asset: "unused.obj".to_string(),
+            display: DisplayDocument {
+                world_scale: 1.0,
+                rotation_y_degrees_per_turn: None,
+            },
+            lighting: None,
+            map_overlay: None,
+            quads: vec![QuadDocument {
+                id: "q1".to_string(),
+                position: [0.0, 0.0, 0.0],
+                size: [1.0, 1.0],
+                rotation_z_degrees: 0.0,
+                marker: "#".to_string(),
+                color: None,
+            }],
+        });
+
+        assert_eq!(scene.objects.len(), 1);
+        assert_eq!(scene.groups.len(), 1);
+        assert_eq!(scene.groups[0].children.len(), 1);
+
+        let RenderNode::Object(node) = &scene.groups[0].children[0] else {
+            panic!("expected object node");
+        };
+
+        let RenderObject::QuadGroup(group) = &node.object else {
+            panic!("expected quad group object");
+        };
+
+        assert_eq!(node.id, "quads");
+        assert_eq!(node.name, "Quads");
+        assert_eq!(group.quads.len(), 1);
+        assert_eq!(group.quads[0].id, "q1");
+    }
+}
+
