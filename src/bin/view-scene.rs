@@ -1,12 +1,14 @@
-use ascii_3d::render::{draw_line_overlay, Frame, Projection};
+use ascii_3d::{
+    render::{draw_line_overlay, Frame, Projection, RenderObject, RenderQuad, RenderScene},
+    scene::{load_scene_document, scene_document_to_render_scene},
+};
 use crossterm::{
     cursor,
     event::{self, Event, KeyCode},
     execute, terminal,
 };
-use serde::Deserialize;
 use std::{
-    env, fs, io,
+    env, io,
     io::Write,
     path::Path,
     time::{Duration, Instant},
@@ -14,30 +16,6 @@ use std::{
 
 const WIDTH: usize = 96;
 const HEIGHT: usize = 34;
-
-#[derive(Debug, Deserialize)]
-struct MultiQuadScene {
-    name: String,
-    mesh_asset: String,
-    display: Display,
-    quads: Vec<Quad>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Display {
-    world_scale: f32,
-    rotation_y_degrees_per_turn: f32,
-}
-
-#[derive(Debug, Deserialize)]
-struct Quad {
-    id: String,
-    position: [f32; 3],
-    size: [f32; 2],
-    rotation_z_degrees: f32,
-    marker: String,
-    color: Option<String>,
-}
 
 #[derive(Debug, Clone, Copy)]
 struct Vec3 {
@@ -184,82 +162,74 @@ impl Default for ViewerState {
         }
     }
 }
-
-fn validate_scene(scene: &MultiQuadScene) -> io::Result<()> {
+fn validate_scene(scene: &RenderScene) -> io::Result<()> {
     if scene.name.trim().is_empty() {
-        return Err(io::Error::other("scene name cannot be empty"));
-    }
-
-    if scene.mesh_asset.trim().is_empty() {
-        return Err(io::Error::other("mesh_asset cannot be empty"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "scene name must not be empty",
+        ));
     }
 
     if !scene.display.world_scale.is_finite() || scene.display.world_scale <= 0.0 {
-        return Err(io::Error::other(
-            "display.world_scale must be finite and greater than zero",
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "scene display.world_scale must be positive and finite",
         ));
     }
 
-    if !scene.display.rotation_y_degrees_per_turn.is_finite() {
-        return Err(io::Error::other(
-            "display.rotation_y_degrees_per_turn must be finite",
-        ));
-    }
+    for object in &scene.objects {
+        let RenderObject::QuadGroup(group) = object else {
+            continue;
+        };
 
-    if scene.quads.is_empty() {
-        return Err(io::Error::other("scene must contain at least one quad"));
-    }
+        for quad in &group.quads {
+            if quad.id.trim().is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "quad id must not be empty",
+                ));
+            }
 
-    for quad in &scene.quads {
-        if quad.id.trim().is_empty() {
-            return Err(io::Error::other("quad id cannot be empty"));
-        }
+            if quad.marker.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("quad {} marker must not be empty", quad.id),
+                ));
+            }
 
-        if !quad.position.into_iter().all(f32::is_finite) {
-            return Err(io::Error::other("quad.position must contain finite values"));
-        }
+            if quad.position.iter().any(|value| !value.is_finite()) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("quad {} position must be finite", quad.id),
+                ));
+            }
 
-        if !quad.size.into_iter().all(|value| value.is_finite() && value > 0.0) {
-            return Err(io::Error::other(
-                "quad.size values must be finite and greater than zero",
-            ));
-        }
+            if quad.size.iter().any(|value| !value.is_finite() || *value <= 0.0) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("quad {} size must be positive and finite", quad.id),
+                ));
+            }
 
-        if !quad.rotation_z_degrees.is_finite() {
-            return Err(io::Error::other(
-                "quad.rotation_z_degrees must be finite",
-            ));
-        }
-
-        if quad.marker.is_empty() {
-            return Err(io::Error::other("quad.marker cannot be empty"));
+            if !quad.rotation_z_degrees.is_finite() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("quad {} rotation_z_degrees must be finite", quad.id),
+                ));
+            }
         }
     }
 
     Ok(())
 }
 
-fn read_scene(path: impl AsRef<Path>) -> io::Result<MultiQuadScene> {
-    let path = path.as_ref();
-    let text = fs::read_to_string(path).map_err(|error| {
-        io::Error::new(
-            error.kind(),
-            format!("failed to read scene {}: {}", path.display(), error),
-        )
-    })?;
-
-    let scene: MultiQuadScene = serde_json::from_str(&text).map_err(|error| {
-        io::Error::other(format!(
-            "failed to parse scene {}: {}",
-            path.display(),
-            error,
-        ))
-    })?;
-
+fn read_scene(path: impl AsRef<Path>) -> io::Result<RenderScene> {
+    let document = load_scene_document(path)?;
+    let scene = scene_document_to_render_scene(document);
     validate_scene(&scene)?;
-
     Ok(scene)
 }
+
 
 fn marker_char(marker: &str) -> char {
     marker.chars().next().unwrap_or('#')
@@ -377,7 +347,7 @@ fn draw_axes(frame: &mut Frame, world: Mat4) {
     }
 }
 
-fn quad_matrix(scene: &MultiQuadScene, quad: &Quad, state: &ViewerState) -> Mat4 {
+fn quad_matrix(scene: &RenderScene, quad: &RenderQuad, state: &ViewerState) -> Mat4 {
     let root = Mat4::translation(Vec3::new(state.origin_x, state.origin_y, state.origin_z))
         * Mat4::rotation_x(state.rotation_x_degrees.to_radians())
         * Mat4::rotation_y(state.rotation_y_degrees.to_radians())
@@ -396,8 +366,16 @@ fn quad_matrix(scene: &MultiQuadScene, quad: &Quad, state: &ViewerState) -> Mat4
         * Mat4::scale(quad.size[0], quad.size[1], 1.0)
 }
 
-fn draw_quad_scene(frame: &mut Frame, scene: &MultiQuadScene, state: &ViewerState) {
+fn draw_quad_scene(frame: &mut Frame, scene: &RenderScene, state: &ViewerState) {
     frame.clear();
+
+    let Some(quad_group) = scene.objects.iter().find_map(|object| match object {
+        RenderObject::QuadGroup(group) => Some(group),
+        _ => None,
+    }) else {
+        frame.draw_text(2, 1, &format!("view-scene: {} | no quad group", scene.name));
+        return;
+    };
 
     let root = Mat4::translation(Vec3::new(state.origin_x, state.origin_y, state.origin_z))
         * Mat4::rotation_x(state.rotation_x_degrees.to_radians())
@@ -416,7 +394,7 @@ fn draw_quad_scene(frame: &mut Frame, scene: &MultiQuadScene, state: &ViewerStat
         Vec3::new(-0.5, 0.5, 0.0),
     ];
 
-    for quad in &scene.quads {
+    for quad in &quad_group.quads {
         let world = quad_matrix(scene, quad, state);
         let projected = local_corners.map(|corner| screen_project(world.transform_point(corner)));
 
@@ -444,10 +422,10 @@ fn draw_quad_scene(frame: &mut Frame, scene: &MultiQuadScene, state: &ViewerStat
         2,
         1,
         &format!(
-            "view-scene: {} | quads={} | mesh={}",
+            "view-scene: {} | quads={} | objects={}",
             scene.name,
-            scene.quads.len(),
-            scene.mesh_asset
+            quad_group.quads.len(),
+            scene.objects.len()
         ),
     );
     frame.draw_text(
@@ -495,7 +473,7 @@ impl Drop for TerminalGuard {
     }
 }
 
-fn run_viewer(scene: MultiQuadScene) -> io::Result<()> {
+fn run_viewer(scene: RenderScene) -> io::Result<()> {
     let _guard = TerminalGuard::enter()?;
     let mut stdout = io::stdout();
     let mut state = ViewerState::default();
