@@ -8,6 +8,10 @@ mod lines;
 
 pub use lines::draw_line_overlay;
 
+mod mesh;
+
+pub use mesh::{load_obj_mesh, load_obj_mesh_from_str, MeshAsset, MeshTriangle, MeshVertex};
+
 mod model;
 
 pub use model::{apply_render_behaviors_to_scene, apply_render_behaviors_to_object_node, apply_render_behaviors_to_group_tree, apply_render_behaviors_to_group, 
