@@ -1,3 +1,4 @@
+use ascii_3d::render::Frame;
 use crossterm::{
     cursor,
     event::{self, Event, KeyCode, KeyModifiers},
@@ -212,88 +213,6 @@ impl std::ops::Mul for Mat3 {
     }
 }
 
-struct Frame {
-    cells: Vec<char>,
-    depth: Vec<f32>,
-}
-
-impl Frame {
-    fn new() -> Self {
-        Self {
-            cells: vec![' '; WIDTH * HEIGHT],
-            depth: vec![f32::INFINITY; WIDTH * HEIGHT],
-        }
-    }
-
-    fn clear(&mut self) {
-        self.cells.fill(' ');
-        self.depth.fill(f32::INFINITY);
-    }
-
-    fn set(&mut self, x: i32, y: i32, z: f32, ch: char) {
-        if x < 0 || y < 0 {
-            return;
-        }
-
-        let x = x as usize;
-        let y = y as usize;
-
-        if x >= WIDTH || y >= HEIGHT {
-            return;
-        }
-
-        let index = y * WIDTH + x;
-
-        if z < self.depth[index] {
-            self.depth[index] = z;
-            self.cells[index] = ch;
-        }
-    }
-
-    fn set_overlay(&mut self, x: i32, y: i32, ch: char) {
-        if x < 0 || y < 0 {
-            return;
-        }
-
-        let x = x as usize;
-        let y = y as usize;
-
-        if x >= WIDTH || y >= HEIGHT {
-            return;
-        }
-
-        self.cells[y * WIDTH + x] = ch;
-    }
-
-    fn draw_text(&mut self, x: usize, y: usize, text: &str) {
-        if y >= HEIGHT {
-            return;
-        }
-
-        for (offset, ch) in text.chars().enumerate() {
-            let x = x + offset;
-            if x >= WIDTH {
-                break;
-            }
-
-            self.cells[y * WIDTH + x] = ch;
-        }
-    }
-
-    fn render(&self) -> String {
-        let mut out = String::with_capacity((WIDTH + 2) * HEIGHT);
-
-        for y in 0..HEIGHT {
-            for x in 0..WIDTH {
-                out.push(self.cells[y * WIDTH + x]);
-            }
-            out.push('\r');
-            out.push('\n');
-        }
-
-        out
-    }
-}
 
 #[derive(Debug)]
 struct ViewerState {
@@ -357,7 +276,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 fn run_viewer(stdout: &mut io::Stdout, scene: &EarthScene, mesh: &Mesh, map_overlay: Option<&MapOverlay>) -> Result<(), Box<dyn Error>> {
     let target_frame = Duration::from_millis(33);
-    let mut frame = Frame::new();
+    let mut frame = Frame::new(WIDTH, HEIGHT);
     let mut state = ViewerState::default();
 
     let light = Vec3::new(
