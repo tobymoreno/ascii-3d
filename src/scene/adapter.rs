@@ -1,8 +1,9 @@
 use super::SceneDocument;
 use crate::render::{
-    RenderCamera, RenderDisplay, RenderGeoJsonMapOverlay, RenderGroup, RenderLighting,
-    RenderNode, RenderObject, RenderObjectNode, RenderOverlay, RenderProjectionConfig,
-    RenderQuad, RenderQuadGroup, RenderScene, RenderTransform,
+    RenderAxis, RenderBehavior, RenderCamera, RenderDisplay, RenderGeoJsonMapOverlay,
+    RenderGroup, RenderLighting, RenderNode, RenderObject, RenderObjectNode, RenderOverlay,
+    RenderProjectionConfig, RenderQuad, RenderQuadGroup, RenderScene, RenderSpinBehavior,
+    RenderTransform,
 };
 
 const DEFAULT_CAMERA_ID: &str = "default";
@@ -68,11 +69,21 @@ pub fn scene_document_to_render_scene(document: SceneDocument) -> RenderScene {
             transform: RenderTransform::default(),
         });
 
-        root_group.children.push(RenderNode::Object(RenderObjectNode::new(
+        let mut earth_group = RenderGroup::new("earth", "Earth");
+        earth_group
+            .behaviors
+            .push(RenderBehavior::Spin(RenderSpinBehavior::new(
+                RenderAxis::Y,
+                15.0,
+            )));
+
+        earth_group.children.push(RenderNode::Object(RenderObjectNode::new(
             "mesh",
             "Mesh",
             mesh_object,
         )));
+
+        root_group.children.push(RenderNode::Group(earth_group));
     }
 
     scene.groups.push(root_group);
@@ -94,7 +105,7 @@ pub fn scene_document_to_render_scene(document: SceneDocument) -> RenderScene {
 mod tests {
     use super::scene_document_to_render_scene;
     use crate::{
-        render::{RenderNode, RenderObject},
+        render::{RenderAxis, RenderBehavior, RenderNode, RenderObject},
         scene::{DisplayDocument, QuadDocument, SceneDocument},
     };
 
@@ -173,8 +184,23 @@ mod tests {
         assert_eq!(scene.groups.len(), 1);
         assert_eq!(scene.groups[0].children.len(), 1);
 
-        let RenderNode::Object(node) = &scene.groups[0].children[0] else {
-            panic!("expected object node");
+        let RenderNode::Group(earth_group) = &scene.groups[0].children[0] else {
+            panic!("expected earth group");
+        };
+
+        assert_eq!(earth_group.id, "earth");
+        assert_eq!(earth_group.name, "Earth");
+        assert_eq!(earth_group.behaviors.len(), 1);
+        assert_eq!(earth_group.children.len(), 1);
+
+        let RenderBehavior::Spin(spin) = &earth_group.behaviors[0];
+
+        assert_eq!(spin.axis, RenderAxis::Y);
+        assert_eq!(spin.degrees_per_second, 15.0);
+        assert!(spin.enabled);
+
+        let RenderNode::Object(node) = &earth_group.children[0] else {
+            panic!("expected mesh object node");
         };
 
         let RenderObject::Mesh(mesh) = &node.object else {
