@@ -1,3 +1,4 @@
+use ascii_3d::render::Frame;
 use crossterm::{
     cursor,
     event::{self, Event, KeyCode},
@@ -181,93 +182,6 @@ impl Default for ViewerState {
             fps: 0.0,
             frame_time_ms: 0.0,
         }
-    }
-}
-
-struct Frame {
-    cells: Vec<char>,
-    depth: Vec<f32>,
-}
-
-impl Frame {
-    fn new() -> Self {
-        Self {
-            cells: vec![' '; WIDTH * HEIGHT],
-            depth: vec![f32::INFINITY; WIDTH * HEIGHT],
-        }
-    }
-
-    fn clear(&mut self) {
-        self.cells.fill(' ');
-        self.depth.fill(f32::INFINITY);
-    }
-
-    fn set(&mut self, x: i32, y: i32, z: f32, ch: char) {
-        if x < 0 || y < 0 {
-            return;
-        }
-
-        let x = x as usize;
-        let y = y as usize;
-
-        if x >= WIDTH || y >= HEIGHT {
-            return;
-        }
-
-        let index = y * WIDTH + x;
-
-        if z < self.depth[index] {
-            self.depth[index] = z;
-            self.cells[index] = ch;
-        }
-    }
-
-    fn set_overlay(&mut self, x: i32, y: i32, ch: char) {
-        if x < 0 || y < 0 {
-            return;
-        }
-
-        let x = x as usize;
-        let y = y as usize;
-
-        if x >= WIDTH || y >= HEIGHT {
-            return;
-        }
-
-        self.cells[y * WIDTH + x] = ch;
-    }
-
-    fn draw_text(&mut self, x: usize, y: usize, text: &str) {
-        if y >= HEIGHT {
-            return;
-        }
-
-        for (offset, ch) in text.chars().enumerate() {
-            let x = x + offset;
-
-            if x >= WIDTH {
-                break;
-            }
-
-            self.cells[y * WIDTH + x] = ch;
-        }
-    }
-
-    fn render(&self) -> String {
-        let mut output = String::with_capacity((WIDTH + 1) * HEIGHT);
-
-        for row in 0..HEIGHT {
-            let start = row * WIDTH;
-            let end = start + WIDTH;
-
-            for ch in &self.cells[start..end] {
-                output.push(*ch);
-            }
-
-            output.push('\n');
-        }
-
-        output
     }
 }
 
@@ -635,7 +549,7 @@ fn run_viewer(scene: MultiQuadScene) -> io::Result<()> {
     let _guard = TerminalGuard::enter()?;
     let mut stdout = io::stdout();
     let mut state = ViewerState::default();
-    let mut frame = Frame::new();
+    let mut frame = Frame::new(WIDTH, HEIGHT);
     let target_frame = Duration::from_millis(33);
     let mut previous_frame_start = Instant::now();
 
