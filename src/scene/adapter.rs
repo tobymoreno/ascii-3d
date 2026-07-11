@@ -62,6 +62,19 @@ pub fn scene_document_to_render_scene(document: SceneDocument) -> RenderScene {
         )));
     }
 
+    if !document.mesh_asset.trim().is_empty() {
+        let mesh_object = RenderObject::Mesh(crate::render::RenderMeshObject {
+            mesh_asset: document.mesh_asset,
+            transform: RenderTransform::default(),
+        });
+
+        root_group.children.push(RenderNode::Object(RenderObjectNode::new(
+            "mesh",
+            "Mesh",
+            mesh_object,
+        )));
+    }
+
     scene.groups.push(root_group);
 
     if let Some(map_overlay) = document.map_overlay {
@@ -89,7 +102,7 @@ mod tests {
     fn adapter_wraps_empty_scene_in_root_group() {
         let scene = scene_document_to_render_scene(SceneDocument {
             name: "test".to_string(),
-            mesh_asset: "unused.obj".to_string(),
+            mesh_asset: String::new(),
             display: DisplayDocument {
                 world_scale: 1.0,
                 rotation_y_degrees_per_turn: None,
@@ -109,7 +122,7 @@ mod tests {
     fn adapter_keeps_compatibility_objects_and_group_nodes() {
         let scene = scene_document_to_render_scene(SceneDocument {
             name: "test".to_string(),
-            mesh_asset: "unused.obj".to_string(),
+            mesh_asset: String::new(),
             display: DisplayDocument {
                 world_scale: 1.0,
                 rotation_y_degrees_per_turn: None,
@@ -143,5 +156,35 @@ mod tests {
         assert_eq!(group.quads.len(), 1);
         assert_eq!(group.quads[0].id, "q1");
     }
+    #[test]
+    fn adapter_wraps_mesh_asset_as_object_node() {
+        let scene = scene_document_to_render_scene(SceneDocument {
+            name: "earth".to_string(),
+            mesh_asset: "assets/models/sphere_uv_32x16.obj".to_string(),
+            display: DisplayDocument {
+                world_scale: 1.0,
+                rotation_y_degrees_per_turn: None,
+            },
+            lighting: None,
+            map_overlay: None,
+            quads: Vec::new(),
+        });
+
+        assert_eq!(scene.groups.len(), 1);
+        assert_eq!(scene.groups[0].children.len(), 1);
+
+        let RenderNode::Object(node) = &scene.groups[0].children[0] else {
+            panic!("expected object node");
+        };
+
+        let RenderObject::Mesh(mesh) = &node.object else {
+            panic!("expected mesh object");
+        };
+
+        assert_eq!(node.id, "mesh");
+        assert_eq!(node.name, "Mesh");
+        assert_eq!(mesh.mesh_asset, "assets/models/sphere_uv_32x16.obj");
+    }
+
 }
 
