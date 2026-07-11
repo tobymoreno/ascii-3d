@@ -14,10 +14,6 @@ pub struct Projection {
 }
 
 impl Projection {
-    pub fn terminal(width: usize, height: usize) -> Self {
-        Self::terminal_with_camera(width, height, 34.0, 1.0, 0.54)
-    }
-
     pub fn terminal_with_camera(
         width: usize,
         height: usize,

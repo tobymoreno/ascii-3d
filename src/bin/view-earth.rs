@@ -16,6 +16,9 @@ use std::{
 
 const WIDTH: usize = 100;
 const HEIGHT: usize = 38;
+const EARTH_CAMERA_DISTANCE: f32 = 34.0;
+const EARTH_NEAR_CLIP: f32 = 1.0;
+const EARTH_VERTICAL_CENTER_RATIO: f32 = 0.54;
 const SHADE_RAMP: &[u8] = b" .:-=+*#%@";
 
 #[derive(Debug, Deserialize)]
@@ -566,7 +569,14 @@ impl Scaled for Vec3 {
 }
 
 fn project(point: Vec3) -> Option<(i32, i32, f32)> {
-    Projection::terminal(WIDTH, HEIGHT).project_xyz(point.x, point.y, point.z)
+    Projection::terminal_with_camera(
+        WIDTH,
+        HEIGHT,
+        EARTH_CAMERA_DISTANCE,
+        EARTH_NEAR_CLIP,
+        EARTH_VERTICAL_CENTER_RATIO,
+    )
+    .project_xyz(point.x, point.y, point.z)
 }
 
 fn fill_triangle(
