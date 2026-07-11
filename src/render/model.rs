@@ -61,6 +61,87 @@ pub enum RenderObject {
     QuadGroup(RenderQuadGroup),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RenderAxis {
+    X,
+    Y,
+    Z,
+}
+
+#[derive(Clone, Debug)]
+pub enum RenderBehavior {
+    Spin(RenderSpinBehavior),
+}
+
+#[derive(Clone, Debug)]
+pub struct RenderSpinBehavior {
+    pub axis: RenderAxis,
+    pub degrees_per_second: f32,
+    pub enabled: bool,
+}
+
+impl RenderSpinBehavior {
+    pub const fn new(axis: RenderAxis, degrees_per_second: f32) -> Self {
+        Self {
+            axis,
+            degrees_per_second,
+            enabled: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct RenderGroup {
+    pub id: String,
+    pub name: String,
+    pub transform: RenderTransform,
+    pub visible: bool,
+    pub behaviors: Vec<RenderBehavior>,
+    pub children: Vec<RenderNode>,
+}
+
+impl RenderGroup {
+    pub fn new(id: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            transform: RenderTransform::default(),
+            visible: true,
+            behaviors: Vec::new(),
+            children: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum RenderNode {
+    Group(RenderGroup),
+    Object(RenderObjectNode),
+}
+
+#[derive(Clone, Debug)]
+pub struct RenderObjectNode {
+    pub id: String,
+    pub name: String,
+    pub transform: RenderTransform,
+    pub visible: bool,
+    pub behaviors: Vec<RenderBehavior>,
+    pub object: RenderObject,
+}
+
+impl RenderObjectNode {
+    pub fn new(id: impl Into<String>, name: impl Into<String>, object: RenderObject) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            transform: RenderTransform::default(),
+            visible: true,
+            behaviors: Vec::new(),
+            object,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct RenderMeshObject {
     pub mesh_asset: String,
@@ -118,4 +199,33 @@ pub struct RenderTextOverlay {
     pub x: usize,
     pub y: usize,
     pub text: String,
+}
+
+#[cfg(test)]
+mod scene_graph_behavior_tests {
+    use super::{RenderAxis, RenderBehavior, RenderGroup, RenderSpinBehavior};
+
+    #[test]
+    fn earth_group_can_carry_spin_behavior() {
+        let mut earth = RenderGroup::new("earth", "Earth");
+
+        earth
+            .behaviors
+            .push(RenderBehavior::Spin(RenderSpinBehavior::new(
+                RenderAxis::Y,
+                15.0,
+            )));
+
+        assert_eq!(earth.id, "earth");
+        assert_eq!(earth.name, "Earth");
+        assert!(earth.visible);
+        assert!(earth.children.is_empty());
+        assert_eq!(earth.behaviors.len(), 1);
+
+        let RenderBehavior::Spin(spin) = &earth.behaviors[0];
+
+        assert_eq!(spin.axis, RenderAxis::Y);
+        assert_eq!(spin.degrees_per_second, 15.0);
+        assert!(spin.enabled);
+    }
 }
