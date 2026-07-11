@@ -116,6 +116,54 @@ pub fn apply_render_behaviors_to_group(group: &mut RenderGroup, elapsed_seconds:
     }
 }
 
+pub fn apply_render_behaviors_to_scene(scene: &mut RenderScene, elapsed_seconds: f32) {
+    for group in &mut scene.groups {
+        apply_render_behaviors_to_group_tree(group, elapsed_seconds);
+    }
+}
+
+pub fn apply_render_behaviors_to_group_tree(group: &mut RenderGroup, elapsed_seconds: f32) {
+    apply_render_behaviors_to_group(group, elapsed_seconds);
+
+    for child in &mut group.children {
+        match child {
+            RenderNode::Group(child_group) => {
+                apply_render_behaviors_to_group_tree(child_group, elapsed_seconds);
+            }
+            RenderNode::Object(object_node) => {
+                apply_render_behaviors_to_object_node(object_node, elapsed_seconds);
+            }
+        }
+    }
+}
+
+pub fn apply_render_behaviors_to_object_node(
+    object_node: &mut RenderObjectNode,
+    elapsed_seconds: f32,
+) {
+    if !elapsed_seconds.is_finite() {
+        return;
+    }
+
+    for behavior in &object_node.behaviors {
+        match behavior {
+            RenderBehavior::Spin(spin) => {
+                if !spin.enabled || !spin.degrees_per_second.is_finite() {
+                    continue;
+                }
+
+                let delta_degrees = spin.degrees_per_second * elapsed_seconds;
+
+                match spin.axis {
+                    RenderAxis::X => object_node.transform.rotation_degrees[0] += delta_degrees,
+                    RenderAxis::Y => object_node.transform.rotation_degrees[1] += delta_degrees,
+                    RenderAxis::Z => object_node.transform.rotation_degrees[2] += delta_degrees,
+                }
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct RenderGroup {
     pub id: String,
@@ -333,6 +381,39 @@ mod render_behavior_apply_tests {
         apply_render_behaviors_to_group(&mut earth, f32::NAN);
 
         assert_eq!(earth.transform.rotation_degrees, [0.0, 0.0, 0.0]);
+    }
+}
+
+#[cfg(test)]
+mod recursive_render_behavior_apply_tests {
+    use super::{
+        apply_render_behaviors_to_scene, RenderAxis, RenderBehavior, RenderDisplay, RenderGroup,
+        RenderNode, RenderScene, RenderSpinBehavior,
+    };
+
+    #[test]
+    fn scene_behavior_application_reaches_nested_earth_group() {
+        let mut earth = RenderGroup::new("earth", "Earth");
+        earth
+            .behaviors
+            .push(RenderBehavior::Spin(RenderSpinBehavior::new(
+                RenderAxis::Y,
+                15.0,
+            )));
+
+        let mut root = RenderGroup::new("root", "Root");
+        root.children.push(RenderNode::Group(earth));
+
+        let mut scene = RenderScene::new("test", RenderDisplay { world_scale: 1.0 });
+        scene.groups.push(root);
+
+        apply_render_behaviors_to_scene(&mut scene, 2.0);
+
+        let RenderNode::Group(earth) = &scene.groups[0].children[0] else {
+            panic!("expected earth group");
+        };
+
+        assert_eq!(earth.transform.rotation_degrees, [0.0, 30.0, 0.0]);
     }
 }
 
