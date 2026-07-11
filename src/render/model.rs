@@ -5,6 +5,8 @@ pub struct RenderScene {
     pub lighting: Option<RenderLighting>,
     pub objects: Vec<RenderObject>,
     pub overlays: Vec<RenderOverlay>,
+    pub cameras: Vec<RenderCamera>,
+    pub active_camera_id: Option<String>,
 }
 
 impl RenderScene {
@@ -15,13 +17,34 @@ impl RenderScene {
             lighting: None,
             objects: Vec::new(),
             overlays: Vec::new(),
+            cameras: Vec::new(),
+            active_camera_id: None,
         }
+    }
+
+    pub fn active_camera(&self) -> Option<&RenderCamera> {
+        let active_camera_id = self.active_camera_id.as_deref()?;
+
+        self.cameras
+            .iter()
+            .find(|camera| camera.id == active_camera_id)
     }
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct RenderDisplay {
     pub world_scale: f32,
+}
+
+#[derive(Clone, Debug)]
+pub struct RenderCamera {
+    pub id: String,
+    pub transform: RenderTransform,
+    pub projection: RenderProjectionConfig,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct RenderProjectionConfig {
     pub camera_distance: f32,
     pub near_clip: f32,
     pub vertical_center_ratio: f32,

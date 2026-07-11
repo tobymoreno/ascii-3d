@@ -11,7 +11,7 @@ pub use lines::draw_line_overlay;
 mod model;
 
 pub use model::{
-    RenderDisplay, RenderGeoJsonMapOverlay, RenderLighting, RenderMeshObject,
-    RenderObject, RenderOverlay, RenderQuad, RenderQuadGroup, RenderScene,
-    RenderTextOverlay, RenderTransform,
+    RenderCamera, RenderDisplay, RenderGeoJsonMapOverlay, RenderLighting,
+    RenderMeshObject, RenderObject, RenderOverlay, RenderProjectionConfig,
+    RenderQuad, RenderQuadGroup, RenderScene, RenderTextOverlay, RenderTransform,
 };
