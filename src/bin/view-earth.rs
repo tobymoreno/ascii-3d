@@ -1,4 +1,4 @@
-use ascii_3d::render::{draw_line_overlay, Frame, Projection};
+use ascii_3d::render::{draw_line_overlay, load_obj_mesh, Frame, MeshAsset, MeshVertex, Projection};
 use crossterm::{
     cursor,
     event::{self, Event, KeyCode, KeyModifiers},
@@ -67,7 +67,7 @@ struct Vec3 {
 }
 
 impl Vec3 {
-    fn new(x: f32, y: f32, z: f32) -> Self {
+    const fn new(x: f32, y: f32, z: f32) -> Self {
         Self { x, y, z }
     }
 
@@ -80,12 +80,13 @@ impl Vec3 {
     }
 
     fn normalized(self) -> Self {
-        let len = self.length();
-        if len <= f32::EPSILON {
-            self
-        } else {
-            Self::new(self.x / len, self.y / len, self.z / len)
+        let length = self.length();
+
+        if length <= f32::EPSILON {
+            return Self::new(0.0, 1.0, 0.0);
         }
+
+        Self::new(self.x / length, self.y / length, self.z / length)
     }
 
     fn lerp(self, other: Self, t: f32) -> Self {
@@ -99,26 +100,14 @@ impl Vec3 {
     fn translated(self, offset: Self) -> Self {
         Self::new(self.x + offset.x, self.y + offset.y, self.z + offset.z)
     }
-}
 
-#[derive(Clone, Copy, Debug)]
-struct Vertex {
-    position: Vec3,
-    normal: Vec3,
-}
+    fn from_array(values: [f32; 3]) -> Self {
+        Self::new(values[0], values[1], values[2])
+    }
 
-#[derive(Clone, Copy, Debug)]
-struct Triangle {
-    a: Vertex,
-    b: Vertex,
-    c: Vertex,
-}
-
-#[derive(Debug)]
-struct Mesh {
-    triangles: Vec<Triangle>,
-    vertex_count: usize,
-    normal_count: usize,
+    fn to_array(self) -> [f32; 3] {
+        [self.x, self.y, self.z]
+    }
 }
 
 #[derive(Debug)]
@@ -275,7 +264,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     result
 }
 
-fn run_viewer(stdout: &mut io::Stdout, scene: &EarthScene, mesh: &Mesh, map_overlay: Option<&MapOverlay>) -> Result<(), Box<dyn Error>> {
+fn run_viewer(stdout: &mut io::Stdout, scene: &EarthScene, mesh: &MeshAsset, map_overlay: Option<&MapOverlay>) -> Result<(), Box<dyn Error>> {
     let target_frame = Duration::from_millis(33);
     let mut frame = Frame::new(WIDTH, HEIGHT);
     let mut state = ViewerState::default();
@@ -466,7 +455,7 @@ fn run_viewer(stdout: &mut io::Stdout, scene: &EarthScene, mesh: &Mesh, map_over
     }
 }
 
-fn draw_earth(frame: &mut Frame, scene: &EarthScene, mesh: &Mesh, state: &ViewerState, light: Vec3, map_overlay: Option<&MapOverlay>) {
+fn draw_earth(frame: &mut Frame, scene: &EarthScene, mesh: &MeshAsset, state: &ViewerState, light: Vec3, map_overlay: Option<&MapOverlay>) {
     let rotation = Mat3::rotation_z(state.rotation_z)
         * Mat3::rotation_y(state.rotation_y)
         * Mat3::rotation_x(state.rotation_x);
@@ -479,11 +468,11 @@ fn draw_earth(frame: &mut Frame, scene: &EarthScene, mesh: &Mesh, state: &Viewer
         let b = transform_vertex(triangle.b, rotation, scale, origin);
         let c = transform_vertex(triangle.c, rotation, scale, origin);
 
-        let Some(pa) = project(a.position) else { continue };
-        let Some(pb) = project(b.position) else { continue };
-        let Some(pc) = project(c.position) else { continue };
+        let Some(pa) = project(Vec3::from_array(a.position)) else { continue };
+        let Some(pb) = project(Vec3::from_array(b.position)) else { continue };
+        let Some(pc) = project(Vec3::from_array(c.position)) else { continue };
 
-        fill_triangle(frame, pa, pb, pc, a.normal, b.normal, c.normal, light);
+        fill_triangle(frame, pa, pb, pc, Vec3::from_array(a.normal), Vec3::from_array(b.normal), Vec3::from_array(c.normal), light);
     }
 
     if let Some(map_overlay) = map_overlay {
@@ -548,13 +537,17 @@ fn draw_earth(frame: &mut Frame, scene: &EarthScene, mesh: &Mesh, state: &Viewer
     );
 }
 
-fn transform_vertex(vertex: Vertex, rotation: Mat3, scale: f32, origin: Vec3) -> Vertex {
-    Vertex {
+fn transform_vertex(vertex: MeshVertex, rotation: Mat3, scale: f32, origin: Vec3) -> MeshVertex {
+    let position = Vec3::from_array(vertex.position);
+    let normal = Vec3::from_array(vertex.normal);
+
+    MeshVertex {
         position: rotation
-            .transform(vertex.position)
+            .transform(position)
             .scaled(scale)
-            .translated(origin),
-        normal: rotation.transform(vertex.normal).normalized(),
+            .translated(origin)
+            .to_array(),
+        normal: rotation.transform(normal).normalized().to_array(),
     }
 }
 
@@ -1123,115 +1116,4 @@ fn parse_lon_lat_ring(value: &serde_json::Value) -> Option<Vec<(f32, f32)>> {
     } else {
         None
     }
-}
-
-fn load_obj_mesh(path: &Path) -> Result<Mesh, Box<dyn Error>> {
-    let text = fs::read_to_string(path)?;
-    let mut positions = Vec::<Vec3>::new();
-    let mut normals = Vec::<Vec3>::new();
-    let mut triangles = Vec::<Triangle>::new();
-
-    for line in text.lines() {
-        let line = line.trim();
-
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-
-        let mut parts = line.split_whitespace();
-        let Some(kind) = parts.next() else {
-            continue;
-        };
-
-        match kind {
-            "v" => {
-                let x: f32 = parts.next().ok_or("missing vertex x")?.parse()?;
-                let y: f32 = parts.next().ok_or("missing vertex y")?.parse()?;
-                let z: f32 = parts.next().ok_or("missing vertex z")?.parse()?;
-                positions.push(Vec3::new(x, y, z));
-            }
-            "vn" => {
-                let x: f32 = parts.next().ok_or("missing normal x")?.parse()?;
-                let y: f32 = parts.next().ok_or("missing normal y")?.parse()?;
-                let z: f32 = parts.next().ok_or("missing normal z")?.parse()?;
-                normals.push(Vec3::new(x, y, z).normalized());
-            }
-            "f" => {
-                let refs = parts
-                    .map(parse_face_ref)
-                    .collect::<Result<Vec<_>, _>>()?;
-
-                if refs.len() < 3 {
-                    continue;
-                }
-
-                for i in 1..refs.len() - 1 {
-                    let a = vertex_from_ref(refs[0], &positions, &normals)?;
-                    let b = vertex_from_ref(refs[i], &positions, &normals)?;
-                    let c = vertex_from_ref(refs[i + 1], &positions, &normals)?;
-                    triangles.push(Triangle { a, b, c });
-                }
-            }
-            _ => {}
-        }
-    }
-
-    Ok(Mesh {
-        triangles,
-        vertex_count: positions.len(),
-        normal_count: normals.len(),
-    })
-}
-
-#[derive(Clone, Copy)]
-struct FaceRef {
-    vertex_index: usize,
-    normal_index: Option<usize>,
-}
-
-fn parse_face_ref(text: &str) -> Result<FaceRef, Box<dyn Error>> {
-    let mut parts = text.split('/');
-
-    let vertex_index = parts
-        .next()
-        .ok_or("missing face vertex index")?
-        .parse::<usize>()?
-        .checked_sub(1)
-        .ok_or("OBJ indices are 1-based")?;
-
-    let _uv_index = parts.next();
-
-    let normal_index = parts
-        .next()
-        .and_then(|part| {
-            if part.is_empty() {
-                None
-            } else {
-                Some(part.parse::<usize>())
-            }
-        })
-        .transpose()?
-        .and_then(|index| index.checked_sub(1));
-
-    Ok(FaceRef {
-        vertex_index,
-        normal_index,
-    })
-}
-
-fn vertex_from_ref(
-    reference: FaceRef,
-    positions: &[Vec3],
-    normals: &[Vec3],
-) -> Result<Vertex, Box<dyn Error>> {
-    let position = *positions
-        .get(reference.vertex_index)
-        .ok_or("face vertex index out of bounds")?;
-
-    let normal = reference
-        .normal_index
-        .and_then(|index| normals.get(index).copied())
-        .unwrap_or_else(|| position.normalized());
-
-    Ok(Vertex { position, normal })
 }
