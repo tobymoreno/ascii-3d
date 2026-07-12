@@ -1,21 +1,24 @@
 use ascii_3d::{
-    render::{apply_render_behaviors_to_scene, Frame, GeoJsonMapAsset, MeshAsset, RenderScene},
+    render::{Frame, GeoJsonMapAsset, MeshAsset, RenderScene, apply_render_behaviors_to_scene},
     viewer::{
+        MIN_VIEW_SCENE_HEIGHT, MIN_VIEW_SCENE_WIDTH, VIEWER_MENU_TITLES, ViewerInput,
+        ViewerInspectorState, ViewerState, ViewerViewport, collect_scene_objects,
         draw_render_scene, handle_key, load_scene_maps, load_scene_meshes, read_scene,
-        ViewerInput, ViewerState, ViewerViewport, MIN_VIEW_SCENE_HEIGHT, MIN_VIEW_SCENE_WIDTH,
     },
 };
 use crossterm::{
     cursor,
-    event::{self, Event},
+    event::{self, Event, KeyCode},
     execute,
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
-    backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
-    widgets::{Block, Borders, Paragraph},
     Terminal,
+    backend::CrosstermBackend,
+    layout::{Constraint, Direction, Layout, Rect},
+    style::{Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Tabs},
 };
 use std::{
     collections::HashMap,
@@ -53,6 +56,8 @@ fn run_viewer(
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = AppTerminal::new(backend)?;
     let mut state = ViewerState::default();
+    let mut inspector = ViewerInspectorState::default();
+    let object_entries = collect_scene_objects(&scene);
     let mut frame = Frame::new(MIN_VIEW_SCENE_WIDTH, MIN_VIEW_SCENE_HEIGHT);
     let target_frame = Duration::from_millis(33);
     let mut previous_frame_start = Instant::now();
@@ -98,29 +103,81 @@ fn run_viewer(
             draw_render_scene(&mut frame, viewport, &scene, &meshes, &maps, &state);
 
             let rendered = frame.render().replace('\r', "");
-            let header = format!(
-                "{} | visible {}x{} | render {}x{} | fps {:>5.1}",
-                scene.name,
-                viewport_area.width,
-                viewport_area.height,
-                render_width,
-                render_height,
-                state.fps,
+            let active_object = inspector.active_label(&object_entries).unwrap_or("none");
+            let footer = format!(
+                "Tab menu | arrows origin | PgUp/PgDn z | +/- zoom | x/y/z rotate | active: {active_object}"
             );
-            let footer =
-                "arrows origin | PgUp/PgDn z | +/- zoom | x/y/z rotate | a/A axes | r reset | q quit";
 
-            ui.render_widget(Paragraph::new(header), shell[0]);
+            draw_menu_bar(
+                ui,
+                shell[0],
+                inspector.selected_menu,
+                inspector.menu_focused || inspector.objects_open,
+                &format!(
+                    "{}  {}x{}  render {}x{}  fps {:>5.1}",
+                    scene.name,
+                    viewport_area.width,
+                    viewport_area.height,
+                    render_width,
+                    render_height,
+                    state.fps,
+                ),
+            );
             ui.render_widget(scene_block, scene_area);
             ui.render_widget(Paragraph::new(rendered), viewport_area);
             ui.render_widget(Paragraph::new(footer), shell[2]);
+
+            if inspector.objects_open {
+                draw_objects_popup(
+                    ui,
+                    centered_rect(
+                        58,
+                        (object_entries.len() as u16 + 4).clamp(6, 24),
+                        ui.area(),
+                    ),
+                    &object_entries,
+                    inspector.selected_object,
+                );
+            }
         })?;
 
         while event::poll(Duration::from_millis(0))? {
-            if let Event::Key(key) = event::read()? {
-                if handle_key(key.code, &mut state) == ViewerInput::Quit {
-                    return Ok(());
+            let Event::Key(key) = event::read()? else {
+                continue;
+            };
+
+            if inspector.objects_open {
+                match key.code {
+                    KeyCode::Esc => inspector.close_popup(),
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        inspector.move_object_up(object_entries.len())
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        inspector.move_object_down(object_entries.len())
+                    }
+                    KeyCode::Enter => inspector.activate_selected(&object_entries),
+                    _ => {}
                 }
+
+                continue;
+            }
+
+            if inspector.menu_focused {
+                match key.code {
+                    KeyCode::Esc | KeyCode::Tab => inspector.menu_focused = false,
+                    KeyCode::Left => inspector.move_menu_left(),
+                    KeyCode::Right => inspector.move_menu_right(),
+                    KeyCode::Enter => inspector.open_selected_menu(object_entries.len()),
+                    _ => {}
+                }
+
+                continue;
+            }
+
+            match key.code {
+                KeyCode::Tab => inspector.focus_menu(),
+                _ if handle_key(key.code, &mut state) == ViewerInput::Quit => return Ok(()),
+                _ => {}
             }
         }
 
@@ -129,6 +186,75 @@ fn run_viewer(
         if elapsed < target_frame {
             std::thread::sleep(target_frame - elapsed);
         }
+    }
+}
+
+fn draw_menu_bar(
+    frame: &mut ratatui::Frame<'_>,
+    area: Rect,
+    selected_menu: usize,
+    focused: bool,
+    status: &str,
+) {
+    let titles = VIEWER_MENU_TITLES
+        .iter()
+        .map(|title| Line::from(Span::raw(format!(" {title} "))))
+        .collect::<Vec<_>>();
+
+    let tabs = Tabs::new(titles)
+        .divider(" ")
+        .select(selected_menu)
+        .highlight_style(if focused {
+            Style::default()
+                .add_modifier(Modifier::REVERSED)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        });
+
+    let header = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(34), Constraint::Min(1)])
+        .split(area);
+
+    frame.render_widget(tabs, header[0]);
+    frame.render_widget(Paragraph::new(status), header[1]);
+}
+
+fn draw_objects_popup(
+    frame: &mut ratatui::Frame<'_>,
+    area: Rect,
+    entries: &[ascii_3d::viewer::SceneObjectEntry],
+    selected: usize,
+) {
+    let items = entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            let selector = if index == selected { ">" } else { " " };
+            ListItem::new(Line::from(format!("{selector} {}", entry.display_label())))
+        })
+        .collect::<Vec<_>>();
+
+    let list = List::new(items).block(
+        Block::default()
+            .title(" Objects  Enter=select  Esc=close ")
+            .borders(Borders::ALL),
+    );
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(list, area);
+}
+
+fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+
+    Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
     }
 }
 
