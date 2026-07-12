@@ -1,9 +1,9 @@
 use ascii_3d::{
-    render::{Frame, GeoJsonMapAsset, MeshAsset, RenderScene, apply_render_behaviors_to_scene},
+    render::{apply_render_behaviors_to_scene, Frame, GeoJsonMapAsset, MeshAsset, RenderScene},
     viewer::{
-        MIN_VIEW_SCENE_HEIGHT, MIN_VIEW_SCENE_WIDTH, VIEWER_MENU_TITLES, ViewerInput,
-        ViewerInspectorState, ViewerState, ViewerViewport, collect_scene_objects,
-        draw_render_scene, handle_key, load_scene_maps, load_scene_meshes, read_scene,
+        collect_scene_objects, draw_render_scene, handle_key, load_scene_maps, load_scene_meshes,
+        read_scene, scene_object_property_lines, ViewerInput, ViewerInspectorState, ViewerState,
+        ViewerViewport, MIN_VIEW_SCENE_HEIGHT, MIN_VIEW_SCENE_WIDTH, VIEWER_MENU_TITLES,
     },
 };
 use crossterm::{
@@ -13,12 +13,12 @@ use crossterm::{
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
-    Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Tabs},
+    Terminal,
 };
 use std::{
     collections::HashMap,
@@ -139,12 +139,39 @@ fn run_viewer(
                     inspector.selected_object,
                 );
             }
+
+            if inspector.properties_open {
+                let property_lines = inspector
+                    .active_object_path
+                    .as_deref()
+                    .and_then(|path| scene_object_property_lines(&scene, path))
+                    .unwrap_or_else(|| vec!["Object not found".to_string()]);
+
+                draw_properties_popup(
+                    ui,
+                    centered_rect(
+                        72,
+                        (property_lines.len() as u16 + 4).clamp(8, 28),
+                        ui.area(),
+                    ),
+                    active_object,
+                    &property_lines,
+                );
+            }
         })?;
 
         while event::poll(Duration::from_millis(0))? {
             let Event::Key(key) = event::read()? else {
                 continue;
             };
+
+            if inspector.properties_open {
+                if key.code == KeyCode::Esc {
+                    inspector.close_properties();
+                }
+
+                continue;
+            }
 
             if inspector.objects_open {
                 match key.code {
@@ -244,6 +271,23 @@ fn draw_objects_popup(
 
     frame.render_widget(Clear, area);
     frame.render_widget(list, area);
+}
+
+fn draw_properties_popup(
+    frame: &mut ratatui::Frame<'_>,
+    area: Rect,
+    object_name: &str,
+    lines: &[String],
+) {
+    let text = lines.join("\n");
+    let popup = Paragraph::new(text).block(
+        Block::default()
+            .title(format!(" Properties: {object_name}  Esc=back "))
+            .borders(Borders::ALL),
+    );
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(popup, area);
 }
 
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {

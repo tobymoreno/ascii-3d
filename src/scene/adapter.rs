@@ -113,36 +113,45 @@ pub fn scene_document_to_render_scene(document: SceneDocument) -> RenderScene {
             )));
         }
 
-        earth_group.children.push(RenderNode::Object(RenderObjectNode::new(
-            "guide-equator",
-            "Guide Equator",
-            RenderObject::SphereGuide(RenderSphereGuide {
-                kind: RenderSphereGuideKind::GreatCircle(GreatCircle::EquatorY0),
-                marker: 'e',
-                visible: true,
-                radius_scale: 1.01,
-            }),
-        )));
-        earth_group.children.push(RenderNode::Object(RenderObjectNode::new(
-            "guide-meridian-x",
-            "Guide Meridian X",
-            RenderObject::SphereGuide(RenderSphereGuide {
-                kind: RenderSphereGuideKind::GreatCircle(GreatCircle::MeridianX0),
-                marker: 'm',
-                visible: true,
-                radius_scale: 1.01,
-            }),
-        )));
-        earth_group.children.push(RenderNode::Object(RenderObjectNode::new(
-            "guide-meridian-z",
-            "Guide Meridian Z",
-            RenderObject::SphereGuide(RenderSphereGuide {
-                kind: RenderSphereGuideKind::GreatCircle(GreatCircle::MeridianZ0),
-                marker: 'p',
-                visible: true,
-                radius_scale: 1.01,
-            }),
-        )));
+        let mut graticule_group = RenderGroup::new("graticule", "Graticule");
+        graticule_group.editor_composite = true;
+
+        graticule_group
+            .children
+            .push(RenderNode::Object(RenderObjectNode::new(
+                "guide-equator",
+                "Guide Equator",
+                RenderObject::SphereGuide(RenderSphereGuide {
+                    kind: RenderSphereGuideKind::GreatCircle(GreatCircle::EquatorY0),
+                    marker: 'e',
+                    visible: true,
+                    radius_scale: 1.01,
+                }),
+            )));
+        graticule_group
+            .children
+            .push(RenderNode::Object(RenderObjectNode::new(
+                "guide-meridian-x",
+                "Guide Meridian X",
+                RenderObject::SphereGuide(RenderSphereGuide {
+                    kind: RenderSphereGuideKind::GreatCircle(GreatCircle::MeridianX0),
+                    marker: 'm',
+                    visible: true,
+                    radius_scale: 1.01,
+                }),
+            )));
+        graticule_group
+            .children
+            .push(RenderNode::Object(RenderObjectNode::new(
+                "guide-meridian-z",
+                "Guide Meridian Z",
+                RenderObject::SphereGuide(RenderSphereGuide {
+                    kind: RenderSphereGuideKind::GreatCircle(GreatCircle::MeridianZ0),
+                    marker: 'p',
+                    visible: true,
+                    radius_scale: 1.01,
+                }),
+            )));
 
         for (id, name, latitude_degrees, marker) in [
             ("guide-lat-60", "Guide Latitude 60", 60.0, 'N'),
@@ -150,18 +159,23 @@ pub fn scene_document_to_render_scene(document: SceneDocument) -> RenderScene {
             ("guide-lat-15", "Guide Latitude 15", 15.0, '.'),
             ("guide-lat--30", "Guide Latitude -30", -30.0, 's'),
         ] {
-            earth_group.children.push(RenderNode::Object(RenderObjectNode::new(
-                id,
-                name,
-                RenderObject::SphereGuide(RenderSphereGuide {
-                    kind: RenderSphereGuideKind::Latitude(latitude_degrees),
-                    marker,
-                    visible: true,
-                    radius_scale: 1.012,
-                }),
-            )));
+            graticule_group
+                .children
+                .push(RenderNode::Object(RenderObjectNode::new(
+                    id,
+                    name,
+                    RenderObject::SphereGuide(RenderSphereGuide {
+                        kind: RenderSphereGuideKind::Latitude(latitude_degrees),
+                        marker,
+                        visible: true,
+                        radius_scale: 1.012,
+                    }),
+                )));
         }
 
+        earth_group
+            .children
+            .push(RenderNode::Group(graticule_group));
         root_group.children.push(RenderNode::Group(earth_group));
     }
 
@@ -196,6 +210,37 @@ mod tests {
         assert_eq!(scene.groups[0].id, "root");
         assert_eq!(scene.groups[0].name, "Root");
         assert!(scene.groups[0].children.is_empty());
+    }
+
+    #[test]
+    fn earth_guides_are_wrapped_in_editor_composite_graticule_group() {
+        let scene = scene_document_to_render_scene(SceneDocument {
+            name: "earth".to_string(),
+            mesh_asset: "sphere.obj".to_string(),
+            display: DisplayDocument {
+                world_scale: 1.0,
+                rotation_y_degrees_per_turn: None,
+            },
+            lighting: None,
+            map_overlay: None,
+            quads: Vec::new(),
+        });
+
+        let RenderNode::Group(earth) = &scene.groups[0].children[0] else {
+            panic!("expected Earth group");
+        };
+        let graticule = earth
+            .children
+            .iter()
+            .find_map(|node| match node {
+                RenderNode::Group(group) if group.id == "graticule" => Some(group),
+                _ => None,
+            })
+            .expect("expected Graticule group");
+
+        assert_eq!(graticule.name, "Graticule");
+        assert!(graticule.editor_composite);
+        assert_eq!(graticule.children.len(), 7);
     }
 
     #[test]

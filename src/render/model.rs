@@ -174,6 +174,7 @@ pub struct RenderGroup {
     pub name: String,
     pub transform: RenderTransform,
     pub visible: bool,
+    pub editor_composite: bool,
     pub behaviors: Vec<RenderBehavior>,
     pub children: Vec<RenderNode>,
 }
@@ -185,6 +186,7 @@ impl RenderGroup {
             name: name.into(),
             transform: RenderTransform::default(),
             visible: true,
+            editor_composite: false,
             behaviors: Vec::new(),
             children: Vec::new(),
         }

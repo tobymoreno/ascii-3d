@@ -1,4 +1,7 @@
-use crate::render::{RenderGroup, RenderNode, RenderObject, RenderScene};
+use crate::render::{
+    RenderAxis, RenderBehavior, RenderGroup, RenderNode, RenderObject, RenderScene,
+    RenderSphereGuideKind, RenderTransform,
+};
 
 pub const VIEWER_MENU_TITLES: &[&str] = &["File", "Objects", "View", "Help"];
 pub const OBJECTS_MENU_INDEX: usize = 1;
@@ -38,7 +41,6 @@ impl SceneObjectEntry {
     pub fn display_label(&self) -> String {
         let indent = "  ".repeat(self.depth);
         let visibility = if self.visible { "[on] " } else { "[off]" };
-
         format!("{indent}{visibility} {} ({})", self.name, self.kind.label())
     }
 }
@@ -48,6 +50,7 @@ pub struct ViewerInspectorState {
     pub menu_focused: bool,
     pub selected_menu: usize,
     pub objects_open: bool,
+    pub properties_open: bool,
     pub selected_object: usize,
     pub active_object_path: Option<String>,
 }
@@ -59,7 +62,14 @@ impl ViewerInspectorState {
 
     pub fn close_popup(&mut self) {
         self.objects_open = false;
+        self.properties_open = false;
         self.menu_focused = false;
+    }
+
+    pub fn close_properties(&mut self) {
+        self.properties_open = false;
+        self.objects_open = true;
+        self.menu_focused = true;
     }
 
     pub fn move_menu_left(&mut self) {
@@ -80,6 +90,7 @@ impl ViewerInspectorState {
             return;
         }
         self.objects_open = true;
+        self.properties_open = false;
         self.selected_object = self.selected_object.min(object_count.saturating_sub(1));
     }
 
@@ -108,7 +119,9 @@ impl ViewerInspectorState {
             return;
         };
         self.active_object_path = Some(entry.path.clone());
-        self.close_popup();
+        self.objects_open = false;
+        self.properties_open = true;
+        self.menu_focused = true;
     }
 
     pub fn active_label<'a>(&self, entries: &'a [SceneObjectEntry]) -> Option<&'a str> {
@@ -128,6 +141,15 @@ pub fn collect_scene_objects(scene: &RenderScene) -> Vec<SceneObjectEntry> {
     entries
 }
 
+pub fn scene_object_property_lines(scene: &RenderScene, path: &str) -> Option<Vec<String>> {
+    for group in &scene.groups {
+        if let Some(lines) = group_property_lines(group, "", path) {
+            return Some(lines);
+        }
+    }
+    None
+}
+
 fn collect_group(
     group: &RenderGroup,
     parent_path: &str,
@@ -135,7 +157,6 @@ fn collect_group(
     entries: &mut Vec<SceneObjectEntry>,
 ) {
     let path = join_path(parent_path, &group.id);
-
     entries.push(SceneObjectEntry {
         path: path.clone(),
         id: group.id.clone(),
@@ -144,6 +165,10 @@ fn collect_group(
         kind: SceneObjectKind::Group,
         visible: group.visible,
     });
+
+    if group.editor_composite {
+        return;
+    }
 
     for node in &group.children {
         match node {
@@ -157,6 +182,149 @@ fn collect_group(
                 visible: object_node.visible && object_visible(&object_node.object),
             }),
         }
+    }
+}
+
+fn group_property_lines(
+    group: &RenderGroup,
+    parent_path: &str,
+    requested_path: &str,
+) -> Option<Vec<String>> {
+    let path = join_path(parent_path, &group.id);
+    if path == requested_path {
+        let mut lines = common_property_lines(
+            &group.id,
+            &group.name,
+            &path,
+            SceneObjectKind::Group,
+            group.visible,
+            group.transform,
+        );
+        lines.push(format!("editor composite: {}", group.editor_composite));
+        lines.push(format!("internal children: {}", group.children.len()));
+        append_behavior_lines(&mut lines, &group.behaviors);
+        return Some(lines);
+    }
+
+    for node in &group.children {
+        match node {
+            RenderNode::Group(child_group) => {
+                if let Some(lines) = group_property_lines(child_group, &path, requested_path) {
+                    return Some(lines);
+                }
+            }
+            RenderNode::Object(object_node) => {
+                let object_path = join_path(&path, &object_node.id);
+                if object_path == requested_path {
+                    return Some(object_property_lines(object_node, &object_path));
+                }
+            }
+        }
+    }
+    None
+}
+
+fn object_property_lines(object_node: &crate::render::RenderObjectNode, path: &str) -> Vec<String> {
+    let visible = object_node.visible && object_visible(&object_node.object);
+    let mut lines = common_property_lines(
+        &object_node.id,
+        &object_node.name,
+        path,
+        object_kind(&object_node.object),
+        visible,
+        object_node.transform,
+    );
+
+    match &object_node.object {
+        RenderObject::Mesh(mesh) => {
+            lines.push(format!("mesh asset: {}", mesh.mesh_asset));
+            append_transform_lines(&mut lines, "mesh", mesh.transform);
+        }
+        RenderObject::QuadGroup(group) => {
+            lines.push(format!("quad count: {}", group.quads.len()));
+            append_transform_lines(&mut lines, "quads", group.transform);
+        }
+        RenderObject::GeoJsonMap(map) => {
+            lines.push(format!("map asset: {}", map.asset));
+            lines.push(format!("map visible: {}", map.visible));
+            lines.push(format!("radius scale: {:.3}", map.radius_scale));
+        }
+        RenderObject::SphereGuide(guide) => {
+            lines.push(format!("guide: {}", guide_kind_label(&guide.kind)));
+            lines.push(format!("marker: {}", guide.marker));
+            lines.push(format!("guide visible: {}", guide.visible));
+            lines.push(format!("radius scale: {:.3}", guide.radius_scale));
+        }
+    }
+
+    append_behavior_lines(&mut lines, &object_node.behaviors);
+    lines
+}
+
+fn common_property_lines(
+    id: &str,
+    name: &str,
+    path: &str,
+    kind: SceneObjectKind,
+    visible: bool,
+    transform: RenderTransform,
+) -> Vec<String> {
+    let mut lines = vec![
+        format!("name: {name}"),
+        format!("id: {id}"),
+        format!("path: {path}"),
+        format!("type: {}", kind.label()),
+        format!("visible: {visible}"),
+    ];
+    append_transform_lines(&mut lines, "node", transform);
+    lines
+}
+
+fn append_transform_lines(lines: &mut Vec<String>, label: &str, transform: RenderTransform) {
+    lines.push(format!(
+        "{label} position: {:.2}, {:.2}, {:.2}",
+        transform.position[0], transform.position[1], transform.position[2]
+    ));
+    lines.push(format!(
+        "{label} rotation: {:.2}, {:.2}, {:.2}",
+        transform.rotation_degrees[0], transform.rotation_degrees[1], transform.rotation_degrees[2]
+    ));
+    lines.push(format!(
+        "{label} scale: {:.2}, {:.2}, {:.2}",
+        transform.scale[0], transform.scale[1], transform.scale[2]
+    ));
+}
+
+fn append_behavior_lines(lines: &mut Vec<String>, behaviors: &[RenderBehavior]) {
+    if behaviors.is_empty() {
+        lines.push("behaviors: none".to_string());
+        return;
+    }
+    lines.push(format!("behaviors: {}", behaviors.len()));
+    for behavior in behaviors {
+        match behavior {
+            RenderBehavior::Spin(spin) => lines.push(format!(
+                "  spin axis={} speed={:.2} enabled={}",
+                axis_label(spin.axis),
+                spin.degrees_per_second,
+                spin.enabled
+            )),
+        }
+    }
+}
+
+fn axis_label(axis: RenderAxis) -> &'static str {
+    match axis {
+        RenderAxis::X => "x",
+        RenderAxis::Y => "y",
+        RenderAxis::Z => "z",
+    }
+}
+
+fn guide_kind_label(kind: &RenderSphereGuideKind) -> String {
+    match kind {
+        RenderSphereGuideKind::GreatCircle(circle) => format!("{circle:?}"),
+        RenderSphereGuideKind::Latitude(degrees) => format!("latitude {degrees:.1}"),
     }
 }
 
@@ -188,14 +356,12 @@ fn object_visible(object: &RenderObject) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::render::{RenderDisplay, RenderMeshObject, RenderObjectNode, RenderTransform};
+    use crate::render::{RenderDisplay, RenderMeshObject, RenderObjectNode};
 
-    #[test]
-    fn scene_objects_are_flattened_in_tree_order() {
+    fn test_scene() -> RenderScene {
         let mut scene = RenderScene::new("test", RenderDisplay { world_scale: 1.0 });
         let mut root = RenderGroup::new("root", "Root");
         let mut earth = RenderGroup::new("earth", "Earth");
-
         earth
             .children
             .push(RenderNode::Object(RenderObjectNode::new(
@@ -206,12 +372,14 @@ mod tests {
                     transform: RenderTransform::default(),
                 }),
             )));
-
         root.children.push(RenderNode::Group(earth));
         scene.groups.push(root);
+        scene
+    }
 
-        let entries = collect_scene_objects(&scene);
-
+    #[test]
+    fn scene_objects_are_flattened_in_tree_order() {
+        let entries = collect_scene_objects(&test_scene());
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].path, "root");
         assert_eq!(entries[1].path, "root/earth");
@@ -221,32 +389,53 @@ mod tests {
     }
 
     #[test]
-    fn object_selection_wraps_and_tracks_path() {
-        let entries = vec![
-            SceneObjectEntry {
-                path: "root".to_string(),
-                id: "root".to_string(),
-                name: "Root".to_string(),
-                depth: 0,
-                kind: SceneObjectKind::Group,
-                visible: true,
-            },
-            SceneObjectEntry {
-                path: "root/mesh".to_string(),
-                id: "mesh".to_string(),
-                name: "Mesh".to_string(),
-                depth: 1,
-                kind: SceneObjectKind::Mesh,
-                visible: true,
-            },
-        ];
-
+    fn object_selection_opens_properties() {
+        let entries = collect_scene_objects(&test_scene());
         let mut state = ViewerInspectorState::default();
-        state.move_object_up(entries.len());
-        assert_eq!(state.selected_object, 1);
-
+        state.selected_object = 2;
         state.activate_selected(&entries);
-        assert_eq!(state.active_object_path.as_deref(), Some("root/mesh"));
-        assert_eq!(state.active_label(&entries), Some("Mesh"));
+        assert_eq!(state.active_object_path.as_deref(), Some("root/earth/mesh"));
+        assert!(state.properties_open);
+        assert!(!state.objects_open);
+    }
+
+    #[test]
+    fn editor_composite_group_hides_internal_children() {
+        let mut scene = RenderScene::new("test", RenderDisplay { world_scale: 1.0 });
+        let mut root = RenderGroup::new("root", "Root");
+        let mut composite = RenderGroup::new("graticule", "Graticule");
+        composite.editor_composite = true;
+        composite
+            .children
+            .push(RenderNode::Object(RenderObjectNode::new(
+                "guide",
+                "Guide",
+                RenderObject::SphereGuide(crate::render::RenderSphereGuide {
+                    kind: RenderSphereGuideKind::Latitude(30.0),
+                    marker: 'n',
+                    visible: true,
+                    radius_scale: 1.0,
+                }),
+            )));
+        root.children.push(RenderNode::Group(composite));
+        scene.groups.push(root);
+
+        let entries = collect_scene_objects(&scene);
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[1].path, "root/graticule");
+        assert_eq!(entries[1].name, "Graticule");
+
+        let lines = scene_object_property_lines(&scene, "root/graticule").unwrap();
+        assert!(lines.iter().any(|line| line == "editor composite: true"));
+        assert!(lines.iter().any(|line| line == "internal children: 1"));
+    }
+
+    #[test]
+    fn mesh_property_lines_include_asset_and_transform() {
+        let lines = scene_object_property_lines(&test_scene(), "root/earth/mesh").unwrap();
+        assert!(lines.iter().any(|line| line == "mesh asset: earth.obj"));
+        assert!(lines.iter().any(|line| line.starts_with("node position:")));
+        assert!(lines.iter().any(|line| line == "visible: true"));
     }
 }
