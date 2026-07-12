@@ -12,6 +12,10 @@ const DEFAULT_CAMERA_DISTANCE: f32 = 8.0;
 const DEFAULT_NEAR_CLIP: f32 = 0.25;
 const DEFAULT_VERTICAL_CENTER_RATIO: f32 = 0.52;
 
+const DEFAULT_MESH_CAMERA_DISTANCE: f32 = 34.0;
+const DEFAULT_MESH_NEAR_CLIP: f32 = 1.0;
+const DEFAULT_MESH_VERTICAL_CENTER_RATIO: f32 = 0.54;
+
 pub fn scene_document_to_render_scene(document: SceneDocument) -> RenderScene {
     let mut scene = RenderScene::new(
         document.name,
@@ -20,14 +24,26 @@ pub fn scene_document_to_render_scene(document: SceneDocument) -> RenderScene {
         },
     );
 
-    scene.cameras.push(RenderCamera {
-        id: DEFAULT_CAMERA_ID.to_string(),
-        transform: RenderTransform::default(),
-        projection: RenderProjectionConfig {
+    let mesh_only_scene = !document.mesh_asset.trim().is_empty() && document.quads.is_empty();
+
+    let projection = if mesh_only_scene {
+        RenderProjectionConfig {
+            camera_distance: DEFAULT_MESH_CAMERA_DISTANCE,
+            near_clip: DEFAULT_MESH_NEAR_CLIP,
+            vertical_center_ratio: DEFAULT_MESH_VERTICAL_CENTER_RATIO,
+        }
+    } else {
+        RenderProjectionConfig {
             camera_distance: DEFAULT_CAMERA_DISTANCE,
             near_clip: DEFAULT_NEAR_CLIP,
             vertical_center_ratio: DEFAULT_VERTICAL_CENTER_RATIO,
-        },
+        }
+    };
+
+    scene.cameras.push(RenderCamera {
+        id: DEFAULT_CAMERA_ID.to_string(),
+        transform: RenderTransform::default(),
+        projection,
     });
     scene.active_camera_id = Some(DEFAULT_CAMERA_ID.to_string());
 
@@ -35,6 +51,7 @@ pub fn scene_document_to_render_scene(document: SceneDocument) -> RenderScene {
         primary_light_direction: lighting.primary_light_direction,
     });
 
+    
     let mut root_group = RenderGroup::new("root", "Root");
 
     if !document.quads.is_empty() {
@@ -63,7 +80,7 @@ pub fn scene_document_to_render_scene(document: SceneDocument) -> RenderScene {
         )));
     }
 
-    if !document.mesh_asset.trim().is_empty() {
+    if mesh_only_scene {
         let mesh_object = RenderObject::Mesh(crate::render::RenderMeshObject {
             mesh_asset: document.mesh_asset,
             transform: RenderTransform::default(),

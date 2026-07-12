@@ -1,7 +1,8 @@
 use ascii_3d::{
     render::{
-        apply_render_behaviors_to_scene, draw_line_overlay, Frame, Projection, RenderNode,
-        RenderObject, RenderQuad, RenderQuadGroup, RenderScene,
+        apply_render_behaviors_to_scene, draw_line_overlay, load_obj_mesh, Frame, MeshAsset,
+        MeshVertex, Projection, RenderNode, RenderObject, RenderQuad, RenderQuadGroup,
+        RenderScene,
     },
     scene::{load_scene_document, scene_document_to_render_scene},
     viewer::{handle_key, ViewerInput, ViewerState},
@@ -12,9 +13,10 @@ use crossterm::{
     execute, terminal,
 };
 use std::{
+    collections::HashMap,
     env, io,
     io::Write,
-    path::Path,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -31,6 +33,28 @@ struct Vec3 {
 impl Vec3 {
     const fn new(x: f32, y: f32, z: f32) -> Self {
         Self { x, y, z }
+    }
+
+    fn dot(self, other: Self) -> f32 {
+        self.x * other.x + self.y * other.y + self.z * other.z
+    }
+
+    fn length(self) -> f32 {
+        self.dot(self).sqrt()
+    }
+
+    fn normalized(self) -> Self {
+        let length = self.length();
+
+        if length <= f32::EPSILON {
+            return Self::new(0.0, 1.0, 0.0);
+        }
+
+        Self::new(self.x / length, self.y / length, self.z / length)
+    }
+
+    fn from_array(values: [f32; 3]) -> Self {
+        Self::new(values[0], values[1], values[2])
     }
 }
 
@@ -331,6 +355,82 @@ fn draw_axes(frame: &mut Frame, scene: &RenderScene, world: Mat4) {
 }
 
 
+
+fn collect_mesh_assets_from_nodes(nodes: &[RenderNode], assets: &mut Vec<String>) {
+    for node in nodes {
+        match node {
+            RenderNode::Group(group) => collect_mesh_assets_from_nodes(&group.children, assets),
+            RenderNode::Object(object_node) => {
+                if let RenderObject::Mesh(mesh) = &object_node.object {
+                    if !mesh.mesh_asset.trim().is_empty()
+                        && !assets.iter().any(|asset| asset == &mesh.mesh_asset)
+                    {
+                        assets.push(mesh.mesh_asset.clone());
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn collect_mesh_assets(scene: &RenderScene) -> Vec<String> {
+    let mut assets = Vec::new();
+
+    for group in &scene.groups {
+        collect_mesh_assets_from_nodes(&group.children, &mut assets);
+    }
+
+    assets
+}
+
+fn resolve_scene_asset_path(scene_path: &Path, asset: &str) -> PathBuf {
+    let asset_path = PathBuf::from(asset);
+
+    if asset_path.is_absolute() || asset_path.exists() {
+        return asset_path;
+    }
+
+    let scene_dir = scene_path.parent().unwrap_or_else(|| Path::new("."));
+
+    let scene_relative = scene_dir.join(&asset_path);
+    if scene_relative.exists() {
+        return scene_relative;
+    }
+
+    if let Some(assets_dir) = scene_dir.parent() {
+        let assets_relative = assets_dir.join(&asset_path);
+        if assets_relative.exists() {
+            return assets_relative;
+        }
+
+        if let Some(file_name) = asset_path.file_name() {
+            let model_relative = assets_dir.join("models").join(file_name);
+            if model_relative.exists() {
+                return model_relative;
+            }
+        }
+    }
+
+    scene_relative
+}
+
+fn load_scene_meshes(scene_path: &Path, scene: &RenderScene) -> io::Result<HashMap<String, MeshAsset>> {
+    let mut meshes = HashMap::new();
+
+    for asset in collect_mesh_assets(scene) {
+        let mesh_path = resolve_scene_asset_path(scene_path, &asset);
+
+        if !mesh_path.exists() {
+            continue;
+        }
+
+        let mesh = load_obj_mesh(mesh_path)?;
+        meshes.insert(asset, mesh);
+    }
+
+    Ok(meshes)
+}
+
 fn find_quad_group_in_nodes<'a>(nodes: &'a [RenderNode]) -> Option<&'a RenderQuadGroup> {
     for node in nodes {
         match node {
@@ -387,11 +487,117 @@ fn quad_matrix(scene: &RenderScene, quad: &RenderQuad, state: &ViewerState) -> M
         * Mat4::scale(quad.size[0], quad.size[1], 1.0)
 }
 
-fn draw_quad_scene(frame: &mut Frame, scene: &RenderScene, state: &ViewerState) {
+
+fn mesh_world_matrix(scene: &RenderScene, state: &ViewerState) -> Mat4 {
+    Mat4::translation(Vec3::new(state.origin_x, state.origin_y, state.origin_z))
+        * Mat4::rotation_x(state.rotation_x_degrees.to_radians())
+        * Mat4::rotation_y(state.rotation_y_degrees.to_radians())
+        * Mat4::rotation_z(state.rotation_z_degrees.to_radians())
+        * Mat4::scale(
+            scene.display.world_scale * state.zoom,
+            scene.display.world_scale * state.zoom,
+            scene.display.world_scale * state.zoom,
+        )
+}
+
+fn transform_mesh_vertex(vertex: MeshVertex, world: Mat4) -> (Vec3, Vec3) {
+    let position = world.transform_point(Vec3::from_array(vertex.position));
+    let normal = Vec3::from_array(vertex.normal).normalized();
+
+    (position, normal)
+}
+
+fn mesh_shade_char(normal: Vec3) -> char {
+    let light = Vec3::new(-0.45, 0.7, -0.55).normalized();
+    let brightness = (0.15 + normal.dot(light).max(0.0) * 0.75).clamp(0.0, 1.0);
+    let ramp = b" .:-=+*#%@";
+    let index = (brightness * (ramp.len() - 1) as f32).round() as usize;
+
+    ramp[index.min(ramp.len() - 1)] as char
+}
+
+fn draw_mesh_asset(frame: &mut Frame, scene: &RenderScene, mesh: &MeshAsset, state: &ViewerState) {
+    let world = mesh_world_matrix(scene, state);
+
+    for triangle in &mesh.triangles {
+        let (a, na) = transform_mesh_vertex(triangle.a, world);
+        let (b, nb) = transform_mesh_vertex(triangle.b, world);
+        let (c, nc) = transform_mesh_vertex(triangle.c, world);
+
+        let Some(pa) = screen_project(scene, a) else { continue };
+        let Some(pb) = screen_project(scene, b) else { continue };
+        let Some(pc) = screen_project(scene, c) else { continue };
+
+        let normal = Vec3::new(
+            (na.x + nb.x + nc.x) / 3.0,
+            (na.y + nb.y + nc.y) / 3.0,
+            (na.z + nb.z + nc.z) / 3.0,
+        )
+        .normalized();
+
+        fill_triangle(frame, pa, pb, pc, mesh_shade_char(normal));
+    }
+}
+
+fn draw_meshes_from_nodes(
+    frame: &mut Frame,
+    scene: &RenderScene,
+    nodes: &[RenderNode],
+    meshes: &HashMap<String, MeshAsset>,
+    state: &ViewerState,
+) -> usize {
+    let mut count = 0;
+
+    for node in nodes {
+        match node {
+            RenderNode::Group(group) => {
+                if group.visible {
+                    count += draw_meshes_from_nodes(frame, scene, &group.children, meshes, state);
+                }
+            }
+            RenderNode::Object(object_node) => {
+                if !object_node.visible {
+                    continue;
+                }
+
+                let RenderObject::Mesh(mesh_object) = &object_node.object else {
+                    continue;
+                };
+
+                let Some(mesh) = meshes.get(&mesh_object.mesh_asset) else {
+                    continue;
+                };
+
+                draw_mesh_asset(frame, scene, mesh, state);
+                count += 1;
+            }
+        }
+    }
+
+    count
+}
+
+fn draw_meshes(
+    frame: &mut Frame,
+    scene: &RenderScene,
+    meshes: &HashMap<String, MeshAsset>,
+    state: &ViewerState,
+) -> usize {
+    scene
+        .groups
+        .iter()
+        .filter(|group| group.visible)
+        .map(|group| draw_meshes_from_nodes(frame, scene, &group.children, meshes, state))
+        .sum()
+}
+
+fn draw_quad_scene(frame: &mut Frame, scene: &RenderScene, meshes: &HashMap<String, MeshAsset>, state: &ViewerState) {
     frame.clear();
 
+    let mesh_count = draw_meshes(frame, scene, meshes, state);
+
     let Some(quad_group) = find_quad_group(scene) else {
-        frame.draw_text(2, 1, &format!("view-scene: {} | no quad group", scene.name));
+        frame.draw_text(2, 1, &format!("view-scene: {} | meshes={} | no quad group", scene.name, mesh_count));
         return;
     };
 
@@ -440,9 +646,10 @@ fn draw_quad_scene(frame: &mut Frame, scene: &RenderScene, state: &ViewerState) 
         2,
         1,
         &format!(
-            "view-scene: {} | quads={} | groups={} | objects={}",
+            "view-scene: {} | quads={} | meshes={} | groups={} | objects={}",
             scene.name,
             quad_group.quads.len(),
+            mesh_count,
             scene.groups.len(),
             scene.objects.len()
         ),
@@ -492,7 +699,7 @@ impl Drop for TerminalGuard {
     }
 }
 
-fn run_viewer(mut scene: RenderScene) -> io::Result<()> {
+fn run_viewer(mut scene: RenderScene, meshes: HashMap<String, MeshAsset>) -> io::Result<()> {
     let _guard = TerminalGuard::enter()?;
     let mut stdout = io::stdout();
     let mut state = ViewerState::default();
@@ -518,7 +725,7 @@ fn run_viewer(mut scene: RenderScene) -> io::Result<()> {
             0.0
         };
 
-        draw_quad_scene(&mut frame, &scene, &state);
+        draw_quad_scene(&mut frame, &scene, &meshes, &state);
 
         let rendered = frame.render();
 
@@ -548,5 +755,7 @@ fn main() -> io::Result<()> {
         .unwrap_or_else(|| "assets/scenes/km_logo_quads.scene.json".to_string());
 
     let scene = read_scene(&path)?;
-    run_viewer(scene)
+    let meshes = load_scene_meshes(Path::new(&path), &scene)?;
+
+    run_viewer(scene, meshes)
 }
