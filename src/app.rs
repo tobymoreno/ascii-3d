@@ -1776,7 +1776,7 @@ fn project_camera_space_to_viewport(
 
     let perspective = perspective_scale / depth;
     let screen_x = center_x + (camera_space.x * perspective).round() as i32;
-    let screen_y = center_y - (camera_space.y * perspective * cell_aspect_ratio).round() as i32;
+    let screen_y = center_y - (camera_space.y * perspective / cell_aspect_ratio).round() as i32;
 
     Some(Point2::new(screen_x, screen_y))
 }
@@ -4397,13 +4397,15 @@ mod tests {
     }
 
     #[test]
-    fn changing_scenes_resets_animation_angles() {
+    fn selecting_scene_from_browser_resets_animation_angles() {
         let mut state = AppState::new();
 
         state.animation_angle_degrees = 45.0;
         state.box_angle_degrees = 90.0;
+        state.open_scene_browser();
+        state.scene_browser_selected = 1;
 
-        state.next_scene();
+        state.select_scene_browser_entry();
 
         assert_eq!(state.animation_angle_degrees, 0.0);
         assert_eq!(state.box_angle_degrees, 0.0);

@@ -65,7 +65,12 @@
   "version": 1,
   "viewport": {
     "show_camera3d": true,
-    "show_world_debug": true
+    "show_world_debug": true,
+    "camera_view": {
+      "aspect_ratio": "16:9",
+      "cell_aspect_ratio": 2.0,
+      "perspective_scale": 34.0
+    }
   },
   "world": {
     "physics": {
