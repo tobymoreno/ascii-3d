@@ -14,7 +14,7 @@ use crossterm::{
 };
 use std::{
     collections::HashMap,
-    env, io,
+    env, fs, io,
     io::Write,
     path::{Path, PathBuf},
     time::{Duration, Instant},
@@ -488,6 +488,165 @@ fn quad_matrix(scene: &RenderScene, quad: &RenderQuad, state: &ViewerState) -> M
 }
 
 
+
+#[derive(Debug)]
+struct GeoJsonMapAsset {
+    lines: Vec<MapLine>,
+}
+
+#[derive(Debug)]
+struct MapLine {
+    name: String,
+    marker: char,
+    points_lon_lat: Vec<(f32, f32)>,
+}
+
+fn collect_map_assets_from_nodes(nodes: &[RenderNode], assets: &mut Vec<String>) {
+    for node in nodes {
+        match node {
+            RenderNode::Group(group) => collect_map_assets_from_nodes(&group.children, assets),
+            RenderNode::Object(object_node) => {
+                if let RenderObject::GeoJsonMap(map) = &object_node.object {
+                    if map.visible
+                        && !map.asset.trim().is_empty()
+                        && !assets.iter().any(|asset| asset == &map.asset)
+                    {
+                        assets.push(map.asset.clone());
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn collect_map_assets(scene: &RenderScene) -> Vec<String> {
+    let mut assets = Vec::new();
+
+    for group in &scene.groups {
+        collect_map_assets_from_nodes(&group.children, &mut assets);
+    }
+
+    assets
+}
+
+fn load_scene_maps(scene_path: &Path, scene: &RenderScene) -> io::Result<HashMap<String, GeoJsonMapAsset>> {
+    let mut maps = HashMap::new();
+
+    for asset in collect_map_assets(scene) {
+        let map_path = resolve_scene_asset_path(scene_path, &asset);
+
+        if !map_path.exists() {
+            continue;
+        }
+
+        maps.insert(asset, load_geojson_map_asset(&map_path)?);
+    }
+
+    Ok(maps)
+}
+
+fn load_geojson_map_asset(path: &Path) -> io::Result<GeoJsonMapAsset> {
+    let text = fs::read_to_string(path)?;
+    let value: serde_json::Value = serde_json::from_str(&text).map_err(invalid_data)?;
+
+    let mut lines = Vec::new();
+
+    let Some(features) = value.get("features").and_then(|value| value.as_array()) else {
+        return Ok(GeoJsonMapAsset { lines });
+    };
+
+    for feature in features {
+        let name = feature
+            .get("properties")
+            .and_then(|properties| properties.get("name"))
+            .and_then(|name| name.as_str())
+            .unwrap_or("unnamed")
+            .to_string();
+
+        let marker = feature
+            .get("properties")
+            .and_then(|properties| properties.get("marker"))
+            .and_then(|marker| marker.as_str())
+            .and_then(|marker| marker.chars().next())
+            .unwrap_or('*');
+
+        let Some(geometry) = feature.get("geometry") else {
+            continue;
+        };
+
+        let geometry_type = geometry
+            .get("type")
+            .and_then(|geometry_type| geometry_type.as_str())
+            .unwrap_or("");
+
+        match geometry_type {
+            "Polygon" => {
+                if let Some(rings) = geometry.get("coordinates").and_then(|coords| coords.as_array()) {
+                    for ring in rings {
+                        if let Some(points) = parse_lon_lat_ring(ring) {
+                            lines.push(MapLine {
+                                name: name.clone(),
+                                marker,
+                                points_lon_lat: points,
+                            });
+                        }
+                    }
+                }
+            }
+            "MultiPolygon" => {
+                if let Some(polygons) = geometry.get("coordinates").and_then(|coords| coords.as_array()) {
+                    for polygon in polygons {
+                        let Some(rings) = polygon.as_array() else {
+                            continue;
+                        };
+
+                        for ring in rings {
+                            if let Some(points) = parse_lon_lat_ring(ring) {
+                                lines.push(MapLine {
+                                    name: name.clone(),
+                                    marker,
+                                    points_lon_lat: points,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(GeoJsonMapAsset { lines })
+}
+
+fn parse_lon_lat_ring(value: &serde_json::Value) -> Option<Vec<(f32, f32)>> {
+    let coordinates = value.as_array()?;
+    let mut points = Vec::new();
+
+    for coordinate in coordinates {
+        let pair = coordinate.as_array()?;
+
+        if pair.len() < 2 {
+            continue;
+        }
+
+        let lon = pair[0].as_f64()? as f32;
+        let lat = pair[1].as_f64()? as f32;
+
+        points.push((lon, lat));
+    }
+
+    if points.len() >= 2 {
+        Some(points)
+    } else {
+        None
+    }
+}
+
+fn invalid_data(error: impl std::error::Error + Send + Sync + 'static) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, error)
+}
+
 fn render_transform_matrix(transform: RenderTransform) -> Mat4 {
     Mat4::translation(Vec3::new(
         transform.position[0],
@@ -549,11 +708,252 @@ fn draw_mesh_asset(frame: &mut Frame, scene: &RenderScene, mesh: &MeshAsset, wor
     }
 }
 
+
+fn draw_geojson_map_asset(
+    frame: &mut Frame,
+    scene: &RenderScene,
+    map: &GeoJsonMapAsset,
+    radius_scale: f32,
+    world: Mat4,
+) {
+    for line in &map.lines {
+        draw_lon_lat_fill(frame, scene, &line.points_lon_lat, radius_scale * 0.999, world);
+    }
+
+    for line in &map.lines {
+        draw_lon_lat_line(
+            frame,
+            scene,
+            &line.points_lon_lat,
+            line.marker,
+            radius_scale,
+            world,
+        );
+    }
+}
+
+fn draw_lon_lat_fill(
+    frame: &mut Frame,
+    scene: &RenderScene,
+    points_lon_lat: &[(f32, f32)],
+    radius: f32,
+    world: Mat4,
+) {
+    let polygon = projected_lon_lat_polygon(scene, points_lon_lat, radius, world);
+
+    if polygon.len() < 3 {
+        return;
+    }
+
+    let min_x = polygon
+        .iter()
+        .map(|point| point.0)
+        .min()
+        .unwrap_or(0)
+        .max(0);
+    let max_x = polygon
+        .iter()
+        .map(|point| point.0)
+        .max()
+        .unwrap_or(0)
+        .min(WIDTH as i32 - 1);
+    let min_y = polygon
+        .iter()
+        .map(|point| point.1)
+        .min()
+        .unwrap_or(0)
+        .max(0);
+    let max_y = polygon
+        .iter()
+        .map(|point| point.1)
+        .max()
+        .unwrap_or(0)
+        .min(HEIGHT as i32 - 1);
+
+    if min_x > max_x || min_y > max_y {
+        return;
+    }
+
+    let fill_depth = polygon
+        .iter()
+        .map(|point| point.2)
+        .fold(f32::INFINITY, f32::min);
+
+    if !fill_depth.is_finite() {
+        return;
+    }
+
+    for y in min_y..=max_y {
+        for x in min_x..=max_x {
+            if !point_in_polygon(x as f32 + 0.5, y as f32 + 0.5, &polygon) {
+                continue;
+            }
+
+            if let Some(ch) = land_fill_char(x, y) {
+                frame.set(x, y, fill_depth + 0.03, ch);
+            }
+        }
+    }
+}
+
+fn projected_lon_lat_polygon(
+    scene: &RenderScene,
+    points_lon_lat: &[(f32, f32)],
+    radius: f32,
+    world: Mat4,
+) -> Vec<(i32, i32, f32)> {
+    let mut polygon = Vec::new();
+
+    if points_lon_lat.len() < 3 {
+        return polygon;
+    }
+
+    for pair in points_lon_lat.windows(2) {
+        let (lon_a, lat_a) = pair[0];
+        let (lon_b, lat_b) = pair[1];
+        let steps = segment_steps(lon_a, lat_a, lon_b, lat_b);
+
+        for step in 0..=steps {
+            let t = step as f32 / steps as f32;
+            let lon = lerp_angle_degrees(lon_a, lon_b, t);
+            let lat = lat_a * (1.0 - t) + lat_b * t;
+
+            let local = lon_lat_to_sphere(lon, lat, radius);
+            let world_point = world.transform_point(local);
+
+            if world_point.z > 0.10 {
+                continue;
+            }
+
+            if let Some(projected) = screen_project(scene, world_point) {
+                if polygon
+                    .last()
+                    .map(|last: &(i32, i32, f32)| last.0 != projected.0 || last.1 != projected.1)
+                    .unwrap_or(true)
+                {
+                    polygon.push(projected);
+                }
+            }
+        }
+    }
+
+    polygon
+}
+
+fn point_in_polygon(px: f32, py: f32, polygon: &[(i32, i32, f32)]) -> bool {
+    let mut inside = false;
+    let mut previous = polygon.len() - 1;
+
+    for current in 0..polygon.len() {
+        let xi = polygon[current].0 as f32;
+        let yi = polygon[current].1 as f32;
+        let xj = polygon[previous].0 as f32;
+        let yj = polygon[previous].1 as f32;
+
+        let crosses = (yi > py) != (yj > py);
+        if crosses {
+            let x_at_y = (xj - xi) * (py - yi) / ((yj - yi).abs().max(0.0001)) + xi;
+            if px < x_at_y {
+                inside = !inside;
+            }
+        }
+
+        previous = current;
+    }
+
+    inside
+}
+
+fn land_fill_char(x: i32, y: i32) -> Option<char> {
+    let n = (x * 17 + y * 31 + x * y * 3).rem_euclid(11);
+
+    match n {
+        0 | 1 | 2 => Some('+'),
+        3 => Some(':'),
+        _ => None,
+    }
+}
+
+fn draw_lon_lat_line(
+    frame: &mut Frame,
+    scene: &RenderScene,
+    points_lon_lat: &[(f32, f32)],
+    marker: char,
+    radius: f32,
+    world: Mat4,
+) {
+    if points_lon_lat.len() < 2 {
+        return;
+    }
+
+    let mut previous = None;
+
+    for pair in points_lon_lat.windows(2) {
+        let (lon_a, lat_a) = pair[0];
+        let (lon_b, lat_b) = pair[1];
+        let steps = segment_steps(lon_a, lat_a, lon_b, lat_b);
+
+        for step in 0..=steps {
+            let t = step as f32 / steps as f32;
+            let lon = lerp_angle_degrees(lon_a, lon_b, t);
+            let lat = lat_a * (1.0 - t) + lat_b * t;
+
+            let local = lon_lat_to_sphere(lon, lat, radius);
+            let world_point = world.transform_point(local);
+
+            if world_point.z > 0.10 {
+                previous = None;
+                continue;
+            }
+
+            if let Some(current) = screen_project(scene, world_point) {
+                if let Some(prev) = previous {
+                    draw_line_overlay(frame, prev, current, marker);
+                }
+                previous = Some(current);
+            } else {
+                previous = None;
+            }
+        }
+    }
+}
+
+fn segment_steps(lon_a: f32, lat_a: f32, lon_b: f32, lat_b: f32) -> usize {
+    let lon_delta = (lon_b - lon_a).abs();
+    let lat_delta = (lat_b - lat_a).abs();
+    let degrees = lon_delta.max(lat_delta);
+    ((degrees / 4.0).ceil() as usize).clamp(2, 16)
+}
+
+fn lerp_angle_degrees(a: f32, b: f32, t: f32) -> f32 {
+    let mut delta = b - a;
+
+    if delta > 180.0 {
+        delta -= 360.0;
+    } else if delta < -180.0 {
+        delta += 360.0;
+    }
+
+    a + delta * t
+}
+
+fn lon_lat_to_sphere(lon_degrees: f32, lat_degrees: f32, radius: f32) -> Vec3 {
+    let lon = lon_degrees.to_radians();
+    let lat = lat_degrees.to_radians();
+
+    Vec3::new(
+        radius * lat.cos() * lon.cos(),
+        radius * lat.sin(),
+        radius * lat.cos() * lon.sin(),
+    )
+}
+
 fn draw_meshes_from_nodes(
     frame: &mut Frame,
     scene: &RenderScene,
     nodes: &[RenderNode],
     meshes: &HashMap<String, MeshAsset>,
+    maps: &HashMap<String, GeoJsonMapAsset>,
     parent_world: Mat4,
 ) -> usize {
     let mut count = 0;
@@ -568,6 +968,7 @@ fn draw_meshes_from_nodes(
                         scene,
                         &group.children,
                         meshes,
+                        maps,
                         group_world,
                     );
                 }
@@ -579,17 +980,35 @@ fn draw_meshes_from_nodes(
 
                 let object_world = parent_world * render_transform_matrix(object_node.transform);
 
-                let RenderObject::Mesh(mesh_object) = &object_node.object else {
-                    continue;
-                };
+                match &object_node.object {
+                    RenderObject::Mesh(mesh_object) => {
+                        let Some(mesh) = meshes.get(&mesh_object.mesh_asset) else {
+                            continue;
+                        };
 
-                let Some(mesh) = meshes.get(&mesh_object.mesh_asset) else {
-                    continue;
-                };
+                        let mesh_world = object_world * render_transform_matrix(mesh_object.transform);
+                        draw_mesh_asset(frame, scene, mesh, mesh_world);
+                        count += 1;
+                    }
+                    RenderObject::GeoJsonMap(map_object) => {
+                        if !map_object.visible {
+                            continue;
+                        }
 
-                let mesh_world = object_world * render_transform_matrix(mesh_object.transform);
-                draw_mesh_asset(frame, scene, mesh, mesh_world);
-                count += 1;
+                        let Some(map) = maps.get(&map_object.asset) else {
+                            continue;
+                        };
+
+                        draw_geojson_map_asset(
+                            frame,
+                            scene,
+                            map,
+                            map_object.radius_scale,
+                            object_world,
+                        );
+                    }
+                    RenderObject::QuadGroup(_) => {}
+                }
             }
         }
     }
@@ -601,6 +1020,7 @@ fn draw_meshes(
     frame: &mut Frame,
     scene: &RenderScene,
     meshes: &HashMap<String, MeshAsset>,
+    maps: &HashMap<String, GeoJsonMapAsset>,
     state: &ViewerState,
 ) -> usize {
     let viewer_world = viewer_world_matrix(scene, state);
@@ -611,15 +1031,15 @@ fn draw_meshes(
         .filter(|group| group.visible)
         .map(|group| {
             let group_world = viewer_world * render_transform_matrix(group.transform);
-            draw_meshes_from_nodes(frame, scene, &group.children, meshes, group_world)
+            draw_meshes_from_nodes(frame, scene, &group.children, meshes, maps, group_world)
         })
         .sum()
 }
 
-fn draw_quad_scene(frame: &mut Frame, scene: &RenderScene, meshes: &HashMap<String, MeshAsset>, state: &ViewerState) {
+fn draw_quad_scene(frame: &mut Frame, scene: &RenderScene, meshes: &HashMap<String, MeshAsset>, maps: &HashMap<String, GeoJsonMapAsset>, state: &ViewerState) {
     frame.clear();
 
-    let mesh_count = draw_meshes(frame, scene, meshes, state);
+    let mesh_count = draw_meshes(frame, scene, meshes, maps, state);
 
     let Some(quad_group) = find_quad_group(scene) else {
         frame.draw_text(2, 1, &format!("view-scene: {} | meshes={} | no quad group", scene.name, mesh_count));
@@ -724,7 +1144,7 @@ impl Drop for TerminalGuard {
     }
 }
 
-fn run_viewer(mut scene: RenderScene, meshes: HashMap<String, MeshAsset>) -> io::Result<()> {
+fn run_viewer(mut scene: RenderScene, meshes: HashMap<String, MeshAsset>, maps: HashMap<String, GeoJsonMapAsset>) -> io::Result<()> {
     let _guard = TerminalGuard::enter()?;
     let mut stdout = io::stdout();
     let mut state = ViewerState::default();
@@ -750,7 +1170,7 @@ fn run_viewer(mut scene: RenderScene, meshes: HashMap<String, MeshAsset>) -> io:
             0.0
         };
 
-        draw_quad_scene(&mut frame, &scene, &meshes, &state);
+        draw_quad_scene(&mut frame, &scene, &meshes, &maps, &state);
 
         let rendered = frame.render();
 
@@ -781,6 +1201,7 @@ fn main() -> io::Result<()> {
 
     let scene = read_scene(&path)?;
     let meshes = load_scene_meshes(Path::new(&path), &scene)?;
+    let maps = load_scene_maps(Path::new(&path), &scene)?;
 
-    run_viewer(scene, meshes)
+    run_viewer(scene, meshes, maps)
 }
