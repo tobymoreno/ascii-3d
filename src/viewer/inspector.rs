@@ -4,6 +4,7 @@ use crate::render::{
 };
 
 pub const VIEWER_MENU_TITLES: &[&str] = &["File", "Objects", "View", "Help"];
+pub const FILE_MENU_INDEX: usize = 0;
 pub const OBJECTS_MENU_INDEX: usize = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,6 +50,7 @@ impl SceneObjectEntry {
 pub struct ViewerInspectorState {
     pub menu_focused: bool,
     pub selected_menu: usize,
+    pub file_open: bool,
     pub objects_open: bool,
     pub properties_open: bool,
     pub selected_object: usize,
@@ -61,6 +63,7 @@ impl ViewerInspectorState {
     }
 
     pub fn close_popup(&mut self) {
+        self.file_open = false;
         self.objects_open = false;
         self.properties_open = false;
         self.menu_focused = false;
@@ -86,12 +89,13 @@ impl ViewerInspectorState {
     }
 
     pub fn open_selected_menu(&mut self, object_count: usize) {
-        if self.selected_menu != OBJECTS_MENU_INDEX {
-            return;
-        }
-        self.objects_open = true;
+        self.file_open = self.selected_menu == FILE_MENU_INDEX;
+        self.objects_open = self.selected_menu == OBJECTS_MENU_INDEX;
         self.properties_open = false;
-        self.selected_object = self.selected_object.min(object_count.saturating_sub(1));
+
+        if self.objects_open {
+            self.selected_object = self.selected_object.min(object_count.saturating_sub(1));
+        }
     }
 
     pub fn move_object_up(&mut self, object_count: usize) {

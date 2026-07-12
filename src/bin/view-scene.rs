@@ -1,8 +1,12 @@
 use ascii_3d::{
     render::{apply_render_behaviors_to_scene, Frame, GeoJsonMapAsset, MeshAsset, RenderScene},
+    scene::{
+        load_scene_document, save_scene_document, scene_document_to_render_scene,
+        set_scene_document_visibility, SceneDocument,
+    },
     viewer::{
         collect_scene_objects, draw_render_scene, handle_key, load_scene_maps, load_scene_meshes,
-        read_scene, scene_object_property_lines, toggle_scene_object_visibility, ViewerInput,
+        scene_object_property_lines, toggle_scene_object_visibility, ViewerInput,
         ViewerInspectorState, ViewerState, ViewerViewport, MIN_VIEW_SCENE_HEIGHT,
         MIN_VIEW_SCENE_WIDTH, VIEWER_MENU_TITLES,
     },
@@ -25,7 +29,7 @@ use std::{
     collections::HashMap,
     env, io,
     io::stdout,
-    path::Path,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -49,6 +53,8 @@ impl Drop for TerminalGuard {
 type AppTerminal = Terminal<CrosstermBackend<io::Stdout>>;
 
 fn run_viewer(
+    scene_path: PathBuf,
+    mut document: SceneDocument,
     mut scene: RenderScene,
     meshes: HashMap<String, MeshAsset>,
     maps: HashMap<String, GeoJsonMapAsset>,
@@ -59,6 +65,7 @@ fn run_viewer(
     let mut state = ViewerState::default();
     let mut inspector = ViewerInspectorState::default();
     let mut object_entries = collect_scene_objects(&scene);
+    let mut save_status: Option<String> = None;
     let mut frame = Frame::new(MIN_VIEW_SCENE_WIDTH, MIN_VIEW_SCENE_HEIGHT);
     let target_frame = Duration::from_millis(33);
     let mut previous_frame_start = Instant::now();
@@ -105,15 +112,17 @@ fn run_viewer(
 
             let rendered = frame.render().replace('\r', "");
             let active_object = inspector.active_label(&object_entries).unwrap_or("none");
-            let footer = format!(
-                "Tab menu | arrows origin | PgUp/PgDn z | +/- zoom | x/y/z rotate | active: {active_object}"
-            );
+            let footer = save_status.clone().unwrap_or_else(|| {
+                format!(
+                    "Tab menu | arrows origin | PgUp/PgDn z | +/- zoom | x/y/z rotate | active: {active_object}"
+                )
+            });
 
             draw_menu_bar(
                 ui,
                 shell[0],
                 inspector.selected_menu,
-                inspector.menu_focused || inspector.objects_open,
+                inspector.menu_focused || inspector.file_open || inspector.objects_open,
                 &format!(
                     "{}  {}x{}  render {}x{}  fps {:>5.1}",
                     scene.name,
@@ -127,6 +136,10 @@ fn run_viewer(
             ui.render_widget(scene_block, scene_area);
             ui.render_widget(Paragraph::new(rendered), viewport_area);
             ui.render_widget(Paragraph::new(footer), shell[2]);
+
+            if inspector.file_open {
+                draw_file_popup(ui, centered_rect(44, 5, ui.area()), &scene_path);
+            }
 
             if inspector.objects_open {
                 draw_objects_popup(
@@ -166,13 +179,38 @@ fn run_viewer(
                 continue;
             };
 
+            if inspector.file_open {
+                match key.code {
+                    KeyCode::Esc => inspector.close_popup(),
+                    KeyCode::Enter => {
+                        match save_scene_document(&scene_path, &document) {
+                            Ok(()) => {
+                                save_status = Some(format!("Saved {}", scene_path.display()));
+                            }
+                            Err(error) => {
+                                save_status = Some(format!("Save failed: {error}"));
+                            }
+                        }
+
+                        inspector.close_popup();
+                    }
+                    _ => {}
+                }
+
+                continue;
+            }
+
             if inspector.properties_open {
                 match key.code {
                     KeyCode::Esc => inspector.close_properties(),
                     KeyCode::Enter | KeyCode::Char(' ') => {
                         if let Some(path) = inspector.active_object_path.as_deref() {
-                            toggle_scene_object_visibility(&mut scene, path);
-                            object_entries = collect_scene_objects(&scene);
+                            if let Some(visible) = toggle_scene_object_visibility(&mut scene, path)
+                            {
+                                set_scene_document_visibility(&mut document, path, visible);
+                                object_entries = collect_scene_objects(&scene);
+                                save_status = Some("Unsaved visibility change".to_string());
+                            }
                         }
                     }
                     _ => {}
@@ -256,6 +294,25 @@ fn draw_menu_bar(
     frame.render_widget(Paragraph::new(status), header[1]);
 }
 
+fn draw_file_popup(frame: &mut ratatui::Frame<'_>, area: Rect, scene_path: &Path) {
+    let popup = List::new(vec![
+        ListItem::new(Line::from("> Save")).style(
+            Style::default()
+                .add_modifier(Modifier::REVERSED)
+                .add_modifier(Modifier::BOLD),
+        ),
+        ListItem::new(Line::from(format!("  {}", scene_path.display()))),
+    ])
+    .block(
+        Block::default()
+            .title(" File  Enter=save  Esc=close ")
+            .borders(Borders::ALL),
+    );
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(popup, area);
+}
+
 fn draw_objects_popup(
     frame: &mut ratatui::Frame<'_>,
     area: Rect,
@@ -328,9 +385,11 @@ fn main() -> io::Result<()> {
         .nth(1)
         .unwrap_or_else(|| "assets/scenes/km_logo_quads.scene.json".to_string());
 
-    let scene = read_scene(&path)?;
-    let meshes = load_scene_meshes(Path::new(&path), &scene)?;
-    let maps = load_scene_maps(Path::new(&path), &scene)?;
+    let scene_path = PathBuf::from(path);
+    let document = load_scene_document(&scene_path)?;
+    let scene = scene_document_to_render_scene(document.clone());
+    let meshes = load_scene_meshes(&scene_path, &scene)?;
+    let maps = load_scene_maps(&scene_path, &scene)?;
 
-    run_viewer(scene, meshes, maps)
+    run_viewer(scene_path, document, scene, meshes, maps)
 }

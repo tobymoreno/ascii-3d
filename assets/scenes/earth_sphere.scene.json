@@ -1,20 +1,127 @@
 {
   "name": "earth_sphere",
-  "mesh_asset": "models/sphere_uv_32x16.obj",
   "display": {
     "world_scale": 12.0,
     "rotation_y_degrees_per_turn": 1.0
   },
   "lighting": {
-    "primary_light_direction": [
-      0.1,
-      0.95,
-      0.25
-    ]
+    "primary_light_direction": [0.1, 0.95, 0.25]
   },
-  "map_overlay": {
-    "asset": "maps/basic_world_outlines.geojson",
-    "visible": true,
-    "radius_scale": 1.018
-  }
+  "groups": [
+    {
+      "id": "root",
+      "name": "Root",
+      "children": [
+        {
+          "node": "group",
+          "id": "earth",
+          "name": "Earth",
+          "behaviors": [
+            {
+              "type": "spin",
+              "axis": "y",
+              "degrees_per_second": 15.0,
+              "enabled": true
+            }
+          ],
+          "children": [
+            {
+              "node": "object",
+              "id": "mesh",
+              "name": "Mesh",
+              "type": "mesh",
+              "asset": "models/sphere_uv_32x16.obj"
+            },
+            {
+              "node": "object",
+              "id": "map",
+              "name": "Map",
+              "type": "geo_json_map",
+              "asset": "maps/basic_world_outlines.geojson",
+              "visible": true,
+              "radius_scale": 1.018
+            },
+            {
+              "node": "group",
+              "id": "graticule",
+              "name": "Graticule",
+              "editor_composite": true,
+              "children": [
+                {
+                  "node": "object",
+                  "id": "guide-equator",
+                  "name": "Guide Equator",
+                  "type": "sphere_guide",
+                  "guide": { "kind": "equator" },
+                  "marker": "e",
+                  "visible": true,
+                  "radius_scale": 1.01
+                },
+                {
+                  "node": "object",
+                  "id": "guide-meridian-x",
+                  "name": "Guide Meridian X",
+                  "type": "sphere_guide",
+                  "guide": { "kind": "meridian_x" },
+                  "marker": "m",
+                  "visible": true,
+                  "radius_scale": 1.01
+                },
+                {
+                  "node": "object",
+                  "id": "guide-meridian-z",
+                  "name": "Guide Meridian Z",
+                  "type": "sphere_guide",
+                  "guide": { "kind": "meridian_z" },
+                  "marker": "p",
+                  "visible": true,
+                  "radius_scale": 1.01
+                },
+                {
+                  "node": "object",
+                  "id": "guide-lat-60",
+                  "name": "Guide Latitude 60",
+                  "type": "sphere_guide",
+                  "guide": { "kind": "latitude", "degrees": 60.0 },
+                  "marker": "N",
+                  "visible": true,
+                  "radius_scale": 1.012
+                },
+                {
+                  "node": "object",
+                  "id": "guide-lat-30",
+                  "name": "Guide Latitude 30",
+                  "type": "sphere_guide",
+                  "guide": { "kind": "latitude", "degrees": 30.0 },
+                  "marker": "n",
+                  "visible": true,
+                  "radius_scale": 1.012
+                },
+                {
+                  "node": "object",
+                  "id": "guide-lat-15",
+                  "name": "Guide Latitude 15",
+                  "type": "sphere_guide",
+                  "guide": { "kind": "latitude", "degrees": 15.0 },
+                  "marker": ".",
+                  "visible": true,
+                  "radius_scale": 1.012
+                },
+                {
+                  "node": "object",
+                  "id": "guide-lat--30",
+                  "name": "Guide Latitude -30",
+                  "type": "sphere_guide",
+                  "guide": { "kind": "latitude", "degrees": -30.0 },
+                  "marker": "s",
+                  "visible": true,
+                  "radius_scale": 1.012
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
 }
