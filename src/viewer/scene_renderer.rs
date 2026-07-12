@@ -12,11 +12,27 @@ use crate::{
 
 use std::collections::HashMap;
 
-const WIDTH: usize = 96;
-const HEIGHT: usize = 34;
+pub const MIN_VIEW_SCENE_WIDTH: usize = 96;
+pub const MIN_VIEW_SCENE_HEIGHT: usize = 34;
 
-pub const VIEW_SCENE_WIDTH: usize = WIDTH;
-pub const VIEW_SCENE_HEIGHT: usize = HEIGHT;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ViewerViewport {
+    pub width: usize,
+    pub height: usize,
+}
+
+impl ViewerViewport {
+    pub const fn new(width: usize, height: usize) -> Self {
+        Self { width, height }
+    }
+
+    pub fn clamped(self) -> Self {
+        Self {
+            width: self.width.max(MIN_VIEW_SCENE_WIDTH),
+            height: self.height.max(MIN_VIEW_SCENE_HEIGHT),
+        }
+    }
+}
 
 fn marker_char(marker: &str) -> char {
     marker.chars().next().unwrap_or('#')
@@ -31,12 +47,12 @@ fn shade_char(color: Option<&str>, marker: char) -> char {
     }
 }
 
-fn screen_project(scene: &RenderScene, point: Vec3) -> Option<(i32, i32, f32)> {
+fn screen_project(scene: &RenderScene, viewport: ViewerViewport, point: Vec3) -> Option<(i32, i32, f32)> {
     let camera = scene.active_camera()?;
 
     Projection::terminal_with_camera(
-        WIDTH,
-        HEIGHT,
+        viewport.width,
+        viewport.height,
         camera.projection.camera_distance,
         camera.projection.near_clip,
         camera.projection.vertical_center_ratio,
@@ -45,20 +61,20 @@ fn screen_project(scene: &RenderScene, point: Vec3) -> Option<(i32, i32, f32)> {
 }
 
 
-fn draw_axes(frame: &mut Frame, scene: &RenderScene, world: Mat4) {
-    let Some(origin) = screen_project(scene, world.transform_point(Vec3::new(0.0, 0.0, 0.0))) else {
+fn draw_axes(frame: &mut Frame, scene: &RenderScene, viewport: ViewerViewport, world: Mat4) {
+    let Some(origin) = screen_project(scene, viewport, world.transform_point(Vec3::new(0.0, 0.0, 0.0))) else {
         return;
     };
 
-    if let Some(x) = screen_project(scene, world.transform_point(Vec3::new(2.0, 0.0, 0.0))) {
+    if let Some(x) = screen_project(scene, viewport, world.transform_point(Vec3::new(2.0, 0.0, 0.0))) {
         draw_line_overlay(frame, origin, x, 'x');
     }
 
-    if let Some(y) = screen_project(scene, world.transform_point(Vec3::new(0.0, 2.0, 0.0))) {
+    if let Some(y) = screen_project(scene, viewport, world.transform_point(Vec3::new(0.0, 2.0, 0.0))) {
         draw_line_overlay(frame, origin, y, 'y');
     }
 
-    if let Some(z) = screen_project(scene, world.transform_point(Vec3::new(0.0, 0.0, 2.0))) {
+    if let Some(z) = screen_project(scene, viewport, world.transform_point(Vec3::new(0.0, 0.0, 2.0))) {
         draw_line_overlay(frame, origin, z, 'z');
     }
 }
@@ -163,15 +179,15 @@ fn mesh_shade_char(normal: Vec3) -> char {
     ramp[index.min(ramp.len() - 1)] as char
 }
 
-fn draw_mesh_asset(frame: &mut Frame, scene: &RenderScene, mesh: &MeshAsset, world: Mat4) {
+fn draw_mesh_asset(frame: &mut Frame, scene: &RenderScene, viewport: ViewerViewport, mesh: &MeshAsset, world: Mat4) {
     for triangle in &mesh.triangles {
         let (a, na) = transform_mesh_vertex(triangle.a, world);
         let (b, nb) = transform_mesh_vertex(triangle.b, world);
         let (c, nc) = transform_mesh_vertex(triangle.c, world);
 
-        let Some(pa) = screen_project(scene, a) else { continue };
-        let Some(pb) = screen_project(scene, b) else { continue };
-        let Some(pc) = screen_project(scene, c) else { continue };
+        let Some(pa) = screen_project(scene, viewport, a) else { continue };
+        let Some(pb) = screen_project(scene, viewport, b) else { continue };
+        let Some(pc) = screen_project(scene, viewport, c) else { continue };
 
         let normal = Vec3::new(
             (na.x + nb.x + nc.x) / 3.0,
@@ -188,18 +204,20 @@ fn draw_mesh_asset(frame: &mut Frame, scene: &RenderScene, mesh: &MeshAsset, wor
 fn draw_geojson_map_asset(
     frame: &mut Frame,
     scene: &RenderScene,
+    viewport: ViewerViewport,
     map: &GeoJsonMapAsset,
     radius_scale: f32,
     world: Mat4,
 ) {
     for line in &map.lines {
-        draw_lon_lat_fill(frame, scene, &line.points_lon_lat, radius_scale * 0.999, world);
+        draw_lon_lat_fill(frame, scene, viewport, &line.points_lon_lat, radius_scale * 0.999, world);
     }
 
     for line in &map.lines {
         draw_lon_lat_line(
             frame,
             scene,
+            viewport,
             &line.points_lon_lat,
             line.marker,
             radius_scale,
@@ -211,11 +229,12 @@ fn draw_geojson_map_asset(
 fn draw_lon_lat_fill(
     frame: &mut Frame,
     scene: &RenderScene,
+    viewport: ViewerViewport,
     points_lon_lat: &[(f32, f32)],
     radius: f32,
     world: Mat4,
 ) {
-    let polygon = projected_lon_lat_polygon(scene, points_lon_lat, radius, world);
+    let polygon = projected_lon_lat_polygon(scene, viewport, points_lon_lat, radius, world);
 
     if polygon.len() < 3 {
         return;
@@ -232,7 +251,7 @@ fn draw_lon_lat_fill(
         .map(|point| point.0)
         .max()
         .unwrap_or(0)
-        .min(WIDTH as i32 - 1);
+        .min(viewport.width as i32 - 1);
     let min_y = polygon
         .iter()
         .map(|point| point.1)
@@ -244,7 +263,7 @@ fn draw_lon_lat_fill(
         .map(|point| point.1)
         .max()
         .unwrap_or(0)
-        .min(HEIGHT as i32 - 1);
+        .min(viewport.height as i32 - 1);
 
     if min_x > max_x || min_y > max_y {
         return;
@@ -274,6 +293,7 @@ fn draw_lon_lat_fill(
 
 fn projected_lon_lat_polygon(
     scene: &RenderScene,
+    viewport: ViewerViewport,
     points_lon_lat: &[(f32, f32)],
     radius: f32,
     world: Mat4,
@@ -301,7 +321,7 @@ fn projected_lon_lat_polygon(
                 continue;
             }
 
-            if let Some(projected) = screen_project(scene, world_point) {
+            if let Some(projected) = screen_project(scene, viewport, world_point) {
                 if polygon
                     .last()
                     .map(|last: &(i32, i32, f32)| last.0 != projected.0 || last.1 != projected.1)
@@ -319,6 +339,7 @@ fn projected_lon_lat_polygon(
 fn draw_lon_lat_line(
     frame: &mut Frame,
     scene: &RenderScene,
+    viewport: ViewerViewport,
     points_lon_lat: &[(f32, f32)],
     marker: char,
     radius: f32,
@@ -348,7 +369,7 @@ fn draw_lon_lat_line(
                 continue;
             }
 
-            if let Some(current) = screen_project(scene, world_point) {
+            if let Some(current) = screen_project(scene, viewport, world_point) {
                 if let Some(prev) = previous {
                     draw_line_overlay(frame, prev, current, marker);
                 }
@@ -364,6 +385,7 @@ fn draw_lon_lat_line(
 fn draw_sphere_guide_points(
     frame: &mut Frame,
     scene: &RenderScene,
+    viewport: ViewerViewport,
     points: &[SphereGuidePoint],
     marker: char,
     radius_scale: f32,
@@ -384,7 +406,7 @@ fn draw_sphere_guide_points(
             continue;
         }
 
-        if let Some(current) = screen_project(scene, world_point) {
+        if let Some(current) = screen_project(scene, viewport, world_point) {
             if let Some(prev) = previous {
                 draw_line_overlay(frame, prev, current, marker);
             }
@@ -399,6 +421,7 @@ fn draw_sphere_guide_points(
 fn draw_sphere_guide(
     frame: &mut Frame,
     scene: &RenderScene,
+    viewport: ViewerViewport,
     guide: &crate::render::RenderSphereGuide,
     world: Mat4,
 ) {
@@ -411,6 +434,7 @@ fn draw_sphere_guide(
             draw_sphere_guide_points(
                 frame,
                 scene,
+                viewport,
                 &great_circle_points(circle, 96),
                 guide.marker,
                 guide.radius_scale,
@@ -421,6 +445,7 @@ fn draw_sphere_guide(
             draw_sphere_guide_points(
                 frame,
                 scene,
+                viewport,
                 &latitude_circle_points(latitude_degrees, 96),
                 guide.marker,
                 guide.radius_scale,
@@ -433,6 +458,7 @@ fn draw_sphere_guide(
 fn draw_meshes_from_nodes(
     frame: &mut Frame,
     scene: &RenderScene,
+    viewport: ViewerViewport,
     nodes: &[RenderNode],
     meshes: &HashMap<String, MeshAsset>,
     maps: &HashMap<String, GeoJsonMapAsset>,
@@ -448,6 +474,7 @@ fn draw_meshes_from_nodes(
                     count += draw_meshes_from_nodes(
                         frame,
                         scene,
+                        viewport,
                         &group.children,
                         meshes,
                         maps,
@@ -469,7 +496,7 @@ fn draw_meshes_from_nodes(
                         };
 
                         let mesh_world = object_world * render_transform_matrix(mesh_object.transform);
-                        draw_mesh_asset(frame, scene, mesh, mesh_world);
+                        draw_mesh_asset(frame, scene, viewport, mesh, mesh_world);
                         count += 1;
                     }
                     RenderObject::GeoJsonMap(map_object) => {
@@ -484,13 +511,14 @@ fn draw_meshes_from_nodes(
                         draw_geojson_map_asset(
                             frame,
                             scene,
+                            viewport,
                             map,
                             map_object.radius_scale,
                             object_world,
                         );
                     }
                     RenderObject::SphereGuide(guide) => {
-                        draw_sphere_guide(frame, scene, guide, object_world);
+                        draw_sphere_guide(frame, scene, viewport, guide, object_world);
                     }
                     RenderObject::QuadGroup(_) => {}
                 }
@@ -504,6 +532,7 @@ fn draw_meshes_from_nodes(
 fn draw_meshes(
     frame: &mut Frame,
     scene: &RenderScene,
+    viewport: ViewerViewport,
     meshes: &HashMap<String, MeshAsset>,
     maps: &HashMap<String, GeoJsonMapAsset>,
     state: &ViewerState,
@@ -516,15 +545,17 @@ fn draw_meshes(
         .filter(|group| group.visible)
         .map(|group| {
             let group_world = viewer_world * render_transform_matrix(group.transform);
-            draw_meshes_from_nodes(frame, scene, &group.children, meshes, maps, group_world)
+            draw_meshes_from_nodes(frame, scene, viewport, &group.children, meshes, maps, group_world)
         })
         .sum()
 }
 
-pub fn draw_render_scene(frame: &mut Frame, scene: &RenderScene, meshes: &HashMap<String, MeshAsset>, maps: &HashMap<String, GeoJsonMapAsset>, state: &ViewerState) {
+pub fn draw_render_scene(frame: &mut Frame, viewport: ViewerViewport, scene: &RenderScene, meshes: &HashMap<String, MeshAsset>, maps: &HashMap<String, GeoJsonMapAsset>, state: &ViewerState) {
+    let viewport = viewport.clamped();
+
     frame.clear();
 
-    let mesh_count = draw_meshes(frame, scene, meshes, maps, state);
+    let mesh_count = draw_meshes(frame, scene, viewport, meshes, maps, state);
 
     let Some(quad_group) = find_quad_group(scene) else {
         frame.draw_text(2, 1, &format!("view-scene: {} | meshes={} | no quad group", scene.name, mesh_count));
@@ -550,7 +581,7 @@ pub fn draw_render_scene(frame: &mut Frame, scene: &RenderScene, meshes: &HashMa
 
     for quad in &quad_group.quads {
         let world = quad_matrix(scene, quad, state);
-        let projected = local_corners.map(|corner| screen_project(scene, world.transform_point(corner)));
+        let projected = local_corners.map(|corner| screen_project(scene, viewport, world.transform_point(corner)));
 
         let Some(p0) = projected[0] else { continue };
         let Some(p1) = projected[1] else { continue };
@@ -569,7 +600,7 @@ pub fn draw_render_scene(frame: &mut Frame, scene: &RenderScene, meshes: &HashMa
     }
 
     if state.show_axes {
-        draw_axes(frame, scene, root);
+        draw_axes(frame, scene, viewport, root);
     }
 
     frame.draw_text(
@@ -607,7 +638,7 @@ pub fn draw_render_scene(frame: &mut Frame, scene: &RenderScene, meshes: &HashMa
     );
     frame.draw_text(
         2,
-        HEIGHT - 2,
+        viewport.height.saturating_sub(2),
         "controls: a axes on | A axes off | arrows origin | PgUp/PgDn z | +/- zoom | x/y/z rotate | 0 origin | r reset | q quit",
     );
 }

@@ -2,7 +2,7 @@ use ascii_3d::{
     render::{apply_render_behaviors_to_scene, Frame, GeoJsonMapAsset, MeshAsset, RenderScene},
     viewer::{
         draw_render_scene, handle_key, load_scene_maps, load_scene_meshes, read_scene,
-        ViewerInput, ViewerState, VIEW_SCENE_HEIGHT, VIEW_SCENE_WIDTH,
+        ViewerInput, ViewerState, ViewerViewport, MIN_VIEW_SCENE_HEIGHT, MIN_VIEW_SCENE_WIDTH,
     },
 };
 use crossterm::{
@@ -39,7 +39,7 @@ fn run_viewer(mut scene: RenderScene, meshes: HashMap<String, MeshAsset>, maps: 
     let _guard = TerminalGuard::enter()?;
     let mut stdout = io::stdout();
     let mut state = ViewerState::default();
-    let mut frame = Frame::new(VIEW_SCENE_WIDTH, VIEW_SCENE_HEIGHT);
+    let mut frame = Frame::new(MIN_VIEW_SCENE_WIDTH, MIN_VIEW_SCENE_HEIGHT);
     let target_frame = Duration::from_millis(33);
     let mut previous_frame_start = Instant::now();
 
@@ -61,7 +61,8 @@ fn run_viewer(mut scene: RenderScene, meshes: HashMap<String, MeshAsset>, maps: 
             0.0
         };
 
-        draw_render_scene(&mut frame, &scene, &meshes, &maps, &state);
+        let viewport = ViewerViewport::new(frame.width(), frame.height());
+        draw_render_scene(&mut frame, viewport, &scene, &meshes, &maps, &state);
 
         let rendered = frame.render();
 
