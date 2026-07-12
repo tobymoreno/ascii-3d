@@ -5,10 +5,12 @@ use ascii_3d::{
         set_scene_document_visibility, SceneDocument,
     },
     viewer::{
-        collect_scene_objects, draw_render_scene, handle_key, load_scene_maps, load_scene_meshes,
-        scene_object_property_lines, toggle_scene_object_visibility, ViewerInput,
-        ViewerInspectorState, ViewerState, ViewerViewport, MIN_VIEW_SCENE_HEIGHT,
-        MIN_VIEW_SCENE_WIDTH, VIEWER_MENU_TITLES,
+        collect_scene_objects_with_helpers, draw_render_scene, handle_key,
+        handle_scene_object_transform_key, load_scene_maps, load_scene_meshes,
+        scene_helper_property_lines, scene_object_property_lines, toggle_scene_object_visibility,
+        ViewerInput, ViewerInspectorState, ViewerState, ViewerViewport, CAMERA_HELPER_PATH,
+        MIN_VIEW_SCENE_HEIGHT, MIN_VIEW_SCENE_WIDTH, SCENE_ORIGIN_HELPER_PATH, VIEWER_MENU_TITLES,
+        WORLD_AXES_HELPER_PATH,
     },
 };
 use crossterm::{
@@ -53,7 +55,7 @@ impl Drop for TerminalGuard {
 type AppTerminal = Terminal<CrosstermBackend<io::Stdout>>;
 
 fn run_viewer(
-    scene_path: PathBuf,
+    mut scene_path: PathBuf,
     mut document: SceneDocument,
     mut scene: RenderScene,
     meshes: HashMap<String, MeshAsset>,
@@ -64,7 +66,9 @@ fn run_viewer(
     let mut terminal = AppTerminal::new(backend)?;
     let mut state = ViewerState::default();
     let mut inspector = ViewerInspectorState::default();
-    let mut object_entries = collect_scene_objects(&scene);
+    inspector.active_object_path = Some(CAMERA_HELPER_PATH.to_string());
+    inspector.active_xyz_target_path = CAMERA_HELPER_PATH.to_string();
+    let mut object_entries = collect_scene_objects_with_helpers(&scene, state.show_axes);
     let mut save_status: Option<String> = None;
     let mut frame = Frame::new(MIN_VIEW_SCENE_WIDTH, MIN_VIEW_SCENE_HEIGHT);
     let target_frame = Duration::from_millis(33);
@@ -111,10 +115,14 @@ fn run_viewer(
             draw_render_scene(&mut frame, viewport, &scene, &meshes, &maps, &state);
 
             let rendered = frame.render().replace('\r', "");
-            let active_object = inspector.active_label(&object_entries).unwrap_or("none");
+            let active_object = object_entries
+                .iter()
+                .find(|entry| entry.path == inspector.active_xyz_target_path)
+                .map(|entry| entry.name.as_str())
+                .unwrap_or("Camera");
             let footer = save_status.clone().unwrap_or_else(|| {
                 format!(
-                    "Tab menu | arrows origin | PgUp/PgDn z | +/- zoom | x/y/z rotate | active: {active_object}"
+                    "XYZ target: {active_object} | arrows move | PgUp/PgDn z | x/y/z rotate | runtime only"
                 )
             });
 
@@ -123,22 +131,27 @@ fn run_viewer(
                 shell[0],
                 inspector.selected_menu,
                 inspector.menu_focused || inspector.file_open || inspector.objects_open,
-                &format!(
-                    "{}  {}x{}  render {}x{}  fps {:>5.1}",
-                    scene.name,
-                    viewport_area.width,
-                    viewport_area.height,
-                    render_width,
-                    render_height,
-                    state.fps,
-                ),
+                &format!("fps {:>5.1}", state.fps),
             );
             ui.render_widget(scene_block, scene_area);
             ui.render_widget(Paragraph::new(rendered), viewport_area);
             ui.render_widget(Paragraph::new(footer), shell[2]);
 
             if inspector.file_open {
-                draw_file_popup(ui, centered_rect(44, 5, ui.area()), &scene_path);
+                draw_file_popup(
+                    ui,
+                    centered_rect(52, 6, ui.area()),
+                    &scene_path,
+                    inspector.selected_file_item,
+                );
+            }
+
+            if inspector.save_as_open {
+                draw_save_as_popup(
+                    ui,
+                    centered_rect(76, 7, ui.area()),
+                    &inspector.save_as_path,
+                );
             }
 
             if inspector.objects_open {
@@ -158,7 +171,20 @@ fn run_viewer(
                 let property_lines = inspector
                     .active_object_path
                     .as_deref()
-                    .and_then(|path| scene_object_property_lines(&scene, path))
+                    .and_then(|path| {
+                        scene_helper_property_lines(
+                            path,
+                            state.show_axes,
+                            Some(inspector.active_xyz_target_path.as_str()),
+                        )
+                        .or_else(|| {
+                            scene_object_property_lines(
+                                &scene,
+                                path,
+                                Some(inspector.active_xyz_target_path.as_str()),
+                            )
+                        })
+                    })
                     .unwrap_or_else(|| vec!["Object not found".to_string()]);
 
                 draw_properties_popup(
@@ -170,6 +196,7 @@ fn run_viewer(
                     ),
                     active_object,
                     &property_lines,
+                    inspector.selected_property_item,
                 );
             }
         })?;
@@ -179,20 +206,61 @@ fn run_viewer(
                 continue;
             };
 
+            if inspector.save_as_open {
+                match key.code {
+                    KeyCode::Esc => inspector.close_save_as(),
+                    KeyCode::Enter => {
+                        let requested_path = inspector.save_as_path.trim();
+
+                        if requested_path.is_empty() {
+                            save_status = Some("Save As path must not be empty".to_string());
+                        } else {
+                            let new_path = PathBuf::from(requested_path);
+
+                            match save_scene_document(&new_path, &document) {
+                                Ok(()) => {
+                                    scene_path = new_path;
+                                    save_status =
+                                        Some(format!("Saved as {}", scene_path.display()));
+                                    inspector.close_save_as();
+                                }
+                                Err(error) => {
+                                    save_status = Some(format!("Save As failed: {error}"));
+                                }
+                            }
+                        }
+                    }
+                    KeyCode::Backspace => {
+                        inspector.save_as_path.pop();
+                    }
+                    KeyCode::Char(character) => {
+                        inspector.save_as_path.push(character);
+                    }
+                    _ => {}
+                }
+
+                continue;
+            }
+
             if inspector.file_open {
                 match key.code {
                     KeyCode::Esc => inspector.close_popup(),
+                    KeyCode::Up | KeyCode::Char('k') => inspector.move_file_up(),
+                    KeyCode::Down | KeyCode::Char('j') => inspector.move_file_down(),
                     KeyCode::Enter => {
-                        match save_scene_document(&scene_path, &document) {
-                            Ok(()) => {
-                                save_status = Some(format!("Saved {}", scene_path.display()));
+                        if inspector.selected_file_item == 0 {
+                            match save_scene_document(&scene_path, &document) {
+                                Ok(()) => {
+                                    save_status = Some(format!("Saved {}", scene_path.display()));
+                                }
+                                Err(error) => {
+                                    save_status = Some(format!("Save failed: {error}"));
+                                }
                             }
-                            Err(error) => {
-                                save_status = Some(format!("Save failed: {error}"));
-                            }
+                            inspector.close_popup();
+                        } else {
+                            inspector.open_save_as(scene_path.display().to_string());
                         }
-
-                        inspector.close_popup();
                     }
                     _ => {}
                 }
@@ -201,14 +269,33 @@ fn run_viewer(
             }
 
             if inspector.properties_open {
+                let is_runtime_helper = inspector
+                    .active_object_path
+                    .as_deref()
+                    .is_some_and(|path| path.starts_with("@scene/"));
+                let property_action_count = if is_runtime_helper { 1 } else { 2 };
+
                 match key.code {
                     KeyCode::Esc => inspector.close_properties(),
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        inspector.move_property_up(property_action_count)
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        inspector.move_property_down(property_action_count)
+                    }
                     KeyCode::Enter | KeyCode::Char(' ') => {
-                        if let Some(path) = inspector.active_object_path.as_deref() {
-                            if let Some(visible) = toggle_scene_object_visibility(&mut scene, path)
+                        if let Some(path) = inspector.active_object_path.clone() {
+                            if inspector.selected_property_item == 0 {
+                                inspector.active_xyz_target_path = path.clone();
+                                let label =
+                                    inspector.active_label(&object_entries).unwrap_or("object");
+                                save_status = Some(format!("XYZ target activated: {label}"));
+                            } else if let Some(visible) =
+                                toggle_scene_object_visibility(&mut scene, &path)
                             {
-                                set_scene_document_visibility(&mut document, path, visible);
-                                object_entries = collect_scene_objects(&scene);
+                                set_scene_document_visibility(&mut document, &path, visible);
+                                object_entries =
+                                    collect_scene_objects_with_helpers(&scene, state.show_axes);
                                 save_status = Some("Unsaved visibility change".to_string());
                             }
                         }
@@ -249,8 +336,36 @@ fn run_viewer(
 
             match key.code {
                 KeyCode::Tab => inspector.focus_menu(),
-                _ if handle_key(key.code, &mut state) == ViewerInput::Quit => return Ok(()),
-                _ => {}
+                _ => {
+                    let path = inspector.active_xyz_target_path.as_str();
+
+                    if path == CAMERA_HELPER_PATH || path == SCENE_ORIGIN_HELPER_PATH {
+                        let axes_before = state.show_axes;
+
+                        if handle_key(key.code, &mut state) == ViewerInput::Quit {
+                            return Ok(());
+                        }
+
+                        if state.show_axes != axes_before {
+                            object_entries =
+                                collect_scene_objects_with_helpers(&scene, state.show_axes);
+                        }
+                    } else {
+                        if key.code == KeyCode::Char('q') || key.code == KeyCode::Esc {
+                            return Ok(());
+                        }
+
+                        if handle_scene_object_transform_key(&mut scene, path, key.code) {
+                            let active_label = object_entries
+                                .iter()
+                                .find(|entry| entry.path == path)
+                                .map(|entry| entry.name.as_str())
+                                .unwrap_or("object");
+
+                            save_status = Some(format!("Runtime XYZ change: {active_label}"));
+                        }
+                    }
+                }
             }
         }
 
@@ -294,18 +409,51 @@ fn draw_menu_bar(
     frame.render_widget(Paragraph::new(status), header[1]);
 }
 
-fn draw_file_popup(frame: &mut ratatui::Frame<'_>, area: Rect, scene_path: &Path) {
-    let popup = List::new(vec![
-        ListItem::new(Line::from("> Save")).style(
-            Style::default()
-                .add_modifier(Modifier::REVERSED)
-                .add_modifier(Modifier::BOLD),
-        ),
-        ListItem::new(Line::from(format!("  {}", scene_path.display()))),
-    ])
+fn draw_file_popup(frame: &mut ratatui::Frame<'_>, area: Rect, scene_path: &Path, selected: usize) {
+    let labels = ["Save", "Save As..."];
+    let items = labels
+        .iter()
+        .enumerate()
+        .map(|(index, label)| {
+            let selector = if index == selected { ">" } else { " " };
+            let item = ListItem::new(Line::from(format!("{selector} {label}")));
+
+            if index == selected {
+                item.style(
+                    Style::default()
+                        .add_modifier(Modifier::REVERSED)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                item
+            }
+        })
+        .chain(std::iter::once(ListItem::new(Line::from(format!(
+            "  {}",
+            scene_path.display()
+        )))))
+        .collect::<Vec<_>>();
+
+    let popup = List::new(items).block(
+        Block::default()
+            .title(" File  Up/Down select  Enter open  Esc close ")
+            .borders(Borders::ALL),
+    );
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(popup, area);
+}
+
+fn draw_save_as_popup(frame: &mut ratatui::Frame<'_>, area: Rect, path: &str) {
+    let popup = Paragraph::new(format!(
+        "Path:
+> {path}
+
+Type path  Backspace delete  Enter save  Esc cancel"
+    ))
     .block(
         Block::default()
-            .title(" File  Enter=save  Esc=close ")
+            .title(" Save Scene As ")
             .borders(Borders::ALL),
     );
 
@@ -343,15 +491,33 @@ fn draw_properties_popup(
     area: Rect,
     object_name: &str,
     lines: &[String],
+    selected_action: usize,
 ) {
+    let mut action_index = 0usize;
     let items = lines
         .iter()
         .map(|line| {
-            if line.starts_with("visible:") {
-                ListItem::new(Line::from(format!("> {line}  [Enter/Space to toggle]")))
-                    .style(Style::default().add_modifier(Modifier::REVERSED))
+            let is_action = line.starts_with("xyz control:") || line.starts_with("visible:");
+            let selected = is_action && action_index == selected_action;
+            let prefix = if selected { "> " } else { "  " };
+
+            if is_action {
+                action_index += 1;
+            }
+
+            let suffix = if line.starts_with("xyz control:") {
+                "  [Enter/Space to activate]"
+            } else if line.starts_with("visible:") {
+                "  [Enter/Space to toggle]"
             } else {
-                ListItem::new(Line::from(format!("  {line}")))
+                ""
+            };
+
+            let item = ListItem::new(Line::from(format!("{prefix}{line}{suffix}")));
+            if selected {
+                item.style(Style::default().add_modifier(Modifier::REVERSED))
+            } else {
+                item
             }
         })
         .collect::<Vec<_>>();
@@ -359,7 +525,7 @@ fn draw_properties_popup(
     let popup = List::new(items).block(
         Block::default()
             .title(format!(
-                " Properties: {object_name}  Visibility selected  Esc=back "
+                " Properties: {object_name}  Up/Down select  Enter activate  Esc=back "
             ))
             .borders(Borders::ALL),
     );

@@ -5,17 +5,59 @@
     "rotation_y_degrees_per_turn": 1.0
   },
   "lighting": {
-    "primary_light_direction": [0.1, 0.95, 0.25]
+    "primary_light_direction": [
+      0.1,
+      0.95,
+      0.25
+    ]
   },
   "groups": [
     {
       "id": "root",
       "name": "Root",
+      "transform": {
+        "position": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation_degrees": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "editor_composite": false,
       "children": [
         {
           "node": "group",
           "id": "earth",
           "name": "Earth",
+          "transform": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation_degrees": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          },
+          "visible": true,
+          "editor_composite": false,
           "behaviors": [
             {
               "type": "spin",
@@ -29,93 +71,301 @@
               "node": "object",
               "id": "mesh",
               "name": "Mesh",
-              "type": "mesh",
-              "asset": "models/sphere_uv_32x16.obj"
+              "transform": {
+                "position": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "rotation_degrees": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "scale": [
+                  1.0,
+                  1.0,
+                  1.0
+                ]
+              },
+              "visible": true,
+              "object": {
+                "type": "mesh",
+                "asset": "models/sphere_uv_32x16.obj"
+              }
             },
             {
               "node": "object",
               "id": "map",
               "name": "Map",
-              "type": "geo_json_map",
-              "asset": "maps/basic_world_outlines.geojson",
+              "transform": {
+                "position": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "rotation_degrees": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "scale": [
+                  1.0,
+                  1.0,
+                  1.0
+                ]
+              },
               "visible": true,
-              "radius_scale": 1.018
+              "object": {
+                "type": "geo_json_map",
+                "asset": "maps/basic_world_outlines.geojson",
+                "radius_scale": 1.018
+              }
             },
             {
               "node": "group",
               "id": "graticule",
               "name": "Graticule",
+              "transform": {
+                "position": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "rotation_degrees": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "scale": [
+                  1.0,
+                  1.0,
+                  1.0
+                ]
+              },
+              "visible": false,
               "editor_composite": true,
               "children": [
                 {
                   "node": "object",
                   "id": "guide-equator",
                   "name": "Guide Equator",
-                  "type": "sphere_guide",
-                  "guide": { "kind": "equator" },
-                  "marker": "e",
+                  "transform": {
+                    "position": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    "rotation_degrees": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    "scale": [
+                      1.0,
+                      1.0,
+                      1.0
+                    ]
+                  },
                   "visible": true,
-                  "radius_scale": 1.01
+                  "object": {
+                    "type": "sphere_guide",
+                    "guide": {
+                      "kind": "equator"
+                    },
+                    "marker": "e",
+                    "radius_scale": 1.01
+                  }
                 },
                 {
                   "node": "object",
                   "id": "guide-meridian-x",
                   "name": "Guide Meridian X",
-                  "type": "sphere_guide",
-                  "guide": { "kind": "meridian_x" },
-                  "marker": "m",
+                  "transform": {
+                    "position": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    "rotation_degrees": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    "scale": [
+                      1.0,
+                      1.0,
+                      1.0
+                    ]
+                  },
                   "visible": true,
-                  "radius_scale": 1.01
+                  "object": {
+                    "type": "sphere_guide",
+                    "guide": {
+                      "kind": "meridian_x"
+                    },
+                    "marker": "m",
+                    "radius_scale": 1.01
+                  }
                 },
                 {
                   "node": "object",
                   "id": "guide-meridian-z",
                   "name": "Guide Meridian Z",
-                  "type": "sphere_guide",
-                  "guide": { "kind": "meridian_z" },
-                  "marker": "p",
+                  "transform": {
+                    "position": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    "rotation_degrees": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    "scale": [
+                      1.0,
+                      1.0,
+                      1.0
+                    ]
+                  },
                   "visible": true,
-                  "radius_scale": 1.01
+                  "object": {
+                    "type": "sphere_guide",
+                    "guide": {
+                      "kind": "meridian_z"
+                    },
+                    "marker": "p",
+                    "radius_scale": 1.01
+                  }
                 },
                 {
                   "node": "object",
                   "id": "guide-lat-60",
                   "name": "Guide Latitude 60",
-                  "type": "sphere_guide",
-                  "guide": { "kind": "latitude", "degrees": 60.0 },
-                  "marker": "N",
+                  "transform": {
+                    "position": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    "rotation_degrees": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    "scale": [
+                      1.0,
+                      1.0,
+                      1.0
+                    ]
+                  },
                   "visible": true,
-                  "radius_scale": 1.012
+                  "object": {
+                    "type": "sphere_guide",
+                    "guide": {
+                      "kind": "latitude",
+                      "degrees": 60.0
+                    },
+                    "marker": "N",
+                    "radius_scale": 1.012
+                  }
                 },
                 {
                   "node": "object",
                   "id": "guide-lat-30",
                   "name": "Guide Latitude 30",
-                  "type": "sphere_guide",
-                  "guide": { "kind": "latitude", "degrees": 30.0 },
-                  "marker": "n",
+                  "transform": {
+                    "position": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    "rotation_degrees": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    "scale": [
+                      1.0,
+                      1.0,
+                      1.0
+                    ]
+                  },
                   "visible": true,
-                  "radius_scale": 1.012
+                  "object": {
+                    "type": "sphere_guide",
+                    "guide": {
+                      "kind": "latitude",
+                      "degrees": 30.0
+                    },
+                    "marker": "n",
+                    "radius_scale": 1.012
+                  }
                 },
                 {
                   "node": "object",
                   "id": "guide-lat-15",
                   "name": "Guide Latitude 15",
-                  "type": "sphere_guide",
-                  "guide": { "kind": "latitude", "degrees": 15.0 },
-                  "marker": ".",
+                  "transform": {
+                    "position": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    "rotation_degrees": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    "scale": [
+                      1.0,
+                      1.0,
+                      1.0
+                    ]
+                  },
                   "visible": true,
-                  "radius_scale": 1.012
+                  "object": {
+                    "type": "sphere_guide",
+                    "guide": {
+                      "kind": "latitude",
+                      "degrees": 15.0
+                    },
+                    "marker": ".",
+                    "radius_scale": 1.012
+                  }
                 },
                 {
                   "node": "object",
                   "id": "guide-lat--30",
                   "name": "Guide Latitude -30",
-                  "type": "sphere_guide",
-                  "guide": { "kind": "latitude", "degrees": -30.0 },
-                  "marker": "s",
+                  "transform": {
+                    "position": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    "rotation_degrees": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    "scale": [
+                      1.0,
+                      1.0,
+                      1.0
+                    ]
+                  },
                   "visible": true,
-                  "radius_scale": 1.012
+                  "object": {
+                    "type": "sphere_guide",
+                    "guide": {
+                      "kind": "latitude",
+                      "degrees": -30.0
+                    },
+                    "marker": "s",
+                    "radius_scale": 1.012
+                  }
                 }
               ]
             }

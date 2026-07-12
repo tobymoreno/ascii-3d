@@ -2,13 +2,25 @@ use crate::render::{
     RenderAxis, RenderBehavior, RenderGroup, RenderNode, RenderObject, RenderScene,
     RenderSphereGuideKind, RenderTransform,
 };
+use crossterm::event::KeyCode;
 
 pub const VIEWER_MENU_TITLES: &[&str] = &["File", "Objects", "View", "Help"];
 pub const FILE_MENU_INDEX: usize = 0;
 pub const OBJECTS_MENU_INDEX: usize = 1;
 
+pub const SCENE_HELPER_ROOT_PATH: &str = "@scene";
+pub const CAMERA_HELPER_PATH: &str = "@scene/camera";
+pub const LIGHT_HELPER_PATH: &str = "@scene/light";
+pub const WORLD_AXES_HELPER_PATH: &str = "@scene/world-axes";
+pub const SCENE_ORIGIN_HELPER_PATH: &str = "@scene/scene-origin";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SceneObjectKind {
+    SceneHelpers,
+    Camera,
+    Light,
+    WorldAxes,
+    SceneOrigin,
     Group,
     Mesh,
     QuadGroup,
@@ -19,6 +31,11 @@ pub enum SceneObjectKind {
 impl SceneObjectKind {
     pub const fn label(self) -> &'static str {
         match self {
+            Self::SceneHelpers => "runtime",
+            Self::Camera => "camera",
+            Self::Light => "light",
+            Self::WorldAxes => "settings",
+            Self::SceneOrigin => "origin",
             Self::Group => "group",
             Self::Mesh => "mesh",
             Self::QuadGroup => "quads",
@@ -51,10 +68,15 @@ pub struct ViewerInspectorState {
     pub menu_focused: bool,
     pub selected_menu: usize,
     pub file_open: bool,
+    pub selected_file_item: usize,
+    pub save_as_open: bool,
+    pub save_as_path: String,
     pub objects_open: bool,
     pub properties_open: bool,
     pub selected_object: usize,
     pub active_object_path: Option<String>,
+    pub active_xyz_target_path: String,
+    pub selected_property_item: usize,
 }
 
 impl ViewerInspectorState {
@@ -64,6 +86,7 @@ impl ViewerInspectorState {
 
     pub fn close_popup(&mut self) {
         self.file_open = false;
+        self.save_as_open = false;
         self.objects_open = false;
         self.properties_open = false;
         self.menu_focused = false;
@@ -93,9 +116,32 @@ impl ViewerInspectorState {
         self.objects_open = self.selected_menu == OBJECTS_MENU_INDEX;
         self.properties_open = false;
 
+        if self.file_open {
+            self.selected_file_item = 0;
+        }
+
         if self.objects_open {
             self.selected_object = self.selected_object.min(object_count.saturating_sub(1));
         }
+    }
+
+    pub fn move_file_up(&mut self) {
+        self.selected_file_item = if self.selected_file_item == 0 { 1 } else { 0 };
+    }
+
+    pub fn move_file_down(&mut self) {
+        self.selected_file_item = (self.selected_file_item + 1) % 2;
+    }
+
+    pub fn open_save_as(&mut self, path: impl Into<String>) {
+        self.file_open = false;
+        self.save_as_open = true;
+        self.save_as_path = path.into();
+    }
+
+    pub fn close_save_as(&mut self) {
+        self.save_as_open = false;
+        self.menu_focused = false;
     }
 
     pub fn move_object_up(&mut self, object_count: usize) {
@@ -122,10 +168,30 @@ impl ViewerInspectorState {
         let Some(entry) = entries.get(self.selected_object) else {
             return;
         };
+
         self.active_object_path = Some(entry.path.clone());
+        self.selected_property_item = 0;
         self.objects_open = false;
         self.properties_open = true;
         self.menu_focused = true;
+    }
+
+    pub fn move_property_up(&mut self, item_count: usize) {
+        if item_count == 0 {
+            self.selected_property_item = 0;
+        } else if self.selected_property_item == 0 {
+            self.selected_property_item = item_count - 1;
+        } else {
+            self.selected_property_item -= 1;
+        }
+    }
+
+    pub fn move_property_down(&mut self, item_count: usize) {
+        if item_count == 0 {
+            self.selected_property_item = 0;
+        } else {
+            self.selected_property_item = (self.selected_property_item + 1) % item_count;
+        }
     }
 
     pub fn active_label<'a>(&self, entries: &'a [SceneObjectEntry]) -> Option<&'a str> {
@@ -139,10 +205,72 @@ impl ViewerInspectorState {
 
 pub fn collect_scene_objects(scene: &RenderScene) -> Vec<SceneObjectEntry> {
     let mut entries = Vec::new();
+
     for group in &scene.groups {
         collect_group(group, "", 0, &mut entries);
     }
+
     entries
+}
+
+pub fn collect_scene_objects_with_helpers(
+    scene: &RenderScene,
+    _world_axes_visible: bool,
+) -> Vec<SceneObjectEntry> {
+    let mut entries = vec![
+        SceneObjectEntry {
+            path: CAMERA_HELPER_PATH.to_string(),
+            id: "camera".to_string(),
+            name: "Camera".to_string(),
+            depth: 0,
+            kind: SceneObjectKind::Camera,
+            visible: true,
+        },
+        SceneObjectEntry {
+            path: SCENE_ORIGIN_HELPER_PATH.to_string(),
+            id: "scene-origin".to_string(),
+            name: "Scene Origin".to_string(),
+            depth: 0,
+            kind: SceneObjectKind::SceneOrigin,
+            visible: true,
+        },
+    ];
+
+    for group in &scene.groups {
+        collect_group(group, "", 0, &mut entries);
+    }
+
+    entries
+}
+
+pub fn scene_helper_property_lines(
+    path: &str,
+    _world_axes_visible: bool,
+    active_path: Option<&str>,
+) -> Option<Vec<String>> {
+    let xyz = if active_path == Some(path) {
+        "xyz control: active"
+    } else {
+        "xyz control: inactive"
+    };
+
+    let lines = match path {
+        CAMERA_HELPER_PATH => vec![
+            xyz.to_string(),
+            "kind: viewport camera".to_string(),
+            "saved: no".to_string(),
+            "mode: runtime only".to_string(),
+        ],
+        SCENE_ORIGIN_HELPER_PATH => vec![
+            xyz.to_string(),
+            "kind: runtime scene origin".to_string(),
+            "saved: no".to_string(),
+            "mode: runtime only".to_string(),
+        ],
+        _ => return None,
+    };
+
+    Some(lines)
 }
 
 pub fn set_scene_object_visibility(scene: &mut RenderScene, path: &str, visible: bool) -> bool {
@@ -176,13 +304,94 @@ pub fn scene_object_visibility(scene: &RenderScene, path: &str) -> Option<bool> 
     None
 }
 
-pub fn scene_object_property_lines(scene: &RenderScene, path: &str) -> Option<Vec<String>> {
+pub fn scene_object_property_lines(
+    scene: &RenderScene,
+    path: &str,
+    active_path: Option<&str>,
+) -> Option<Vec<String>> {
     for group in &scene.groups {
-        if let Some(lines) = group_property_lines(group, "", path) {
+        if let Some(mut lines) = group_property_lines(group, "", path) {
+            lines.insert(
+                0,
+                if active_path == Some(path) {
+                    "xyz control: active".to_string()
+                } else {
+                    "xyz control: inactive".to_string()
+                },
+            );
+            lines.insert(1, "mode: runtime only".to_string());
+            lines.insert(2, "saved: no".to_string());
             return Some(lines);
         }
     }
     None
+}
+
+pub fn handle_scene_object_transform_key(
+    scene: &mut RenderScene,
+    path: &str,
+    code: KeyCode,
+) -> bool {
+    for group in &mut scene.groups {
+        if handle_group_transform_key(group, "", path, code) {
+            return true;
+        }
+    }
+    false
+}
+
+fn handle_group_transform_key(
+    group: &mut RenderGroup,
+    parent_path: &str,
+    requested_path: &str,
+    code: KeyCode,
+) -> bool {
+    let path = join_path(parent_path, &group.id);
+
+    if path == requested_path {
+        apply_transform_key(&mut group.transform, code);
+        return true;
+    }
+
+    for node in &mut group.children {
+        match node {
+            RenderNode::Group(child_group) => {
+                if handle_group_transform_key(child_group, &path, requested_path, code) {
+                    return true;
+                }
+            }
+            RenderNode::Object(object_node) => {
+                if join_path(&path, &object_node.id) == requested_path {
+                    apply_transform_key(&mut object_node.transform, code);
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+fn apply_transform_key(transform: &mut RenderTransform, code: KeyCode) {
+    match code {
+        KeyCode::Left => transform.position[0] -= 0.5,
+        KeyCode::Right => transform.position[0] += 0.5,
+        KeyCode::Up => transform.position[1] += 0.5,
+        KeyCode::Down => transform.position[1] -= 0.5,
+        KeyCode::PageUp => transform.position[2] += 0.5,
+        KeyCode::PageDown => transform.position[2] -= 0.5,
+        KeyCode::Char('x') => transform.rotation_degrees[0] += 2.0,
+        KeyCode::Char('X') => transform.rotation_degrees[0] -= 2.0,
+        KeyCode::Char('y') => transform.rotation_degrees[1] += 2.0,
+        KeyCode::Char('Y') => transform.rotation_degrees[1] -= 2.0,
+        KeyCode::Char('z') => transform.rotation_degrees[2] += 2.0,
+        KeyCode::Char('Z') => transform.rotation_degrees[2] -= 2.0,
+        KeyCode::Char('0') => {
+            transform.position = [0.0, 0.0, 0.0];
+            transform.rotation_degrees = [0.0, 0.0, 0.0];
+        }
+        _ => {}
+    }
 }
 
 fn collect_group(
@@ -522,7 +731,7 @@ mod tests {
         assert_eq!(entries[1].path, "root/graticule");
         assert_eq!(entries[1].name, "Graticule");
 
-        let lines = scene_object_property_lines(&scene, "root/graticule").unwrap();
+        let lines = scene_object_property_lines(&scene, "root/graticule", None).unwrap();
         assert!(lines.iter().any(|line| line == "editor composite: true"));
         assert!(lines.iter().any(|line| line == "internal children: 1"));
     }
@@ -559,7 +768,7 @@ mod tests {
 
     #[test]
     fn mesh_property_lines_include_asset_and_transform() {
-        let lines = scene_object_property_lines(&test_scene(), "root/earth/mesh").unwrap();
+        let lines = scene_object_property_lines(&test_scene(), "root/earth/mesh", None).unwrap();
         assert!(lines.iter().any(|line| line == "mesh asset: earth.obj"));
         assert!(lines.iter().any(|line| line.starts_with("node position:")));
         assert!(lines.iter().any(|line| line == "visible: true"));

@@ -71,7 +71,6 @@ pub struct ObjectDocument {
     pub visible: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub behaviors: Vec<BehaviorDocument>,
-    #[serde(flatten)]
     pub object: ObjectKindDocument,
 }
 
@@ -80,21 +79,17 @@ pub struct ObjectDocument {
 pub enum ObjectKindDocument {
     Mesh {
         asset: String,
-        #[serde(default)]
-        transform: TransformDocument,
     },
     GeoJsonMap {
         asset: String,
-        #[serde(default = "default_true")]
-        visible: bool,
+
         #[serde(default = "default_map_radius_scale")]
         radius_scale: f32,
     },
     SphereGuide {
         guide: SphereGuideDocument,
         marker: char,
-        #[serde(default = "default_true")]
-        visible: bool,
+
         #[serde(default = "default_guide_radius_scale")]
         radius_scale: f32,
     },

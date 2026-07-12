@@ -171,28 +171,26 @@ fn node_document_to_render_node(document: NodeDocument) -> RenderNode {
 
 fn object_document_to_render_object_node(document: ObjectDocument) -> RenderObjectNode {
     let object = match document.object {
-        ObjectKindDocument::Mesh { asset, transform } => RenderObject::Mesh(RenderMeshObject {
+        ObjectKindDocument::Mesh { asset } => RenderObject::Mesh(RenderMeshObject {
             mesh_asset: asset,
-            transform: transform_document_to_render_transform(transform),
+            transform: RenderTransform::default(),
         }),
         ObjectKindDocument::GeoJsonMap {
             asset,
-            visible,
             radius_scale,
         } => RenderObject::GeoJsonMap(RenderGeoJsonMapOverlay {
             asset,
-            visible,
+            visible: true,
             radius_scale,
         }),
         ObjectKindDocument::SphereGuide {
             guide,
             marker,
-            visible,
             radius_scale,
         } => RenderObject::SphereGuide(RenderSphereGuide {
             kind: sphere_guide_document_to_render_kind(guide),
             marker,
-            visible,
+            visible: true,
             radius_scale,
         }),
     };
@@ -329,7 +327,6 @@ mod tests {
                 behaviors: Vec::new(),
                 object: ObjectKindDocument::Mesh {
                     asset: "sphere.obj".to_string(),
-                    transform: TransformDocument::default(),
                 },
             })],
         });
