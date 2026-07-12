@@ -14,7 +14,7 @@ use crossterm::{
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
-    widgets::Paragraph,
+    widgets::{Block, Borders, Paragraph},
     Terminal,
 };
 use std::{
@@ -82,8 +82,13 @@ fn run_viewer(
                 .split(ui.area());
 
             let scene_area = shell[1];
-            let render_width = (scene_area.width as usize).max(MIN_VIEW_SCENE_WIDTH);
-            let render_height = (scene_area.height as usize).max(MIN_VIEW_SCENE_HEIGHT);
+            let scene_block = Block::default()
+                .borders(Borders::ALL)
+                .title(" viewport ");
+            let viewport_area = scene_block.inner(scene_area);
+
+            let render_width = (viewport_area.width as usize).max(MIN_VIEW_SCENE_WIDTH);
+            let render_height = (viewport_area.height as usize).max(MIN_VIEW_SCENE_HEIGHT);
 
             if frame.width() != render_width || frame.height() != render_height {
                 frame = Frame::new(render_width, render_height);
@@ -96,8 +101,8 @@ fn run_viewer(
             let header = format!(
                 "{} | visible {}x{} | render {}x{} | fps {:>5.1}",
                 scene.name,
-                scene_area.width,
-                scene_area.height,
+                viewport_area.width,
+                viewport_area.height,
                 render_width,
                 render_height,
                 state.fps,
@@ -106,7 +111,8 @@ fn run_viewer(
                 "arrows origin | PgUp/PgDn z | +/- zoom | x/y/z rotate | a/A axes | r reset | q quit";
 
             ui.render_widget(Paragraph::new(header), shell[0]);
-            ui.render_widget(Paragraph::new(rendered), scene_area);
+            ui.render_widget(scene_block, scene_area);
+            ui.render_widget(Paragraph::new(rendered), viewport_area);
             ui.render_widget(Paragraph::new(footer), shell[2]);
         })?;
 
