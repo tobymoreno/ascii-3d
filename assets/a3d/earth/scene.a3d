@@ -1,0 +1,90 @@
+{
+  "camera": {
+    "far": 100.0,
+    "fov_degrees": 60.0,
+    "near": 0.1,
+    "position": [
+      0.0,
+      0.0,
+      4.0
+    ],
+    "target": [
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "objects": [
+    {
+      "asset": {
+        "path": "../../models/sphere_uv_32x16.obj",
+        "type": "mesh"
+      },
+      "behaviors": [
+        {
+          "axis": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "degrees_per_second": 15.0,
+          "type": "rotate"
+        }
+      ],
+      "id": "earth",
+      "render": {
+        "mode": "ascii_raster",
+        "stroke_character": "#",
+        "visible": true
+      },
+      "transform": {
+        "position": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation_degrees": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    }
+  ],
+  "title": "Earth",
+  "version": 1,
+  "viewport": {
+    "show_camera3d": true,
+    "show_world_debug": true
+  },
+  "world": {
+    "physics": {
+      "bounds_max": [
+        20.0,
+        20.0,
+        20.0
+      ],
+      "bounds_min": [
+        -20.0,
+        -20.0,
+        -20.0
+      ],
+      "damping": 0.01,
+      "gravity": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  }
+}
