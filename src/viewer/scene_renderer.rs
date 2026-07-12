@@ -2,161 +2,20 @@ use crate::{
     render::{
         draw_line_overlay, great_circle_points, land_fill_char, latitude_circle_points,
         lerp_angle_degrees, lon_lat_to_sphere, point_in_polygon, segment_steps, Frame,
-        GeoJsonMapAsset, MeshAsset, MeshVertex,
-        Projection, RenderNode, RenderObject, RenderQuad, RenderQuadGroup, RenderScene,
-        RenderSphereGuideKind, RenderTransform, SphereGuidePoint,
+        GeoJsonMapAsset, Mat4, MeshAsset, MeshVertex, Projection, RenderNode, RenderObject,
+        RenderQuad, RenderQuadGroup, RenderScene, RenderSphereGuideKind, RenderTransform,
+        SphereGuidePoint, Vec3,
     },
     viewer::ViewerState,
 };
 
-use std::{
-    collections::HashMap,
-    io,
-};
+use std::collections::HashMap;
 
 const WIDTH: usize = 96;
 const HEIGHT: usize = 34;
 
 pub const VIEW_SCENE_WIDTH: usize = WIDTH;
 pub const VIEW_SCENE_HEIGHT: usize = HEIGHT;
-
-#[derive(Debug, Clone, Copy)]
-struct Vec3 {
-    x: f32,
-    y: f32,
-    z: f32,
-}
-
-impl Vec3 {
-    const fn new(x: f32, y: f32, z: f32) -> Self {
-        Self { x, y, z }
-    }
-
-    fn dot(self, other: Self) -> f32 {
-        self.x * other.x + self.y * other.y + self.z * other.z
-    }
-
-    fn length(self) -> f32 {
-        self.dot(self).sqrt()
-    }
-
-    fn normalized(self) -> Self {
-        let length = self.length();
-
-        if length <= f32::EPSILON {
-            return Self::new(0.0, 1.0, 0.0);
-        }
-
-        Self::new(self.x / length, self.y / length, self.z / length)
-    }
-
-    fn from_array(values: [f32; 3]) -> Self {
-        Self::new(values[0], values[1], values[2])
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct Mat4 {
-    m: [[f32; 4]; 4],
-}
-
-impl Mat4 {
-    const fn identity() -> Self {
-        Self {
-            m: [
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ],
-        }
-    }
-
-    fn translation(v: Vec3) -> Self {
-        let mut result = Self::identity();
-        result.m[0][3] = v.x;
-        result.m[1][3] = v.y;
-        result.m[2][3] = v.z;
-        result
-    }
-
-    fn scale(x: f32, y: f32, z: f32) -> Self {
-        Self {
-            m: [
-                [x, 0.0, 0.0, 0.0],
-                [0.0, y, 0.0, 0.0],
-                [0.0, 0.0, z, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ],
-        }
-    }
-
-    fn rotation_x(radians: f32) -> Self {
-        let (s, c) = radians.sin_cos();
-
-        Self {
-            m: [
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, c, -s, 0.0],
-                [0.0, s, c, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ],
-        }
-    }
-
-    fn rotation_y(radians: f32) -> Self {
-        let (s, c) = radians.sin_cos();
-
-        Self {
-            m: [
-                [c, 0.0, s, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
-                [-s, 0.0, c, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ],
-        }
-    }
-
-    fn rotation_z(radians: f32) -> Self {
-        let (s, c) = radians.sin_cos();
-
-        Self {
-            m: [
-                [c, -s, 0.0, 0.0],
-                [s, c, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ],
-        }
-    }
-
-    fn transform_point(self, p: Vec3) -> Vec3 {
-        Vec3::new(
-            self.m[0][0] * p.x + self.m[0][1] * p.y + self.m[0][2] * p.z + self.m[0][3],
-            self.m[1][0] * p.x + self.m[1][1] * p.y + self.m[1][2] * p.z + self.m[1][3],
-            self.m[2][0] * p.x + self.m[2][1] * p.y + self.m[2][2] * p.z + self.m[2][3],
-        )
-    }
-}
-
-impl std::ops::Mul for Mat4 {
-    type Output = Self;
-
-    fn mul(self, rhs: Self) -> Self::Output {
-        let mut out = [[0.0; 4]; 4];
-
-        for row in 0..4 {
-            for col in 0..4 {
-                out[row][col] = self.m[row][0] * rhs.m[0][col]
-                    + self.m[row][1] * rhs.m[1][col]
-                    + self.m[row][2] * rhs.m[2][col]
-                    + self.m[row][3] * rhs.m[3][col];
-            }
-        }
-
-        Self { m: out }
-    }
-}
 
 fn marker_char(marker: &str) -> char {
     marker.chars().next().unwrap_or('#')
@@ -375,7 +234,7 @@ fn transform_mesh_vertex(vertex: MeshVertex, world: Mat4) -> (Vec3, Vec3) {
 
 fn mesh_shade_char(normal: Vec3) -> char {
     let light = Vec3::new(-0.45, 0.7, -0.55).normalized();
-    let brightness = (0.15 + normal.dot(light).max(0.0) * 0.75).clamp(0.0, 1.0);
+    let brightness = (0.15_f32 + normal.dot(light).max(0.0_f32) * 0.75_f32).clamp(0.0_f32, 1.0_f32);
     let ramp = b" .:-=+*#%@";
     let index = (brightness * (ramp.len() - 1) as f32).round() as usize;
 

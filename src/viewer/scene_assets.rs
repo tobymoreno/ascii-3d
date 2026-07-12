@@ -7,7 +7,7 @@ use std::{
 use crate::{
     render::{
         load_geojson_map_asset, load_obj_mesh, GeoJsonMapAsset, MeshAsset, RenderNode,
-        RenderObject, RenderQuadGroup, RenderScene,
+        RenderObject, RenderScene,
     },
     scene::{load_scene_document, scene_document_to_render_scene},
 };

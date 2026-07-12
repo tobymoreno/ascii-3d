@@ -10,8 +10,10 @@ mod projection;
 
 pub use projection::Projection;
 mod lines;
+mod math;
 
 pub use lines::draw_line_overlay;
+pub use math::{Mat4, Vec3};
 
 mod mesh;
 mod sphere_guides;
