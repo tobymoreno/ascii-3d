@@ -2,8 +2,9 @@ use ascii_3d::{
     render::{apply_render_behaviors_to_scene, Frame, GeoJsonMapAsset, MeshAsset, RenderScene},
     viewer::{
         collect_scene_objects, draw_render_scene, handle_key, load_scene_maps, load_scene_meshes,
-        read_scene, scene_object_property_lines, ViewerInput, ViewerInspectorState, ViewerState,
-        ViewerViewport, MIN_VIEW_SCENE_HEIGHT, MIN_VIEW_SCENE_WIDTH, VIEWER_MENU_TITLES,
+        read_scene, scene_object_property_lines, toggle_scene_object_visibility, ViewerInput,
+        ViewerInspectorState, ViewerState, ViewerViewport, MIN_VIEW_SCENE_HEIGHT,
+        MIN_VIEW_SCENE_WIDTH, VIEWER_MENU_TITLES,
     },
 };
 use crossterm::{
@@ -57,7 +58,7 @@ fn run_viewer(
     let mut terminal = AppTerminal::new(backend)?;
     let mut state = ViewerState::default();
     let mut inspector = ViewerInspectorState::default();
-    let object_entries = collect_scene_objects(&scene);
+    let mut object_entries = collect_scene_objects(&scene);
     let mut frame = Frame::new(MIN_VIEW_SCENE_WIDTH, MIN_VIEW_SCENE_HEIGHT);
     let target_frame = Duration::from_millis(33);
     let mut previous_frame_start = Instant::now();
@@ -166,8 +167,15 @@ fn run_viewer(
             };
 
             if inspector.properties_open {
-                if key.code == KeyCode::Esc {
-                    inspector.close_properties();
+                match key.code {
+                    KeyCode::Esc => inspector.close_properties(),
+                    KeyCode::Enter | KeyCode::Char(' ') => {
+                        if let Some(path) = inspector.active_object_path.as_deref() {
+                            toggle_scene_object_visibility(&mut scene, path);
+                            object_entries = collect_scene_objects(&scene);
+                        }
+                    }
+                    _ => {}
                 }
 
                 continue;
@@ -279,10 +287,23 @@ fn draw_properties_popup(
     object_name: &str,
     lines: &[String],
 ) {
-    let text = lines.join("\n");
-    let popup = Paragraph::new(text).block(
+    let items = lines
+        .iter()
+        .map(|line| {
+            if line.starts_with("visible:") {
+                ListItem::new(Line::from(format!("> {line}  [Enter/Space to toggle]")))
+                    .style(Style::default().add_modifier(Modifier::REVERSED))
+            } else {
+                ListItem::new(Line::from(format!("  {line}")))
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let popup = List::new(items).block(
         Block::default()
-            .title(format!(" Properties: {object_name}  Esc=back "))
+            .title(format!(
+                " Properties: {object_name}  Visibility selected  Esc=back "
+            ))
             .borders(Borders::ALL),
     );
 

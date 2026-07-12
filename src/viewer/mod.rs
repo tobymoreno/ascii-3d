@@ -6,8 +6,8 @@ mod state;
 
 pub use input::{handle_key, ViewerInput};
 pub use inspector::{
-    collect_scene_objects, scene_object_property_lines, SceneObjectEntry, ViewerInspectorState,
-    OBJECTS_MENU_INDEX, VIEWER_MENU_TITLES,
+    collect_scene_objects, scene_object_property_lines, toggle_scene_object_visibility,
+    SceneObjectEntry, ViewerInspectorState, OBJECTS_MENU_INDEX, VIEWER_MENU_TITLES,
 };
 pub use state::ViewerState;
 

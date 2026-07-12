@@ -141,6 +141,37 @@ pub fn collect_scene_objects(scene: &RenderScene) -> Vec<SceneObjectEntry> {
     entries
 }
 
+pub fn set_scene_object_visibility(scene: &mut RenderScene, path: &str, visible: bool) -> bool {
+    for group in &mut scene.groups {
+        if set_group_visibility(group, "", path, visible) {
+            return true;
+        }
+    }
+
+    false
+}
+
+pub fn toggle_scene_object_visibility(scene: &mut RenderScene, path: &str) -> Option<bool> {
+    let current = scene_object_visibility(scene, path)?;
+    let next = !current;
+
+    if set_scene_object_visibility(scene, path, next) {
+        Some(next)
+    } else {
+        None
+    }
+}
+
+pub fn scene_object_visibility(scene: &RenderScene, path: &str) -> Option<bool> {
+    for group in &scene.groups {
+        if let Some(visible) = group_visibility(group, "", path) {
+            return Some(visible);
+        }
+    }
+
+    None
+}
+
 pub fn scene_object_property_lines(scene: &RenderScene, path: &str) -> Option<Vec<String>> {
     for group in &scene.groups {
         if let Some(lines) = group_property_lines(group, "", path) {
@@ -183,6 +214,67 @@ fn collect_group(
             }),
         }
     }
+}
+
+fn set_group_visibility(
+    group: &mut RenderGroup,
+    parent_path: &str,
+    requested_path: &str,
+    visible: bool,
+) -> bool {
+    let path = join_path(parent_path, &group.id);
+
+    if path == requested_path {
+        group.visible = visible;
+        return true;
+    }
+
+    for node in &mut group.children {
+        match node {
+            RenderNode::Group(child_group) => {
+                if set_group_visibility(child_group, &path, requested_path, visible) {
+                    return true;
+                }
+            }
+            RenderNode::Object(object_node) => {
+                let object_path = join_path(&path, &object_node.id);
+
+                if object_path == requested_path {
+                    object_node.visible = visible;
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+fn group_visibility(group: &RenderGroup, parent_path: &str, requested_path: &str) -> Option<bool> {
+    let path = join_path(parent_path, &group.id);
+
+    if path == requested_path {
+        return Some(group.visible);
+    }
+
+    for node in &group.children {
+        match node {
+            RenderNode::Group(child_group) => {
+                if let Some(visible) = group_visibility(child_group, &path, requested_path) {
+                    return Some(visible);
+                }
+            }
+            RenderNode::Object(object_node) => {
+                let object_path = join_path(&path, &object_node.id);
+
+                if object_path == requested_path {
+                    return Some(object_node.visible && object_visible(&object_node.object));
+                }
+            }
+        }
+    }
+
+    None
 }
 
 fn group_property_lines(
@@ -429,6 +521,36 @@ mod tests {
         let lines = scene_object_property_lines(&scene, "root/graticule").unwrap();
         assert!(lines.iter().any(|line| line == "editor composite: true"));
         assert!(lines.iter().any(|line| line == "internal children: 1"));
+    }
+
+    #[test]
+    fn toggling_group_visibility_updates_scene() {
+        let mut scene = test_scene();
+
+        assert_eq!(scene_object_visibility(&scene, "root/earth"), Some(true));
+        assert_eq!(
+            toggle_scene_object_visibility(&mut scene, "root/earth"),
+            Some(false)
+        );
+        assert_eq!(scene_object_visibility(&scene, "root/earth"), Some(false));
+    }
+
+    #[test]
+    fn toggling_object_visibility_updates_scene() {
+        let mut scene = test_scene();
+
+        assert_eq!(
+            scene_object_visibility(&scene, "root/earth/mesh"),
+            Some(true)
+        );
+        assert_eq!(
+            toggle_scene_object_visibility(&mut scene, "root/earth/mesh"),
+            Some(false)
+        );
+        assert_eq!(
+            scene_object_visibility(&scene, "root/earth/mesh"),
+            Some(false)
+        );
     }
 
     #[test]
