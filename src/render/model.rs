@@ -61,6 +61,7 @@ pub struct RenderLighting {
 pub enum RenderObject {
     Mesh(RenderMeshObject),
     QuadGroup(RenderQuadGroup),
+    GeoJsonMap(RenderGeoJsonMapOverlay),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

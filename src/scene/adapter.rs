@@ -1,7 +1,7 @@
 use super::SceneDocument;
 use crate::render::{
     RenderAxis, RenderBehavior, RenderCamera, RenderDisplay, RenderGeoJsonMapOverlay,
-    RenderGroup, RenderLighting, RenderNode, RenderObject, RenderObjectNode, RenderOverlay,
+    RenderGroup, RenderLighting, RenderNode, RenderObject, RenderObjectNode,
     RenderProjectionConfig, RenderQuad, RenderQuadGroup, RenderScene, RenderSpinBehavior,
     RenderTransform,
 };
@@ -100,20 +100,22 @@ pub fn scene_document_to_render_scene(document: SceneDocument) -> RenderScene {
             mesh_object,
         )));
 
+        if let Some(map_overlay) = document.map_overlay {
+            earth_group.children.push(RenderNode::Object(RenderObjectNode::new(
+                "map",
+                "Map",
+                RenderObject::GeoJsonMap(RenderGeoJsonMapOverlay {
+                    asset: map_overlay.asset,
+                    visible: map_overlay.visible,
+                    radius_scale: map_overlay.radius_scale,
+                }),
+            )));
+        }
+
         root_group.children.push(RenderNode::Group(earth_group));
     }
 
     scene.groups.push(root_group);
-
-    if let Some(map_overlay) = document.map_overlay {
-        scene
-            .overlays
-            .push(RenderOverlay::GeoJsonMap(RenderGeoJsonMapOverlay {
-                asset: map_overlay.asset,
-                visible: map_overlay.visible,
-                radius_scale: map_overlay.radius_scale,
-            }));
-    }
 
     scene
 }
