@@ -1,12 +1,11 @@
 use crate::{
     render::{
-        draw_line_overlay, land_fill_char, lerp_angle_degrees, load_geojson_map_asset,
-        load_obj_mesh, lon_lat_to_sphere, point_in_polygon, segment_steps, Frame,
-        great_circle_points, latitude_circle_points, GeoJsonMapAsset, MeshAsset, MeshVertex,
+        draw_line_overlay, great_circle_points, land_fill_char, latitude_circle_points,
+        lerp_angle_degrees, lon_lat_to_sphere, point_in_polygon, segment_steps, Frame,
+        GeoJsonMapAsset, MeshAsset, MeshVertex,
         Projection, RenderNode, RenderObject, RenderQuad, RenderQuadGroup, RenderScene,
         RenderSphereGuideKind, RenderTransform, SphereGuidePoint,
     },
-    scene::{load_scene_document, scene_document_to_render_scene},
     viewer::ViewerState,
 };
 
