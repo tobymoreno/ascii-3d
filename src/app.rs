@@ -1,5 +1,6 @@
 use std::{
     collections::VecDeque,
+    fs,
     io::{self, Write, stdout},
     path::{Path, PathBuf},
     time::{Duration, Instant},
@@ -143,6 +144,65 @@ const P_WORD_WORLD_SCALE: f32 = 1.35;
 
 const DEFAULT_CAMERA_VIEWPORT_CELL_ASPECT_RATIO: f32 = 0.5;
 const DEFAULT_CAMERA_VIEWPORT_PERSPECTIVE_SCALE: f32 = 22.0;
+const A3D_PROFILE_DIRECTORY: &str = ".a3dprofile";
+const A3D_PROFILE_FILENAME: &str = "state.json";
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+struct A3dProfile {
+    version: u32,
+    last_a3d_manifest: PathBuf,
+}
+
+impl A3dProfile {
+    const VERSION: u32 = 1;
+}
+
+fn a3d_profile_path() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)?;
+
+    Some(home.join(A3D_PROFILE_DIRECTORY).join(A3D_PROFILE_FILENAME))
+}
+
+fn read_a3d_profile_manifest() -> Option<PathBuf> {
+    let profile_path = a3d_profile_path()?;
+    let source = fs::read_to_string(profile_path).ok()?;
+    let profile: A3dProfile = serde_json::from_str(&source).ok()?;
+
+    (profile.version == A3dProfile::VERSION).then_some(profile.last_a3d_manifest)
+}
+
+fn write_a3d_profile_manifest(manifest_path: &Path) -> io::Result<()> {
+    let Some(profile_path) = a3d_profile_path() else {
+        return Ok(());
+    };
+
+    let persisted_path =
+        fs::canonicalize(manifest_path).unwrap_or_else(|_| manifest_path.to_path_buf());
+
+    let profile = A3dProfile {
+        version: A3dProfile::VERSION,
+        last_a3d_manifest: persisted_path,
+    };
+
+    let parent = profile_path
+        .parent()
+        .ok_or_else(|| io::Error::other("A3D profile path has no parent directory"))?;
+    fs::create_dir_all(parent)?;
+
+    let source = serde_json::to_string_pretty(&profile).map_err(io::Error::other)?;
+    fs::write(profile_path, format!("{source}
+"))
+}
+
+fn manifest_path_from_selection(path: PathBuf) -> PathBuf {
+    if path.is_dir() {
+        path.join("scene.a3d")
+    } else {
+        path
+    }
+}
 
 fn vec3_cross(a: Vec3, b: Vec3) -> Vec3 {
     Vec3::new(
@@ -450,6 +510,8 @@ struct AppState {
     control_mode: ControlMode,
     xyz_control: XyzControl,
     active_menu: Option<MenuState>,
+    scene_browser_open: bool,
+    scene_browser_selected: usize,
     world_camera_position: Vec3,
     world_camera_yaw_degrees: f32,
     world_camera_pitch_degrees: f32,
@@ -486,6 +548,8 @@ impl AppState {
             control_mode: ControlMode::Scene,
             xyz_control: XyzControl::default(),
             active_menu: None,
+            scene_browser_open: false,
+            scene_browser_selected: 0,
             world_camera_position,
             world_camera_yaw_degrees,
             world_camera_pitch_degrees,
@@ -666,23 +730,6 @@ impl AppState {
         self.load_a3d_root(root);
     }
 
-    fn next_scene(&mut self) {
-        self.scene_position = (self.scene_position + 1) % crate::scenes::scene_count();
-        self.reset_animation();
-        self.activate_current_scene_assets();
-    }
-
-    fn previous_scene(&mut self) {
-        self.scene_position = if self.scene_position == 0 {
-            crate::scenes::scene_count() - 1
-        } else {
-            self.scene_position - 1
-        };
-
-        self.reset_animation();
-        self.activate_current_scene_assets();
-    }
-
     fn reset_animation(&mut self) {
         self.animation_angle_degrees = 0.0;
         self.box_angle_degrees = 0.0;
@@ -783,6 +830,50 @@ impl AppState {
 
     fn close_menu(&mut self) {
         self.active_menu = None;
+    }
+
+    fn open_scene_browser(&mut self) {
+        self.scene_browser_selected = self.scene_position;
+        self.scene_browser_open = true;
+        self.close_menu();
+    }
+
+    fn close_scene_browser(&mut self) {
+        self.scene_browser_open = false;
+    }
+
+    fn move_scene_browser_up(&mut self) {
+        let count = crate::scenes::scene_count();
+
+        if count == 0 {
+            self.scene_browser_selected = 0;
+        } else if self.scene_browser_selected == 0 {
+            self.scene_browser_selected = count - 1;
+        } else {
+            self.scene_browser_selected -= 1;
+        }
+    }
+
+    fn move_scene_browser_down(&mut self) {
+        let count = crate::scenes::scene_count();
+
+        if count == 0 {
+            self.scene_browser_selected = 0;
+        } else {
+            self.scene_browser_selected = (self.scene_browser_selected + 1) % count;
+        }
+    }
+
+    fn select_scene_browser_entry(&mut self) {
+        if crate::scenes::scene_count() == 0 {
+            self.close_scene_browser();
+            return;
+        }
+
+        self.scene_position = self.scene_browser_selected;
+        self.reset_animation();
+        self.activate_current_scene_assets();
+        self.close_scene_browser();
     }
 
     fn move_menu_up(&mut self) {
@@ -1283,6 +1374,8 @@ impl AppState {
     }
 
     fn load_a3d_file(&mut self, manifest_path: PathBuf) {
+        let manifest_path = manifest_path_from_selection(manifest_path);
+
         let Some(root) = manifest_path.parent().map(Path::to_path_buf) else {
             self.loaded_a3d_error = Some("selected .a3d file has no parent folder".to_string());
             self.loaded_a3d_debug_popup_until = Some(Instant::now() + Duration::from_secs(5));
@@ -1290,17 +1383,67 @@ impl AppState {
         };
 
         match load_a3d_project(&manifest_path).and_then(|project| {
+            let camera = project.manifest.camera;
+
             project
                 .into_world()
+                .map(|world| (world, camera))
                 .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
         }) {
-            Ok(world) => {
+            Ok((world, camera)) => {
                 self.loaded_a3d_workspace.sync_objects(
                     world
                         .objects
                         .iter()
                         .map(|object| (object.id.clone(), object.render.visible)),
                 );
+                if let Some(camera) = camera {
+                    let position = Vec3::new(
+                        camera.position[0],
+                        camera.position[1],
+                        camera.position[2],
+                    );
+                    let target = Vec3::new(
+                        camera.target[0],
+                        camera.target[1],
+                        camera.target[2],
+                    );
+                    let (yaw, pitch) = yaw_pitch_toward(position, target);
+
+                    self.world_camera_position = position;
+                    self.world_camera_yaw_degrees = yaw;
+                    self.world_camera_pitch_degrees = pitch;
+                }
+
+                let registry = crate::scenes::registry();
+                let selected_scene = registry
+                    .iter()
+                    .position(|descriptor| {
+                        descriptor
+                            .a3d_root
+                            .as_ref()
+                            .is_some_and(|registered_root| {
+                                fs::canonicalize(registered_root).ok()
+                                    == fs::canonicalize(&root).ok()
+                            })
+                    })
+                    .or_else(|| {
+                        registry
+                            .iter()
+                            .position(|descriptor| descriptor.id == "loaded_a3d")
+                    });
+
+                if let Some(scene_position) = selected_scene {
+                    self.scene_position = scene_position;
+                    self.scene_browser_selected = scene_position;
+                }
+
+                if let Err(error) = write_a3d_profile_manifest(&manifest_path) {
+                    self.push_debug_console_line(format!(
+                        "A3D profile save failed: {error}"
+                    ));
+                }
+
                 self.loaded_a3d_root = Some(root);
                 self.loaded_a3d_manifest_path = Some(manifest_path);
                 self.loaded_a3d_world = Some(world);
@@ -1446,21 +1589,22 @@ fn default_a3d_root_path() -> PathBuf {
         .join("p_depth_demo")
 }
 
-fn initial_a3d_root_path_from_args() -> PathBuf {
-    let Some(argument) = std::env::args_os().nth(1) else {
-        return default_a3d_root_path();
-    };
-
-    let path = PathBuf::from(argument);
-
-    if path.is_file() {
-        return path
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(default_a3d_root_path);
+fn initial_a3d_manifest_path() -> PathBuf {
+    if let Some(argument) = std::env::args_os().nth(1) {
+        return manifest_path_from_selection(PathBuf::from(argument));
     }
 
-    path
+    if let Some(profile_manifest) = read_a3d_profile_manifest() {
+        if profile_manifest.is_file() {
+            return profile_manifest;
+        }
+    }
+
+    crate::scenes::registry()
+        .into_iter()
+        .find_map(|descriptor| descriptor.a3d_root)
+        .map(|root| root.join("scene.a3d"))
+        .unwrap_or_else(|| default_a3d_root_path().join("scene.a3d"))
 }
 
 fn load_default_a3d_world() -> io::Result<LoadedWorld> {
@@ -3326,6 +3470,36 @@ fn debug_console_popup_lines(state: &AppState) -> Option<Vec<String>> {
     Some(lines)
 }
 
+fn scene_browser_popup_lines(state: &AppState) -> Option<Vec<String>> {
+    if !state.scene_browser_open {
+        return None;
+    }
+
+    let registry = crate::scenes::registry();
+    let mut lines = vec![
+        "Scenes".to_string(),
+        "Up/Down select | Enter open | Esc close".to_string(),
+        String::new(),
+    ];
+
+    for descriptor in registry {
+        let selector = if descriptor.index == state.scene_browser_selected {
+            ">"
+        } else {
+            " "
+        };
+        let current = if descriptor.index == state.scene_position {
+            " [current]"
+        } else {
+            ""
+        };
+
+        lines.push(format!("{selector} {}{current}", descriptor.title));
+    }
+
+    Some(lines)
+}
+
 fn world_objects_popup_lines(state: &AppState) -> Option<Vec<String>> {
     if !state.loaded_a3d_workspace.objects_panel_open() {
         return None;
@@ -3426,6 +3600,7 @@ fn render_scene(
     let camera_viewport = camera_start.elapsed();
 
     let debug_popup_lines = exit_confirm_popup_lines(state)
+        .or_else(|| scene_browser_popup_lines(state))
         .or_else(|| world_objects_popup_lines(state))
         .or_else(|| debug_console_popup_lines(state));
     let frame_timing_lines = state.frame_timing_lines();
@@ -3652,13 +3827,8 @@ fn apply_app_command(state: &mut AppState, command: AppCommand) -> KeyHandling {
             KeyHandling::Handled
         }
 
-        AppCommand::NextScene => {
-            state.next_scene();
-            KeyHandling::Handled
-        }
-
-        AppCommand::PreviousScene => {
-            state.previous_scene();
+        AppCommand::OpenSceneBrowser => {
+            state.open_scene_browser();
             KeyHandling::Handled
         }
 
@@ -3952,6 +4122,28 @@ fn handle_key_press(state: &mut AppState, key: KeyEvent) -> KeyHandling {
         return KeyHandling::Handled;
     }
 
+    if state.scene_browser_open {
+        match key_code {
+            KeyCode::Esc => {
+                state.close_scene_browser();
+                return KeyHandling::Handled;
+            }
+            KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => {
+                state.move_scene_browser_up();
+                return KeyHandling::Handled;
+            }
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') => {
+                state.move_scene_browser_down();
+                return KeyHandling::Handled;
+            }
+            KeyCode::Enter => {
+                state.select_scene_browser_entry();
+                return KeyHandling::Handled;
+            }
+            _ => return KeyHandling::Handled,
+        }
+    }
+
     if state.loaded_a3d_workspace.objects_panel_open() {
         match key_code {
             KeyCode::Esc => {
@@ -4081,8 +4273,7 @@ pub fn run() -> io::Result<()> {
     terminal.clear()?;
 
     let mut state = AppState::new();
-    state.load_a3d_root(initial_a3d_root_path_from_args());
-    state.activate_current_scene_assets();
+    state.load_a3d_file(initial_a3d_manifest_path());
     let mut previous_time = Instant::now();
     let mut previous_frame: Option<String> = None;
 
@@ -4138,7 +4329,7 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn initial_a3d_root_path_defaults_to_bundled_demo_when_no_cli_arg_is_used() {
+    fn default_a3d_root_points_to_bundled_demo() {
         let path = default_a3d_root_path();
 
         assert!(path.ends_with(Path::new("assets").join("a3d").join("p_depth_demo")));
@@ -4154,23 +4345,28 @@ mod tests {
     }
 
     #[test]
-    fn next_scene_moves_to_second_registry_entry() {
+    fn scene_browser_opens_on_current_scene() {
         let mut state = AppState::new();
+        state.scene_position = 2;
 
-        state.next_scene();
+        state.open_scene_browser();
 
-        let expected = crate::scenes::scene_descriptor_at(1);
-        assert_eq!(state.current_scene_descriptor().id, expected.id);
-        assert_eq!(state.current_scene(), expected.scene);
+        assert!(state.scene_browser_open);
+        assert_eq!(state.scene_browser_selected, 2);
     }
 
     #[test]
-    fn previous_scene_wraps_to_oldest_scene() {
+    fn scene_browser_selects_requested_scene() {
         let mut state = AppState::new();
+        state.open_scene_browser();
+        state.scene_browser_selected = 1;
 
-        state.previous_scene();
+        state.select_scene_browser_entry();
 
-        assert_eq!(state.current_scene(), Scene::Axes);
+        let expected = crate::scenes::scene_descriptor_at(1);
+        assert!(!state.scene_browser_open);
+        assert_eq!(state.current_scene_descriptor().id, expected.id);
+        assert_eq!(state.current_scene(), expected.scene);
     }
 
     #[test]

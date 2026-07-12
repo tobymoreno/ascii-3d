@@ -15,8 +15,7 @@ pub enum AppCommand {
     SetControlModeCamera,
     SetControlModeLight,
 
-    NextScene,
-    PreviousScene,
+    OpenSceneBrowser,
     ResetWorldCamera,
     ResetActiveControl,
     XyzControl(XyzControlEvent),

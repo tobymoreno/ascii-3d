@@ -152,10 +152,10 @@ const FILE_ITEMS: &[MenuItem] = &[
     MenuItem::real("Exit", AppCommand::Quit),
 ];
 
-const SCENE_ITEMS: &[MenuItem] = &[
-    MenuItem::real("Next scene", AppCommand::NextScene),
-    MenuItem::real("Previous scene", AppCommand::PreviousScene),
-];
+const SCENE_ITEMS: &[MenuItem] = &[MenuItem::real(
+    "Browse scenes...",
+    AppCommand::OpenSceneBrowser,
+)];
 
 const CONTROL_ITEMS: &[MenuItem] = &[
     MenuItem::real("Objects...", AppCommand::OpenWorldObjects),
