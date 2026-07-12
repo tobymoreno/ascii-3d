@@ -72,6 +72,7 @@ pub struct LoadedA3dWorkspace {
     inspected_target: Option<WorldEditorTarget>,
     active_xyz_target: WorldEditorTarget,
     selected_entry: usize,
+    objects_panel_open: bool,
 }
 
 impl Default for LoadedA3dWorkspace {
@@ -87,6 +88,7 @@ impl LoadedA3dWorkspace {
             inspected_target: None,
             active_xyz_target: WorldEditorTarget::Camera,
             selected_entry: 0,
+            objects_panel_open: false,
         }
     }
 
@@ -104,6 +106,18 @@ impl LoadedA3dWorkspace {
 
     pub const fn selected_entry(&self) -> usize {
         self.selected_entry
+    }
+
+    pub const fn objects_panel_open(&self) -> bool {
+        self.objects_panel_open
+    }
+
+    pub fn open_objects_panel(&mut self) {
+        self.objects_panel_open = true;
+    }
+
+    pub fn close_objects_panel(&mut self) {
+        self.objects_panel_open = false;
     }
 
     pub fn set_selected_entry(&mut self, index: usize) {
@@ -201,6 +215,19 @@ mod tests {
 
         assert_eq!(workspace.active_xyz_target(), &WorldEditorTarget::Camera);
         assert_eq!(workspace.entries().len(), 2);
+    }
+
+    #[test]
+    fn objects_panel_can_open_and_close() {
+        let mut workspace = LoadedA3dWorkspace::new();
+
+        assert!(!workspace.objects_panel_open());
+
+        workspace.open_objects_panel();
+        assert!(workspace.objects_panel_open());
+
+        workspace.close_objects_panel();
+        assert!(!workspace.objects_panel_open());
     }
 
     #[test]

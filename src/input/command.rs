@@ -8,6 +8,7 @@ pub enum AppCommand {
     Quit,
     OpenA3dFilePicker,
     ReloadA3d,
+    OpenWorldObjects,
 
     ToggleControlMode,
     SetControlModeScene,

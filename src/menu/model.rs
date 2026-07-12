@@ -158,6 +158,7 @@ const SCENE_ITEMS: &[MenuItem] = &[
 ];
 
 const CONTROL_ITEMS: &[MenuItem] = &[
+    MenuItem::real("Objects...", AppCommand::OpenWorldObjects),
     MenuItem::real("World mode", AppCommand::SetControlModeScene),
     MenuItem::real("Camera mode", AppCommand::SetControlModeCamera),
     MenuItem::real("Light mode", AppCommand::SetControlModeLight),

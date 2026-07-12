@@ -3326,6 +3326,43 @@ fn debug_console_popup_lines(state: &AppState) -> Option<Vec<String>> {
     Some(lines)
 }
 
+fn world_objects_popup_lines(state: &AppState) -> Option<Vec<String>> {
+    if !state.loaded_a3d_workspace.objects_panel_open() {
+        return None;
+    }
+
+    let mut lines = vec![
+        "Objects".to_string(),
+        "Up/Down select | Enter inspect | Esc close".to_string(),
+        String::new(),
+    ];
+
+    for (index, entry) in state.loaded_a3d_workspace.entries().iter().enumerate() {
+        let selector = if index == state.loaded_a3d_workspace.selected_entry() {
+            ">"
+        } else {
+            " "
+        };
+        let visibility = match entry.visible {
+            Some(true) => "visible",
+            Some(false) => "hidden",
+            None => "runtime",
+        };
+        let inspected = if state.loaded_a3d_workspace.inspected_target() == Some(&entry.target) {
+            " [inspected]"
+        } else {
+            ""
+        };
+
+        lines.push(format!(
+            "{selector} {}  ({visibility}){inspected}",
+            entry.target.label()
+        ));
+    }
+
+    Some(lines)
+}
+
 fn loaded_a3d_debug_popup_lines(state: &AppState) -> Option<Vec<String>> {
     if !is_loaded_a3d_debug_popup_visible(state) {
         return None;
@@ -3388,8 +3425,9 @@ fn render_scene(
     };
     let camera_viewport = camera_start.elapsed();
 
-    let debug_popup_lines =
-        exit_confirm_popup_lines(state).or_else(|| debug_console_popup_lines(state));
+    let debug_popup_lines = exit_confirm_popup_lines(state)
+        .or_else(|| world_objects_popup_lines(state))
+        .or_else(|| debug_console_popup_lines(state));
     let frame_timing_lines = state.frame_timing_lines();
     let file_picker_labels = state.a3d_file_picker.as_ref().map(|picker| picker.labels());
     let file_picker_current_dir = state
@@ -3566,6 +3604,12 @@ fn apply_app_command(state: &mut AppState, command: AppCommand) -> KeyHandling {
 
         AppCommand::ReloadA3d => {
             state.reload_a3d();
+            KeyHandling::Handled
+        }
+
+        AppCommand::OpenWorldObjects => {
+            state.loaded_a3d_workspace.open_objects_panel();
+            state.close_menu();
             KeyHandling::Handled
         }
 
@@ -3906,6 +3950,29 @@ fn handle_key_press(state: &mut AppState, key: KeyEvent) -> KeyHandling {
 
         state.open_menu(crate::menu::MenuKind::File);
         return KeyHandling::Handled;
+    }
+
+    if state.loaded_a3d_workspace.objects_panel_open() {
+        match key_code {
+            KeyCode::Esc => {
+                state.loaded_a3d_workspace.close_objects_panel();
+                return KeyHandling::Handled;
+            }
+            KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => {
+                state.loaded_a3d_workspace.move_selection_up();
+                return KeyHandling::Handled;
+            }
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') => {
+                state.loaded_a3d_workspace.move_selection_down();
+                return KeyHandling::Handled;
+            }
+            KeyCode::Enter => {
+                state.loaded_a3d_workspace.inspect_selected();
+                state.loaded_a3d_workspace.close_objects_panel();
+                return KeyHandling::Handled;
+            }
+            _ => return KeyHandling::Handled,
+        }
     }
 
     if state.a3d_file_picker.is_some() {
