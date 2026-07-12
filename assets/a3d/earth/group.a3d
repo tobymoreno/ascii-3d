@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "title": "Earth Group",
+  "objects": [
+    {
+      "id": "sphere",
+      "asset": {
+        "type": "mesh",
+        "path": "../../models/sphere_uv_32x16.obj"
+      },
+      "render": {
+        "visible": true,
+        "stroke_character": "#",
+        "mode": "ascii_raster"
+      },
+      "behaviors": [
+        {
+          "type": "rotate",
+          "axis": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "degrees_per_second": 15.0
+        }
+      ]
+    },
+    {
+      "id": "map",
+      "asset": {
+        "type": "geo_json_map",
+        "path": "../../maps/basic_world_outlines.geojson",
+        "radius_scale": 1.018
+      },
+      "render": {
+        "visible": true,
+        "stroke_character": "*"
+      },
+      "behaviors": [
+        {
+          "type": "rotate",
+          "axis": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "degrees_per_second": 15.0
+        }
+      ]
+    }
+  ]
+}

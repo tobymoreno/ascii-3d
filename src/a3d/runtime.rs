@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::{A3dManifest, BehaviorRuntime, PhysicsRuntimeBody, PhysicsWorldConfig, SceneObject};
+use super::{BehaviorRuntime, PhysicsRuntimeBody, PhysicsWorldConfig, SceneObject};
 
 #[derive(Debug, Clone)]
 pub struct LoadedWorld {
@@ -11,25 +11,21 @@ pub struct LoadedWorld {
 }
 
 impl LoadedWorld {
-    pub fn from_manifest(manifest: A3dManifest) -> Result<Self, String> {
-        manifest.validate()?;
-
-        let physics = manifest.world.physics;
-        let mut objects = Vec::with_capacity(manifest.objects.len());
+    pub fn from_expanded(
+        title: String,
+        physics: PhysicsWorldConfig,
+        objects: Vec<SceneObject>,
+    ) -> Result<Self, String> {
         let mut physics_bodies = HashMap::new();
 
-        for object_config in manifest.objects {
-            let object = SceneObject::from(object_config);
-
+        for object in &objects {
             if let Some(body_config) = object.physics {
                 physics_bodies.insert(object.id.clone(), PhysicsRuntimeBody::from(body_config));
             }
-
-            objects.push(object);
         }
 
         Ok(Self {
-            title: manifest.title,
+            title,
             physics,
             objects,
             physics_bodies,
@@ -58,50 +54,48 @@ impl LoadedWorld {
     pub fn object(&self, id: &str) -> Option<&SceneObject> {
         self.objects.iter().find(|object| object.id == id)
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::LoadedWorld;
-    use crate::a3d::{
-        A3dManifest, A3dObject, A3dViewport, A3dWorld, AssetRef, BehaviorConfig,
-        PhysicsWorldConfig, RenderConfig, Transform,
-    };
+    pub fn object_mut(&mut self, id: &str) -> Option<&mut SceneObject> {
+        self.objects.iter_mut().find(|object| object.id == id)
+    }
 
-    #[test]
-    fn loaded_world_runs_behavior_updates() {
-        let manifest = A3dManifest {
-            version: 1,
-            title: "test".to_string(),
-            world: A3dWorld {
-                physics: PhysicsWorldConfig::default(),
-            },
-            camera: None,
-            viewport: A3dViewport::default(),
-            objects: vec![A3dObject {
-                id: "box".to_string(),
-                asset: AssetRef::Mesh {
-                    path: "shapes/box.obj".to_string(),
-                },
-                transform: Transform::default(),
-                render: RenderConfig::default(),
-                behaviors: vec![BehaviorConfig::Translate {
-                    velocity: [1.0, 0.0, 0.0],
-                }],
-                physics: None,
-            }],
+    /// Rebuild every flattened object's parent matrix from the current
+    /// transforms of its ancestor group objects.
+    ///
+    /// Group expansion stores parents before descendants and qualifies child
+    /// IDs as `parent/child`, so one linear pass is sufficient.
+    pub fn rebuild_parent_matrices(&mut self) {
+        use crate::math::Mat4;
+
+        let mut world_matrices = HashMap::<String, Mat4>::new();
+
+        for object in &mut self.objects {
+            let parent_matrix = object
+                .id
+                .rsplit_once('/')
+                .and_then(|(parent_id, _)| world_matrices.get(parent_id).copied())
+                .unwrap_or_else(Mat4::identity);
+
+            object.parent_matrix = parent_matrix;
+            world_matrices.insert(object.id.clone(), object.world_matrix());
+        }
+    }
+
+    pub fn scale_object_uniform(&mut self, id: &str, factor: f32) -> bool {
+        if !factor.is_finite() || factor <= 0.0 {
+            return false;
+        }
+
+        let Some(object) = self.object_mut(id) else {
+            return false;
         };
 
-        let mut world = LoadedWorld::from_manifest(manifest).expect("manifest should load");
-        world.update(2.0);
+        object.transform.scale = object
+            .transform
+            .scale
+            .map(|component| (component * factor).clamp(0.01, 1000.0));
 
-        assert_eq!(
-            world
-                .object("box")
-                .expect("object should exist")
-                .transform
-                .position,
-            [2.0, 0.0, 0.0]
-        );
+        self.rebuild_parent_matrices();
+        true
     }
 }

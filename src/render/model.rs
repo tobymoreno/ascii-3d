@@ -353,8 +353,8 @@ mod render_scene_group_tests {
 #[cfg(test)]
 mod render_behavior_apply_tests {
     use super::{
-        apply_render_behaviors_to_group, RenderAxis, RenderBehavior, RenderGroup,
-        RenderSpinBehavior,
+        RenderAxis, RenderBehavior, RenderGroup, RenderSpinBehavior,
+        apply_render_behaviors_to_group,
     };
 
     #[test]
@@ -407,8 +407,8 @@ mod render_behavior_apply_tests {
 #[cfg(test)]
 mod recursive_render_behavior_apply_tests {
     use super::{
-        apply_render_behaviors_to_scene, RenderAxis, RenderBehavior, RenderDisplay, RenderGroup,
-        RenderNode, RenderScene, RenderSpinBehavior,
+        RenderAxis, RenderBehavior, RenderDisplay, RenderGroup, RenderNode, RenderScene,
+        RenderSpinBehavior, apply_render_behaviors_to_scene,
     };
 
     #[test]
@@ -436,4 +436,3 @@ mod recursive_render_behavior_apply_tests {
         assert_eq!(earth.transform.rotation_degrees, [0.0, 30.0, 0.0]);
     }
 }
-

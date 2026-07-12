@@ -122,6 +122,10 @@ mod tests {
             render: RenderConfig::default(),
             behaviors: vec![],
             physics: None,
+            parent_matrix: crate::math::Mat4::identity(),
+            editor_composite: false,
+            editor_hidden: false,
+            source_root: std::path::PathBuf::new(),
         }
     }
 

@@ -62,7 +62,10 @@ pub fn load_geojson_map_asset(path: &Path) -> io::Result<GeoJsonMapAsset> {
 
         match geometry_type {
             "Polygon" => {
-                if let Some(rings) = geometry.get("coordinates").and_then(|coords| coords.as_array()) {
+                if let Some(rings) = geometry
+                    .get("coordinates")
+                    .and_then(|coords| coords.as_array())
+                {
                     for ring in rings {
                         if let Some(points) = parse_lon_lat_ring(ring) {
                             lines.push(MapLine {
@@ -75,7 +78,10 @@ pub fn load_geojson_map_asset(path: &Path) -> io::Result<GeoJsonMapAsset> {
                 }
             }
             "MultiPolygon" => {
-                if let Some(polygons) = geometry.get("coordinates").and_then(|coords| coords.as_array()) {
+                if let Some(polygons) = geometry
+                    .get("coordinates")
+                    .and_then(|coords| coords.as_array())
+                {
                     for polygon in polygons {
                         let Some(rings) = polygon.as_array() else {
                             continue;

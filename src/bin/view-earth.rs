@@ -1,8 +1,8 @@
 use ascii_3d::render::{
-    draw_line_overlay, land_fill_char, lerp_angle_degrees, load_geojson_map_asset,
-    great_circle_points, latitude_circle_points, load_obj_mesh, lon_lat_to_sphere,
-    point_in_polygon, segment_steps, Frame, GeoJsonMapAsset, GreatCircle, MeshAsset, MeshVertex,
-    Projection, SphereGuidePoint,
+    Frame, GeoJsonMapAsset, GreatCircle, MeshAsset, MeshVertex, Projection, SphereGuidePoint,
+    draw_line_overlay, great_circle_points, land_fill_char, latitude_circle_points,
+    lerp_angle_degrees, load_geojson_map_asset, load_obj_mesh, lon_lat_to_sphere, point_in_polygon,
+    segment_steps,
 };
 use crossterm::{
     cursor,
@@ -130,11 +130,7 @@ struct Mat3 {
 impl Mat3 {
     fn identity() -> Self {
         Self {
-            m: [
-                [1.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0],
-                [0.0, 0.0, 1.0],
-            ],
+            m: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
         }
     }
 
@@ -142,11 +138,7 @@ impl Mat3 {
         let r = degrees.to_radians();
         let (s, c) = r.sin_cos();
         Self {
-            m: [
-                [1.0, 0.0, 0.0],
-                [0.0, c, -s],
-                [0.0, s, c],
-            ],
+            m: [[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]],
         }
     }
 
@@ -154,11 +146,7 @@ impl Mat3 {
         let r = degrees.to_radians();
         let (s, c) = r.sin_cos();
         Self {
-            m: [
-                [c, 0.0, s],
-                [0.0, 1.0, 0.0],
-                [-s, 0.0, c],
-            ],
+            m: [[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]],
         }
     }
 
@@ -166,11 +154,7 @@ impl Mat3 {
         let r = degrees.to_radians();
         let (s, c) = r.sin_cos();
         Self {
-            m: [
-                [c, -s, 0.0],
-                [s, c, 0.0],
-                [0.0, 0.0, 1.0],
-            ],
+            m: [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]],
         }
     }
 
@@ -200,7 +184,6 @@ impl std::ops::Mul for Mat3 {
         out
     }
 }
-
 
 #[derive(Debug)]
 struct ViewerState {
@@ -262,7 +245,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     result
 }
 
-fn run_viewer(stdout: &mut io::Stdout, scene: &EarthScene, mesh: &MeshAsset, map_overlay: Option<&MapOverlay>) -> Result<(), Box<dyn Error>> {
+fn run_viewer(
+    stdout: &mut io::Stdout,
+    scene: &EarthScene,
+    mesh: &MeshAsset,
+    map_overlay: Option<&MapOverlay>,
+) -> Result<(), Box<dyn Error>> {
     let target_frame = Duration::from_millis(33);
     let mut frame = Frame::new(WIDTH, HEIGHT);
     let mut state = ViewerState::default();
@@ -276,7 +264,11 @@ fn run_viewer(stdout: &mut io::Stdout, scene: &EarthScene, mesh: &MeshAsset, map
 
     let mut previous_frame_start = Instant::now();
 
-    execute!(stdout, cursor::MoveTo(0, 0), terminal::Clear(terminal::ClearType::All))?;
+    execute!(
+        stdout,
+        cursor::MoveTo(0, 0),
+        terminal::Clear(terminal::ClearType::All)
+    )?;
 
     loop {
         let frame_start = Instant::now();
@@ -343,10 +335,18 @@ fn run_viewer(stdout: &mut io::Stdout, scene: &EarthScene, mesh: &MeshAsset, map
                 KeyCode::Char('A') => state.show_axes = false,
                 KeyCode::Char('g') => state.show_guides = !state.show_guides,
                 KeyCode::Char('G') => state.show_guides = false,
-                KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) => state.origin_x -= 0.5,
-                KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) => state.origin_x += 0.5,
-                KeyCode::Up if key.modifiers.contains(KeyModifiers::CONTROL) => state.origin_y += 0.5,
-                KeyCode::Down if key.modifiers.contains(KeyModifiers::CONTROL) => state.origin_y -= 0.5,
+                KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    state.origin_x -= 0.5
+                }
+                KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    state.origin_x += 0.5
+                }
+                KeyCode::Up if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    state.origin_y += 0.5
+                }
+                KeyCode::Down if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    state.origin_y -= 0.5
+                }
                 KeyCode::PageUp => state.origin_z += 0.5,
                 KeyCode::PageDown => state.origin_z -= 0.5,
                 KeyCode::Char('0') => {
@@ -453,7 +453,14 @@ fn run_viewer(stdout: &mut io::Stdout, scene: &EarthScene, mesh: &MeshAsset, map
     }
 }
 
-fn draw_earth(frame: &mut Frame, scene: &EarthScene, mesh: &MeshAsset, state: &ViewerState, light: Vec3, map_overlay: Option<&MapOverlay>) {
+fn draw_earth(
+    frame: &mut Frame,
+    scene: &EarthScene,
+    mesh: &MeshAsset,
+    state: &ViewerState,
+    light: Vec3,
+    map_overlay: Option<&MapOverlay>,
+) {
     let rotation = Mat3::rotation_z(state.rotation_z)
         * Mat3::rotation_y(state.rotation_y)
         * Mat3::rotation_x(state.rotation_x);
@@ -466,11 +473,26 @@ fn draw_earth(frame: &mut Frame, scene: &EarthScene, mesh: &MeshAsset, state: &V
         let b = transform_vertex(triangle.b, rotation, scale, origin);
         let c = transform_vertex(triangle.c, rotation, scale, origin);
 
-        let Some(pa) = project(Vec3::from_array(a.position)) else { continue };
-        let Some(pb) = project(Vec3::from_array(b.position)) else { continue };
-        let Some(pc) = project(Vec3::from_array(c.position)) else { continue };
+        let Some(pa) = project(Vec3::from_array(a.position)) else {
+            continue;
+        };
+        let Some(pb) = project(Vec3::from_array(b.position)) else {
+            continue;
+        };
+        let Some(pc) = project(Vec3::from_array(c.position)) else {
+            continue;
+        };
 
-        fill_triangle(frame, pa, pb, pc, Vec3::from_array(a.normal), Vec3::from_array(b.normal), Vec3::from_array(c.normal), light);
+        fill_triangle(
+            frame,
+            pa,
+            pb,
+            pc,
+            Vec3::from_array(a.normal),
+            Vec3::from_array(b.normal),
+            Vec3::from_array(c.normal),
+            light,
+        );
     }
 
     if let Some(map_overlay) = map_overlay {
@@ -488,7 +510,6 @@ fn draw_earth(frame: &mut Frame, scene: &EarthScene, mesh: &MeshAsset, state: &V
         draw_latitude_circle(frame, rotation, scale, origin, 30.0, 'n');
         draw_latitude_circle(frame, rotation, scale, origin, 15.0, '.');
         draw_latitude_circle(frame, rotation, scale, origin, -30.0, 's');
-
     }
 
     if state.show_axes {
@@ -620,8 +641,7 @@ fn fill_triangle(
 }
 
 fn edge(a: (i32, i32, f32), b: (i32, i32, f32), x: f32, y: f32) -> f32 {
-    (x - a.0 as f32) * (b.1 as f32 - a.1 as f32)
-        - (y - a.1 as f32) * (b.0 as f32 - a.0 as f32)
+    (x - a.0 as f32) * (b.1 as f32 - a.1 as f32) - (y - a.1 as f32) * (b.0 as f32 - a.0 as f32)
 }
 
 fn shade_char(brightness: f32) -> char {
@@ -629,7 +649,14 @@ fn shade_char(brightness: f32) -> char {
     SHADE_RAMP[index.min(SHADE_RAMP.len() - 1)] as char
 }
 
-fn draw_great_circle(frame: &mut Frame, rotation: Mat3, scale: f32, origin: Vec3, circle: GreatCircle, ch: char) {
+fn draw_great_circle(
+    frame: &mut Frame,
+    rotation: Mat3,
+    scale: f32,
+    origin: Vec3,
+    circle: GreatCircle,
+    ch: char,
+) {
     draw_sphere_guide_points(
         frame,
         rotation,
@@ -683,7 +710,6 @@ fn draw_sphere_guide_points(
         }
     }
 }
-
 
 fn draw_map_overlay(
     frame: &mut Frame,
@@ -831,8 +857,6 @@ fn projected_lon_lat_polygon(
     polygon
 }
 
-
-
 fn draw_lon_lat_line(
     frame: &mut Frame,
     points_lon_lat: &[(f32, f32)],
@@ -882,10 +906,6 @@ fn draw_lon_lat_line(
     }
 }
 
-
-
-
-
 fn draw_axes(frame: &mut Frame, rotation: Mat3, scale: f32, origin_offset: Vec3) {
     let axis_len = scale * 1.35;
     let origin = project(origin_offset);
@@ -894,9 +914,24 @@ fn draw_axes(frame: &mut Frame, rotation: Mat3, scale: f32, origin_offset: Vec3)
         return;
     };
 
-    let x = project(rotation.transform(Vec3::new(1.0, 0.0, 0.0)).scaled(axis_len).translated(origin_offset));
-    let y = project(rotation.transform(Vec3::new(0.0, 1.0, 0.0)).scaled(axis_len).translated(origin_offset));
-    let z = project(rotation.transform(Vec3::new(0.0, 0.0, 1.0)).scaled(axis_len).translated(origin_offset));
+    let x = project(
+        rotation
+            .transform(Vec3::new(1.0, 0.0, 0.0))
+            .scaled(axis_len)
+            .translated(origin_offset),
+    );
+    let y = project(
+        rotation
+            .transform(Vec3::new(0.0, 1.0, 0.0))
+            .scaled(axis_len)
+            .translated(origin_offset),
+    );
+    let z = project(
+        rotation
+            .transform(Vec3::new(0.0, 0.0, 1.0))
+            .scaled(axis_len)
+            .translated(origin_offset),
+    );
 
     if let Some(x) = x {
         draw_line_overlay(frame, origin, x, 'x');
@@ -931,8 +966,10 @@ fn resolve_mesh_path(scene_path: &Path, mesh_asset: &str) -> PathBuf {
     assets_root.join(mesh_asset)
 }
 
-
-fn load_map_overlay(scene_path: &Path, scene: &EarthScene) -> Result<Option<MapOverlay>, Box<dyn Error>> {
+fn load_map_overlay(
+    scene_path: &Path,
+    scene: &EarthScene,
+) -> Result<Option<MapOverlay>, Box<dyn Error>> {
     let Some(config) = &scene.map_overlay else {
         return Ok(None);
     };
@@ -946,4 +983,3 @@ fn load_map_overlay(scene_path: &Path, scene: &EarthScene) -> Result<Option<MapO
         visible: config.visible,
     }))
 }
-

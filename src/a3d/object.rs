@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::math::{Mat4, Vec3};
 
 use super::{BehaviorConfig, PhysicsBodyConfig};
@@ -18,6 +20,9 @@ pub struct A3dObject {
 
     #[serde(default)]
     pub physics: Option<PhysicsBodyConfig>,
+
+    #[serde(default)]
+    pub editor_composite: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -33,6 +38,43 @@ pub enum AssetRef {
         path: String,
         metadata: Option<String>,
     },
+    Group {
+        path: String,
+    },
+    GeoJsonMap {
+        path: String,
+
+        #[serde(default = "default_geo_json_map_radius_scale")]
+        radius_scale: f32,
+    },
+}
+
+const fn default_geo_json_map_radius_scale() -> f32 {
+    1.018
+}
+
+impl AssetRef {
+    pub fn resolve_paths(&mut self, root: &std::path::Path) {
+        fn resolve(root: &std::path::Path, value: &mut String) {
+            let path = std::path::Path::new(value);
+            if !path.is_absolute() {
+                *value = root.join(path).to_string_lossy().into_owned();
+            }
+        }
+
+        match self {
+            Self::Mesh { path }
+            | Self::Word { path }
+            | Self::Group { path }
+            | Self::GeoJsonMap { path, .. } => resolve(root, path),
+            Self::Glyph { path, metadata } => {
+                resolve(root, path);
+                if let Some(metadata) = metadata {
+                    resolve(root, metadata);
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -84,12 +126,34 @@ impl Transform {
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AsciiSimplifyConfig {
+    #[serde(default = "AsciiSimplifyConfig::default_enabled")]
+    pub enabled: bool,
+    pub grid_size: f32,
+}
+
+impl AsciiSimplifyConfig {
+    const fn default_enabled() -> bool {
+        true
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RenderConfig {
     #[serde(default = "RenderConfig::default_visible")]
     pub visible: bool,
 
     #[serde(default)]
     pub stroke_character: Option<char>,
+
+    #[serde(default)]
+    pub mode: Option<String>,
+
+    #[serde(default = "RenderConfig::default_edge_stride")]
+    pub edge_stride: usize,
+
+    #[serde(default)]
+    pub ascii_simplify: Option<AsciiSimplifyConfig>,
 }
 
 impl Default for RenderConfig {
@@ -97,6 +161,9 @@ impl Default for RenderConfig {
         Self {
             visible: Self::default_visible(),
             stroke_character: None,
+            mode: None,
+            edge_stride: Self::default_edge_stride(),
+            ascii_simplify: None,
         }
     }
 }
@@ -104,6 +171,10 @@ impl Default for RenderConfig {
 impl RenderConfig {
     pub const fn default_visible() -> bool {
         true
+    }
+
+    pub const fn default_edge_stride() -> usize {
+        1
     }
 }
 
@@ -115,18 +186,15 @@ pub struct SceneObject {
     pub render: RenderConfig,
     pub behaviors: Vec<BehaviorConfig>,
     pub physics: Option<PhysicsBodyConfig>,
+    pub parent_matrix: Mat4,
+    pub editor_composite: bool,
+    pub editor_hidden: bool,
+    pub source_root: PathBuf,
 }
 
-impl From<A3dObject> for SceneObject {
-    fn from(object: A3dObject) -> Self {
-        Self {
-            id: object.id,
-            asset: object.asset,
-            transform: object.transform,
-            render: object.render,
-            behaviors: object.behaviors,
-            physics: object.physics,
-        }
+impl SceneObject {
+    pub fn world_matrix(&self) -> Mat4 {
+        self.parent_matrix * self.transform.matrix()
     }
 }
 

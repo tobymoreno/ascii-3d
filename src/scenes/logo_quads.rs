@@ -71,7 +71,10 @@ pub fn render(
         canvas.set(projector.project(center), marker_char(&quad.marker));
     }
 
-    canvas.draw_text(Point2::new(2, 1), "Scene: KM logo from reusable quad4 planes");
+    canvas.draw_text(
+        Point2::new(2, 1),
+        "Scene: KM logo from reusable quad4 planes",
+    );
     canvas.draw_text(
         Point2::new(2, 2),
         &format!(

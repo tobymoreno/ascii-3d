@@ -6,8 +6,8 @@ use std::{
 
 use crate::{
     render::{
-        load_geojson_map_asset, load_obj_mesh, GeoJsonMapAsset, MeshAsset, RenderNode,
-        RenderObject, RenderScene,
+        GeoJsonMapAsset, MeshAsset, RenderNode, RenderObject, RenderScene, load_geojson_map_asset,
+        load_obj_mesh,
     },
     scene::{load_scene_document, scene_document_to_render_scene},
 };
@@ -30,7 +30,11 @@ fn validate_scene(scene: &RenderScene) -> io::Result<()> {
                 ));
             }
 
-            if !quad.size.iter().all(|value| value.is_finite() && *value > 0.0) {
+            if !quad
+                .size
+                .iter()
+                .all(|value| value.is_finite() && *value > 0.0)
+            {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("quad {} size must be positive and finite", quad.id),

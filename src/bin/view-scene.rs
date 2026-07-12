@@ -1,16 +1,17 @@
 use ascii_3d::{
-    render::{apply_render_behaviors_to_scene, Frame, GeoJsonMapAsset, MeshAsset, RenderScene},
+    a3d::{AssetRef, LoadedWorld, SceneObject, load_a3d_project},
+    render::{Frame, GeoJsonMapAsset, MeshAsset, RenderScene, apply_render_behaviors_to_scene},
     scene::{
-        load_scene_document, save_scene_document, scene_document_to_render_scene,
-        set_scene_document_visibility, SceneDocument,
+        DisplayDocument, GroupDocument, NodeDocument, ObjectDocument, ObjectKindDocument,
+        SceneDocument, TransformDocument, load_scene_document, save_scene_document,
+        scene_document_to_render_scene, set_scene_document_visibility,
     },
     viewer::{
-        collect_scene_objects_with_helpers, draw_render_scene, handle_key,
+        CAMERA_HELPER_PATH, MIN_VIEW_SCENE_HEIGHT, MIN_VIEW_SCENE_WIDTH, SCENE_ORIGIN_HELPER_PATH,
+        VIEWER_MENU_TITLES, ViewerInput, ViewerInspectorState, ViewerState, ViewerViewport,
+        WORLD_AXES_HELPER_PATH, collect_scene_objects_with_helpers, draw_render_scene, handle_key,
         handle_scene_object_transform_key, load_scene_maps, load_scene_meshes,
         scene_helper_property_lines, scene_object_property_lines, toggle_scene_object_visibility,
-        ViewerInput, ViewerInspectorState, ViewerState, ViewerViewport, CAMERA_HELPER_PATH,
-        MIN_VIEW_SCENE_HEIGHT, MIN_VIEW_SCENE_WIDTH, SCENE_ORIGIN_HELPER_PATH, VIEWER_MENU_TITLES,
-        WORLD_AXES_HELPER_PATH,
     },
 };
 use crossterm::{
@@ -20,12 +21,12 @@ use crossterm::{
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
+    Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Tabs},
-    Terminal,
 };
 use std::{
     collections::HashMap,
@@ -60,6 +61,7 @@ fn run_viewer(
     mut scene: RenderScene,
     meshes: HashMap<String, MeshAsset>,
     maps: HashMap<String, GeoJsonMapAsset>,
+    save_enabled: bool,
 ) -> io::Result<()> {
     let _guard = TerminalGuard::enter()?;
     let backend = CrosstermBackend::new(stdout());
@@ -210,6 +212,15 @@ fn run_viewer(
                 match key.code {
                     KeyCode::Esc => inspector.close_save_as(),
                     KeyCode::Enter => {
+                        if !save_enabled {
+                            save_status = Some(
+                                "A3D is read-only in view-scene; edit/save it in ascii-3d"
+                                    .to_string(),
+                            );
+                            inspector.close_save_as();
+                            continue;
+                        }
+
                         let requested_path = inspector.save_as_path.trim();
 
                         if requested_path.is_empty() {
@@ -249,17 +260,31 @@ fn run_viewer(
                     KeyCode::Down | KeyCode::Char('j') => inspector.move_file_down(),
                     KeyCode::Enter => {
                         if inspector.selected_file_item == 0 {
-                            match save_scene_document(&scene_path, &document) {
-                                Ok(()) => {
-                                    save_status = Some(format!("Saved {}", scene_path.display()));
+                            if save_enabled {
+                                match save_scene_document(&scene_path, &document) {
+                                    Ok(()) => {
+                                        save_status =
+                                            Some(format!("Saved {}", scene_path.display()));
+                                    }
+                                    Err(error) => {
+                                        save_status = Some(format!("Save failed: {error}"));
+                                    }
                                 }
-                                Err(error) => {
-                                    save_status = Some(format!("Save failed: {error}"));
-                                }
+                            } else {
+                                save_status = Some(
+                                    "A3D is read-only in view-scene; edit/save it in ascii-3d"
+                                        .to_string(),
+                                );
                             }
                             inspector.close_popup();
-                        } else {
+                        } else if save_enabled {
                             inspector.open_save_as(scene_path.display().to_string());
+                        } else {
+                            save_status = Some(
+                                "A3D is read-only in view-scene; edit/save it in ascii-3d"
+                                    .to_string(),
+                            );
+                            inspector.close_popup();
                         }
                     }
                     _ => {}
@@ -546,16 +571,172 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     }
 }
 
+fn a3d_transform_document(object: &SceneObject) -> TransformDocument {
+    TransformDocument {
+        position: object.transform.position,
+        rotation_degrees: object.transform.rotation_degrees,
+        scale: object.transform.scale,
+    }
+}
+
+fn direct_parent_id(id: &str) -> Option<&str> {
+    id.rsplit_once('/').map(|(parent, _)| parent)
+}
+
+fn a3d_group_document(group: &SceneObject, world: &LoadedWorld) -> GroupDocument {
+    let children = world
+        .objects
+        .iter()
+        .filter(|object| direct_parent_id(&object.id) == Some(group.id.as_str()))
+        .filter_map(|object| match &object.asset {
+            AssetRef::Group { .. } => Some(NodeDocument::Group(a3d_group_document(object, world))),
+            AssetRef::Mesh { path } => Some(NodeDocument::Object(ObjectDocument {
+                id: object
+                    .id
+                    .rsplit_once('/')
+                    .map(|(_, id)| id)
+                    .unwrap_or(object.id.as_str())
+                    .to_string(),
+                name: object
+                    .id
+                    .rsplit_once('/')
+                    .map(|(_, id)| id)
+                    .unwrap_or(object.id.as_str())
+                    .to_string(),
+                transform: a3d_transform_document(object),
+                visible: object.render.visible,
+                behaviors: Vec::new(),
+                object: ObjectKindDocument::Mesh {
+                    asset: path.clone(),
+                },
+            })),
+            AssetRef::GeoJsonMap { path, radius_scale } => {
+                Some(NodeDocument::Object(ObjectDocument {
+                    id: object
+                        .id
+                        .rsplit_once('/')
+                        .map(|(_, id)| id)
+                        .unwrap_or(object.id.as_str())
+                        .to_string(),
+                    name: object
+                        .id
+                        .rsplit_once('/')
+                        .map(|(_, id)| id)
+                        .unwrap_or(object.id.as_str())
+                        .to_string(),
+                    transform: a3d_transform_document(object),
+                    visible: object.render.visible,
+                    behaviors: Vec::new(),
+                    object: ObjectKindDocument::GeoJsonMap {
+                        asset: path.clone(),
+                        radius_scale: *radius_scale,
+                    },
+                }))
+            }
+            AssetRef::Word { .. } | AssetRef::Glyph { .. } => None,
+        })
+        .collect();
+
+    GroupDocument {
+        id: group
+            .id
+            .rsplit_once('/')
+            .map(|(_, id)| id)
+            .unwrap_or(group.id.as_str())
+            .to_string(),
+        name: group
+            .id
+            .rsplit_once('/')
+            .map(|(_, id)| id)
+            .unwrap_or(group.id.as_str())
+            .to_string(),
+        transform: a3d_transform_document(group),
+        visible: group.render.visible,
+        editor_composite: group.editor_composite,
+        behaviors: Vec::new(),
+        children,
+    }
+}
+
+fn a3d_world_to_scene_document(world: &LoadedWorld) -> SceneDocument {
+    let mut groups = world
+        .objects
+        .iter()
+        .filter(|object| !object.id.contains('/'))
+        .filter_map(|object| match object.asset {
+            AssetRef::Group { .. } => Some(a3d_group_document(object, world)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    for object in world
+        .objects
+        .iter()
+        .filter(|object| !object.id.contains('/'))
+        .filter(|object| matches!(object.asset, AssetRef::Mesh { .. }))
+    {
+        let AssetRef::Mesh { path } = &object.asset else {
+            continue;
+        };
+
+        groups.push(GroupDocument {
+            id: object.id.clone(),
+            name: object.id.clone(),
+            transform: TransformDocument::default(),
+            visible: object.render.visible,
+            editor_composite: object.editor_composite,
+            behaviors: Vec::new(),
+            children: vec![NodeDocument::Object(ObjectDocument {
+                id: "mesh".to_string(),
+                name: object.id.clone(),
+                transform: a3d_transform_document(object),
+                visible: object.render.visible,
+                behaviors: Vec::new(),
+                object: ObjectKindDocument::Mesh {
+                    asset: path.clone(),
+                },
+            })],
+        });
+    }
+
+    SceneDocument {
+        name: world.title.clone(),
+        mesh_asset: String::new(),
+        display: DisplayDocument {
+            world_scale: 4.0,
+            rotation_y_degrees_per_turn: None,
+        },
+        lighting: None,
+        map_overlay: None,
+        quads: Vec::new(),
+        groups,
+    }
+}
+
 fn main() -> io::Result<()> {
     let path = env::args()
         .nth(1)
         .unwrap_or_else(|| "assets/scenes/km_logo_quads.scene.json".to_string());
 
     let scene_path = PathBuf::from(path);
-    let document = load_scene_document(&scene_path)?;
+    let is_a3d = scene_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("a3d"));
+
+    let (document, save_enabled) = if is_a3d {
+        let project = load_a3d_project(&scene_path)?;
+        let world = project
+            .into_world()
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        (a3d_world_to_scene_document(&world), false)
+    } else {
+        (load_scene_document(&scene_path)?, true)
+    };
+
     let scene = scene_document_to_render_scene(document.clone());
     let meshes = load_scene_meshes(&scene_path, &scene)?;
     let maps = load_scene_maps(&scene_path, &scene)?;
 
-    run_viewer(scene_path, document, scene, meshes, maps)
+    run_viewer(scene_path, document, scene, meshes, maps, save_enabled)
 }

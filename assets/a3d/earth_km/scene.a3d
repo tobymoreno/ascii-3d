@@ -1,0 +1,105 @@
+{
+  "camera": {
+    "far": 100,
+    "fov_degrees": 60,
+    "near": 0.1,
+    "position": [
+      0,
+      0,
+      8
+    ],
+    "target": [
+      0,
+      0,
+      0
+    ]
+  },
+  "objects": [
+    {
+      "asset": {
+        "path": "../earth/group.a3d",
+        "type": "group"
+      },
+      "editor_composite": true,
+      "id": "earth",
+      "transform": {
+        "position": [
+          -2,
+          0,
+          0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.35,
+          1.35,
+          1.35
+        ]
+      }
+    },
+    {
+      "asset": {
+        "path": "../km_logo/group.a3d",
+        "type": "group"
+      },
+      "editor_composite": true,
+      "id": "km_logo",
+      "transform": {
+        "position": [
+          1.75,
+          0,
+          0
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.72,
+          0.72,
+          0.72
+        ]
+      }
+    }
+  ],
+  "title": "Earth and KM Logo",
+  "version": 1,
+  "viewport": {
+    "camera_view": {
+      "aspect_ratio": "16:9",
+      "cell_aspect_ratio": 2.0,
+      "perspective_scale": 34.0
+    },
+    "show_camera3d": true,
+    "show_world_debug": true
+  },
+  "world": {
+    "physics": {
+      "bounds_max": [
+        20,
+        20,
+        20
+      ],
+      "bounds_min": [
+        -20,
+        -20,
+        -20
+      ],
+      "damping": 0.01,
+      "gravity": [
+        0,
+        0,
+        0
+      ]
+    }
+  }
+}

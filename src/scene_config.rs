@@ -9,7 +9,6 @@ pub struct Quad4SceneConfig {
     pub camera: CameraConfig,
     pub frustum: FrustumConfig,
     pub display: DisplayConfig,
-
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -61,7 +60,9 @@ impl MultiQuadSceneConfig {
         }
 
         if self.mesh_asset.trim().is_empty() {
-            return Err(io::Error::other("multi-quad scene mesh_asset cannot be empty"));
+            return Err(io::Error::other(
+                "multi-quad scene mesh_asset cannot be empty",
+            ));
         }
 
         if !self.display.world_scale.is_finite() || self.display.world_scale <= 0.0 {
@@ -77,7 +78,9 @@ impl MultiQuadSceneConfig {
         }
 
         if self.quads.is_empty() {
-            return Err(io::Error::other("multi-quad scene must contain at least one quad"));
+            return Err(io::Error::other(
+                "multi-quad scene must contain at least one quad",
+            ));
         }
 
         for quad in &self.quads {
@@ -87,7 +90,11 @@ impl MultiQuadSceneConfig {
 
             validate_vec3("multi-quad quad.position", quad.position)?;
 
-            if !quad.size.into_iter().all(|value| value.is_finite() && value > 0.0) {
+            if !quad
+                .size
+                .into_iter()
+                .all(|value| value.is_finite() && value > 0.0)
+            {
                 return Err(io::Error::other(
                     "multi-quad quad.size values must be finite and greater than zero",
                 ));
@@ -233,7 +240,6 @@ pub fn load_multi_quad_scene_config(path: impl AsRef<Path>) -> io::Result<MultiQ
     Ok(config)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::Quad4SceneConfig;
@@ -258,10 +264,11 @@ mod tests {
             serde_json::from_str(include_str!("../assets/scenes/km_logo_quads.scene.json"))
                 .expect("KM logo multi-quad scene JSON should parse");
 
-        config.validate().expect("KM logo multi-quad scene should validate");
+        config
+            .validate()
+            .expect("KM logo multi-quad scene should validate");
 
         assert_eq!(config.mesh_asset, "models/quad4.obj");
         assert_eq!(config.quads.len(), 6);
     }
-
 }

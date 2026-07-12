@@ -110,18 +110,9 @@ impl Mat4 {
 
     pub fn transform_point(self, point: Vec3) -> Vec3 {
         Vec3::new(
-            self.m[0][0] * point.x
-                + self.m[0][1] * point.y
-                + self.m[0][2] * point.z
-                + self.m[0][3],
-            self.m[1][0] * point.x
-                + self.m[1][1] * point.y
-                + self.m[1][2] * point.z
-                + self.m[1][3],
-            self.m[2][0] * point.x
-                + self.m[2][1] * point.y
-                + self.m[2][2] * point.z
-                + self.m[2][3],
+            self.m[0][0] * point.x + self.m[0][1] * point.y + self.m[0][2] * point.z + self.m[0][3],
+            self.m[1][0] * point.x + self.m[1][1] * point.y + self.m[1][2] * point.z + self.m[1][3],
+            self.m[2][0] * point.x + self.m[2][1] * point.y + self.m[2][2] * point.z + self.m[2][3],
         )
     }
 

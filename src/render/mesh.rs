@@ -56,9 +56,7 @@ pub fn load_obj_mesh_from_str(text: &str) -> io::Result<MeshAsset> {
                 normals.push(normalized([x, y, z]));
             }
             "f" => {
-                let refs = parts
-                    .map(parse_face_ref)
-                    .collect::<io::Result<Vec<_>>>()?;
+                let refs = parts.map(parse_face_ref).collect::<io::Result<Vec<_>>>()?;
 
                 if refs.len() < 3 {
                     continue;
@@ -145,18 +143,13 @@ fn parse_f32(value: Option<&str>, message: &'static str) -> io::Result<f32> {
 }
 
 fn normalized(vector: [f32; 3]) -> [f32; 3] {
-    let length =
-        (vector[0] * vector[0] + vector[1] * vector[1] + vector[2] * vector[2]).sqrt();
+    let length = (vector[0] * vector[0] + vector[1] * vector[1] + vector[2] * vector[2]).sqrt();
 
     if length <= f32::EPSILON {
         return [0.0, 1.0, 0.0];
     }
 
-    [
-        vector[0] / length,
-        vector[1] / length,
-        vector[2] / length,
-    ]
+    [vector[0] / length, vector[1] / length, vector[2] / length]
 }
 
 fn invalid_data(message: impl Into<String>) -> io::Error {

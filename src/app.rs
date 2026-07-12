@@ -1,12 +1,17 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     fs,
     io::{self, Write, stdout},
     path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, Instant},
 };
 
 use ratatui::{Terminal, backend::CrosstermBackend};
+
+use ascii_3d::render::{
+    GeoJsonMapAsset, lerp_angle_degrees, load_geojson_map_asset, lon_lat_to_sphere, segment_steps,
+};
 
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
@@ -43,17 +48,15 @@ use crate::{
     scenes::{
         RotationAxis, Scene, render_arbitrary_vector, render_asset_axes_rotation, render_axes,
         render_bezier_axes, render_camera, render_camera_motion, render_camera_turntable,
-        render_crew, render_cross_negative_z, render_cross_positive_z, render_obj_box, render_pitt,
-        render_pitt_crew, render_quad4, render_rotation, render_single_c, render_single_e,
-        render_logo_quads, render_single_i, render_single_p, render_single_r, render_single_t, render_single_w,
-        render_world_camera_spaces,
+        render_crew, render_cross_negative_z, render_cross_positive_z, render_logo_quads,
+        render_obj_box, render_pitt, render_pitt_crew, render_quad4, render_rotation,
+        render_single_c, render_single_e, render_single_i, render_single_p, render_single_r,
+        render_single_t, render_single_w, render_world_camera_spaces,
     },
     tui::FilePickerView,
     workspace::{
-        LoadedA3dWorkspace,
-        gizmo::{
-            loaded_a3d_lights, loaded_a3d_primary_light_direction, normalized_light_direction,
-        },
+        LoadedA3dWorkspace, WorldEditorTarget,
+        gizmo::{LoadedA3dLight, loaded_a3d_lights, normalized_light_direction},
     },
     xyz_control::{XyzControl, XyzControlEvent},
 };
@@ -192,8 +195,13 @@ fn write_a3d_profile_manifest(manifest_path: &Path) -> io::Result<()> {
     fs::create_dir_all(parent)?;
 
     let source = serde_json::to_string_pretty(&profile).map_err(io::Error::other)?;
-    fs::write(profile_path, format!("{source}
-"))
+    fs::write(
+        profile_path,
+        format!(
+            "{source}
+"
+        ),
+    )
 }
 
 fn manifest_path_from_selection(path: PathBuf) -> PathBuf {
@@ -519,6 +527,10 @@ struct AppState {
     loaded_a3d_world: Option<LoadedWorld>,
     loaded_a3d_root: Option<PathBuf>,
     loaded_a3d_manifest_path: Option<PathBuf>,
+    loaded_a3d_lights: Vec<LoadedA3dLight>,
+    loaded_a3d_camera_cell_aspect_ratio: f32,
+    loaded_a3d_camera_perspective_scale: f32,
+    loaded_a3d_camera_aspect_ratio: CameraViewportAspectRatio,
     loaded_a3d_debug_popup_until: Option<Instant>,
     loaded_a3d_error: Option<String>,
     a3d_file_picker: Option<A3dFilePicker>,
@@ -557,6 +569,10 @@ impl AppState {
             loaded_a3d_world: None,
             loaded_a3d_root: None,
             loaded_a3d_manifest_path: None,
+            loaded_a3d_lights: Vec::new(),
+            loaded_a3d_camera_cell_aspect_ratio: DEFAULT_CAMERA_VIEWPORT_CELL_ASPECT_RATIO,
+            loaded_a3d_camera_perspective_scale: DEFAULT_CAMERA_VIEWPORT_PERSPECTIVE_SCALE,
+            loaded_a3d_camera_aspect_ratio: CameraViewportAspectRatio::DEFAULT,
             loaded_a3d_debug_popup_until: None,
             loaded_a3d_error: None,
             a3d_file_picker: None,
@@ -1135,58 +1151,26 @@ impl AppState {
         true
     }
 
-    fn edit_first_loaded_a3d_light_vec3<F>(&mut self, key: &str, edit: F) -> bool
-    where
-        F: FnOnce(Vec3) -> Vec3,
-    {
-        self.edit_loaded_a3d_manifest(|json| {
-            let Some(lights) = json
-                .get_mut("lights")
-                .and_then(serde_json::Value::as_array_mut)
-            else {
-                return false;
-            };
-
-            let Some(light) = lights.first_mut() else {
-                return false;
-            };
-
-            let Some(value) = light.get_mut(key).and_then(serde_json::Value::as_array_mut) else {
-                return false;
-            };
-
-            if value.len() != 3 {
-                return false;
-            }
-
-            let current = Vec3::new(
-                value[0].as_f64().unwrap_or(0.0) as f32,
-                value[1].as_f64().unwrap_or(0.0) as f32,
-                value[2].as_f64().unwrap_or(0.0) as f32,
-            );
-
-            let next = edit(current);
-
-            value[0] = serde_json::json!(next.x);
-            value[1] = serde_json::json!(next.y);
-            value[2] = serde_json::json!(next.z);
-
-            true
-        })
-    }
-
     fn edit_first_loaded_a3d_light_position<F>(&mut self, edit: F) -> bool
     where
         F: FnOnce(Vec3) -> Vec3,
     {
-        self.edit_first_loaded_a3d_light_vec3("position", edit)
+        let Some(light) = self.loaded_a3d_lights.first_mut() else {
+            return false;
+        };
+        light.position = edit(light.position);
+        true
     }
 
     fn edit_first_loaded_a3d_light_direction<F>(&mut self, edit: F) -> bool
     where
         F: FnOnce(Vec3) -> Vec3,
     {
-        self.edit_first_loaded_a3d_light_vec3("direction", edit)
+        let Some(light) = self.loaded_a3d_lights.first_mut() else {
+            return false;
+        };
+        light.direction = edit(light.direction);
+        true
     }
 
     fn rotate_loaded_a3d_light_direction(&mut self, delta: Vec3) -> bool {
@@ -1228,62 +1212,20 @@ impl AppState {
     where
         F: FnOnce([f32; 3]) -> [f32; 3],
     {
-        self.edit_loaded_a3d_manifest(|json| {
-            let Some(objects) = json
-                .get_mut("objects")
-                .and_then(serde_json::Value::as_array_mut)
-            else {
-                return false;
-            };
+        let Some(world) = self.loaded_a3d_world.as_mut() else {
+            return false;
+        };
+        let Some(object) = world
+            .objects
+            .iter_mut()
+            .find(|object| !object.editor_hidden)
+        else {
+            return false;
+        };
 
-            let Some(object) = objects.first_mut() else {
-                return false;
-            };
-
-            if object.get("transform").is_none() {
-                object["transform"] = serde_json::json!({});
-            }
-
-            let Some(transform) = object
-                .get_mut("transform")
-                .and_then(serde_json::Value::as_object_mut)
-            else {
-                return false;
-            };
-
-            if !transform.contains_key("rotation") {
-                transform.insert("rotation".to_string(), serde_json::json!([0.0, 0.0, 0.0]));
-            }
-
-            let Some(rotation) = transform
-                .get_mut("rotation")
-                .and_then(serde_json::Value::as_array_mut)
-            else {
-                return false;
-            };
-
-            if rotation.len() != 3 {
-                *rotation = vec![
-                    serde_json::json!(0.0),
-                    serde_json::json!(0.0),
-                    serde_json::json!(0.0),
-                ];
-            }
-
-            let current = [
-                rotation[0].as_f64().unwrap_or(0.0) as f32,
-                rotation[1].as_f64().unwrap_or(0.0) as f32,
-                rotation[2].as_f64().unwrap_or(0.0) as f32,
-            ];
-
-            let next = edit(current);
-
-            rotation[0] = serde_json::json!(next[0]);
-            rotation[1] = serde_json::json!(next[1]);
-            rotation[2] = serde_json::json!(next[2]);
-
-            true
-        })
+        object.transform.rotation_degrees = edit(object.transform.rotation_degrees);
+        world.rebuild_parent_matrices();
+        true
     }
 
     fn rotate_loaded_a3d_world_object(&mut self, delta: Vec3) -> bool {
@@ -1375,6 +1317,8 @@ impl AppState {
 
     fn load_a3d_file(&mut self, manifest_path: PathBuf) {
         let manifest_path = manifest_path_from_selection(manifest_path);
+        let (camera_cell_aspect_ratio, camera_perspective_scale, camera_aspect_ratio) =
+            read_loaded_a3d_viewport_settings(&manifest_path);
 
         let Some(root) = manifest_path.parent().map(Path::to_path_buf) else {
             self.loaded_a3d_error = Some("selected .a3d file has no parent folder".to_string());
@@ -1395,19 +1339,13 @@ impl AppState {
                     world
                         .objects
                         .iter()
+                        .filter(|object| !object.editor_hidden)
                         .map(|object| (object.id.clone(), object.render.visible)),
                 );
                 if let Some(camera) = camera {
-                    let position = Vec3::new(
-                        camera.position[0],
-                        camera.position[1],
-                        camera.position[2],
-                    );
-                    let target = Vec3::new(
-                        camera.target[0],
-                        camera.target[1],
-                        camera.target[2],
-                    );
+                    let position =
+                        Vec3::new(camera.position[0], camera.position[1], camera.position[2]);
+                    let target = Vec3::new(camera.target[0], camera.target[1], camera.target[2]);
                     let (yaw, pitch) = yaw_pitch_toward(position, target);
 
                     self.world_camera_position = position;
@@ -1419,13 +1357,9 @@ impl AppState {
                 let selected_scene = registry
                     .iter()
                     .position(|descriptor| {
-                        descriptor
-                            .a3d_root
-                            .as_ref()
-                            .is_some_and(|registered_root| {
-                                fs::canonicalize(registered_root).ok()
-                                    == fs::canonicalize(&root).ok()
-                            })
+                        descriptor.a3d_root.as_ref().is_some_and(|registered_root| {
+                            fs::canonicalize(registered_root).ok() == fs::canonicalize(&root).ok()
+                        })
                     })
                     .or_else(|| {
                         registry
@@ -1439,11 +1373,13 @@ impl AppState {
                 }
 
                 if let Err(error) = write_a3d_profile_manifest(&manifest_path) {
-                    self.push_debug_console_line(format!(
-                        "A3D profile save failed: {error}"
-                    ));
+                    self.push_debug_console_line(format!("A3D profile save failed: {error}"));
                 }
 
+                self.loaded_a3d_lights = loaded_a3d_lights(&root).unwrap_or_default();
+                self.loaded_a3d_camera_cell_aspect_ratio = camera_cell_aspect_ratio;
+                self.loaded_a3d_camera_perspective_scale = camera_perspective_scale;
+                self.loaded_a3d_camera_aspect_ratio = camera_aspect_ratio;
                 self.loaded_a3d_root = Some(root);
                 self.loaded_a3d_manifest_path = Some(manifest_path);
                 self.loaded_a3d_world = Some(world);
@@ -1475,50 +1411,33 @@ impl AppState {
         }
     }
 
-    fn loaded_a3d_has_enabled_rotation_behavior(&self) -> bool {
-        let Some(manifest_path) = self.loaded_a3d_manifest_path.clone().or_else(|| {
-            self.loaded_a3d_root
-                .as_ref()
-                .map(|root| root.join("scene.a3d"))
-        }) else {
-            return true;
+    fn scale_active_loaded_a3d_object(&mut self, factor: f32) -> bool {
+        let WorldEditorTarget::Object(target_id) =
+            self.loaded_a3d_workspace.active_xyz_target().clone()
+        else {
+            return false;
         };
 
-        let Ok(source) = std::fs::read_to_string(manifest_path) else {
-            return true;
+        let Some(world) = self.loaded_a3d_world.as_mut() else {
+            return false;
         };
 
-        let Ok(json) = serde_json::from_str::<serde_json::Value>(&source) else {
-            return true;
-        };
-
-        let Some(objects) = json.get("objects").and_then(serde_json::Value::as_array) else {
-            return true;
-        };
-
-        let mut saw_rotation_behavior = false;
-
-        for object in objects {
-            let enabled = object
-                .get("behavior")
-                .and_then(|behavior| behavior.get("rotation"))
-                .and_then(|rotation| rotation.get("enabled"))
-                .and_then(serde_json::Value::as_bool);
-
-            let Some(enabled) = enabled else {
-                continue;
-            };
-
-            saw_rotation_behavior = true;
-
-            if enabled {
-                return true;
-            }
+        if !world.scale_object_uniform(&target_id, factor) {
+            return false;
         }
 
-        // Backward-compatible default:
-        // old scenes without behavior.rotation metadata keep their existing update behavior.
-        !saw_rotation_behavior
+        self.push_debug_console_line(format!("world editor: scaled {target_id} by {factor:.4}"));
+
+        true
+    }
+
+    fn loaded_a3d_has_enabled_rotation_behavior(&self) -> bool {
+        self.loaded_a3d_world.as_ref().is_some_and(|world| {
+            world
+                .objects
+                .iter()
+                .any(|object| !object.behaviors.is_empty())
+        })
     }
 
     fn update(&mut self, elapsed: Duration) -> bool {
@@ -1638,7 +1557,8 @@ fn load_scene_assets() -> io::Result<SceneAssets> {
     }
 
     let quad4_scene_config = load_quad4_scene_config(asset_path("quad4.scene.json"))?;
-    let logo_quads_scene_config = load_multi_quad_scene_config(asset_path(KM_LOGO_QUADS_SCENE_ASSET))?;
+    let logo_quads_scene_config =
+        load_multi_quad_scene_config(asset_path(KM_LOGO_QUADS_SCENE_ASSET))?;
 
     if logo_quads_scene_config.mesh_asset != "models/quad4.obj" {
         return Err(io::Error::other(format!(
@@ -1798,50 +1718,12 @@ fn project_camera_space_to_viewport_with_depth(
     Some((point, depth))
 }
 
-fn loaded_a3d_camera_view_number(state: &AppState, key: &str, default_value: f32) -> f32 {
-    let Some(root) = state.loaded_a3d_root.as_deref() else {
-        return default_value;
-    };
-
-    let scene_path = root.join("scene.a3d");
-    let Ok(source) = std::fs::read_to_string(&scene_path) else {
-        return default_value;
-    };
-
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(&source) else {
-        return default_value;
-    };
-
-    let Some(value) = json
-        .get("viewport")
-        .and_then(|viewport| viewport.get("camera_view"))
-        .and_then(|camera_view| camera_view.get(key))
-        .and_then(serde_json::Value::as_f64)
-    else {
-        return default_value;
-    };
-
-    if value.is_finite() && value > 0.0 {
-        value as f32
-    } else {
-        default_value
-    }
-}
-
 fn camera_viewport_cell_aspect_ratio(state: &AppState) -> f32 {
-    loaded_a3d_camera_view_number(
-        state,
-        "cell_aspect_ratio",
-        DEFAULT_CAMERA_VIEWPORT_CELL_ASPECT_RATIO,
-    )
+    state.loaded_a3d_camera_cell_aspect_ratio
 }
 
 fn camera_viewport_perspective_scale(state: &AppState) -> f32 {
-    loaded_a3d_camera_view_number(
-        state,
-        "perspective_scale",
-        DEFAULT_CAMERA_VIEWPORT_PERSPECTIVE_SCALE,
-    )
+    state.loaded_a3d_camera_perspective_scale
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1861,7 +1743,9 @@ impl CameraViewportAspectRatio {
     }
 }
 
-fn parse_camera_viewport_aspect_ratio(value: &serde_json::Value) -> Option<CameraViewportAspectRatio> {
+fn parse_camera_viewport_aspect_ratio(
+    value: &serde_json::Value,
+) -> Option<CameraViewportAspectRatio> {
     if let Some(text) = value.as_str() {
         let (width, height) = text.split_once(':')?;
         let width = width.trim().parse::<u16>().ok()?;
@@ -1883,24 +1767,49 @@ fn parse_camera_viewport_aspect_ratio(value: &serde_json::Value) -> Option<Camer
 }
 
 fn loaded_a3d_camera_view_aspect_ratio(state: &AppState) -> CameraViewportAspectRatio {
-    let Some(root) = state.loaded_a3d_root.as_deref() else {
-        return CameraViewportAspectRatio::DEFAULT;
-    };
+    state.loaded_a3d_camera_aspect_ratio
+}
 
-    let scene_path = root.join("scene.a3d");
-    let Ok(source) = std::fs::read_to_string(&scene_path) else {
-        return CameraViewportAspectRatio::DEFAULT;
-    };
+fn read_loaded_a3d_viewport_settings(
+    manifest_path: &Path,
+) -> (f32, f32, CameraViewportAspectRatio) {
+    let defaults = (
+        DEFAULT_CAMERA_VIEWPORT_CELL_ASPECT_RATIO,
+        DEFAULT_CAMERA_VIEWPORT_PERSPECTIVE_SCALE,
+        CameraViewportAspectRatio::DEFAULT,
+    );
 
+    let Ok(source) = std::fs::read_to_string(manifest_path) else {
+        return defaults;
+    };
     let Ok(json) = serde_json::from_str::<serde_json::Value>(&source) else {
-        return CameraViewportAspectRatio::DEFAULT;
+        return defaults;
     };
 
-    json.get("viewport")
-        .and_then(|viewport| viewport.get("camera_view"))
-        .and_then(|camera_view| camera_view.get("aspect_ratio"))
+    let camera_view = json
+        .get("viewport")
+        .and_then(|viewport| viewport.get("camera_view"));
+
+    let cell_aspect_ratio = camera_view
+        .and_then(|view| view.get("cell_aspect_ratio"))
+        .and_then(serde_json::Value::as_f64)
+        .map(|value| value as f32)
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .unwrap_or(defaults.0);
+
+    let perspective_scale = camera_view
+        .and_then(|view| view.get("perspective_scale"))
+        .and_then(serde_json::Value::as_f64)
+        .map(|value| value as f32)
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .unwrap_or(defaults.1);
+
+    let aspect_ratio = camera_view
+        .and_then(|view| view.get("aspect_ratio"))
         .and_then(parse_camera_viewport_aspect_ratio)
-        .unwrap_or(CameraViewportAspectRatio::DEFAULT)
+        .unwrap_or(defaults.2);
+
+    (cell_aspect_ratio, perspective_scale, aspect_ratio)
 }
 
 fn fit_aspect_dimensions(
@@ -1928,13 +1837,19 @@ fn fit_aspect_dimensions(
         (available_width as f32 * visual_height_ratio / visual_width_ratio).floor() as u16;
 
     if width_limited_height <= available_height {
-        return (available_width as usize, width_limited_height.max(1) as usize);
+        return (
+            available_width as usize,
+            width_limited_height.max(1) as usize,
+        );
     }
 
     let height_limited_width =
         (available_height as f32 * visual_width_ratio / visual_height_ratio).floor() as u16;
 
-    (height_limited_width.max(1) as usize, available_height as usize)
+    (
+        height_limited_width.max(1) as usize,
+        available_height as usize,
+    )
 }
 
 fn camera_viewport_canvas_size(
@@ -2330,58 +2245,50 @@ fn loaded_a3d_object_render_usize(
         .unwrap_or(default_value)
 }
 
-fn loaded_a3d_object_edge_stride(root: &Path, object: &crate::a3d::SceneObject) -> usize {
-    loaded_a3d_object_render_usize(root, &object.id, "edge_stride", 1)
+fn loaded_a3d_object_edge_stride(_root: &Path, object: &crate::a3d::SceneObject) -> usize {
+    object.render.edge_stride.max(1)
 }
 
 fn loaded_a3d_object_ascii_simplify_grid_size(
-    root: &Path,
+    _root: &Path,
     object: &crate::a3d::SceneObject,
 ) -> Option<f32> {
-    let scene_path = root.join("scene.a3d");
-    let source = std::fs::read_to_string(&scene_path).ok()?;
-    let json = serde_json::from_str::<serde_json::Value>(&source).ok()?;
-    let objects = json.get("objects").and_then(serde_json::Value::as_array)?;
-
-    let render = objects
-        .iter()
-        .find(|entry| {
-            entry
-                .get("id")
-                .and_then(serde_json::Value::as_str)
-                .is_some_and(|id| id == object.id)
-        })
-        .and_then(|entry| entry.get("render"))?;
-
-    let simplify = render.get("ascii_simplify")?;
-
-    if simplify
-        .get("enabled")
-        .and_then(serde_json::Value::as_bool)
-        .is_some_and(|enabled| !enabled)
-    {
-        return None;
-    }
-
-    simplify
-        .get("grid_size")
-        .and_then(serde_json::Value::as_f64)
-        .map(|value| value as f32)
+    object
+        .render
+        .ascii_simplify
+        .as_ref()
+        .filter(|config| config.enabled)
+        .map(|config| config.grid_size)
         .filter(|value| value.is_finite() && *value > 0.0)
 }
+
+static LOADED_A3D_MESH_CACHE: OnceLock<Mutex<HashMap<String, Arc<Mesh>>>> = OnceLock::new();
+static LOADED_A3D_MAP_CACHE: OnceLock<Mutex<HashMap<String, Arc<GeoJsonMapAsset>>>> =
+    OnceLock::new();
 
 fn load_loaded_a3d_mesh(
     root: &Path,
     relative_path: &str,
     object: &crate::a3d::SceneObject,
-) -> io::Result<Mesh> {
+) -> io::Result<Arc<Mesh>> {
     let mesh_path = resolve_a3d_asset_path(root, relative_path)?;
+    let simplify = loaded_a3d_object_ascii_simplify_grid_size(root, object);
+    let cache_key = format!("{mesh_path}|simplify={simplify:?}");
+
+    if let Some(mesh) = LOADED_A3D_MESH_CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| io::Error::other("A3D mesh cache lock poisoned"))?
+        .get(&cache_key)
+        .cloned()
+    {
+        return Ok(mesh);
+    }
+
     let mut mesh = load_obj(Path::new(&mesh_path)).map_err(|error| {
         io::Error::other(format!("failed to load A3D mesh {}: {}", mesh_path, error))
     })?;
 
-    // External OBJ files often arrive in arbitrary units and offsets.
-    // Normalize first, then let the .a3d object transform place/scale it.
     if !mesh.normalize_to_size(1.0) {
         return Err(io::Error::other(format!(
             "could not normalize A3D mesh {}",
@@ -2389,9 +2296,16 @@ fn load_loaded_a3d_mesh(
         )));
     }
 
-    if let Some(grid_size) = loaded_a3d_object_ascii_simplify_grid_size(root, object) {
+    if let Some(grid_size) = simplify {
         mesh = mesh.simplify_by_vertex_grid(grid_size);
     }
+
+    let mesh = Arc::new(mesh);
+    LOADED_A3D_MESH_CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| io::Error::other("A3D mesh cache lock poisoned"))?
+        .insert(cache_key, Arc::clone(&mesh));
 
     Ok(mesh)
 }
@@ -2411,7 +2325,7 @@ fn draw_loaded_a3d_mesh_object_in_ws(
     };
 
     let mesh = load_loaded_a3d_mesh(root, path, object)?;
-    let object_world = object.transform.matrix();
+    let object_world = object.world_matrix();
 
     for (from_index, to_index) in mesh.unique_edges() {
         let from_world = object_world.transform_point(mesh.vertices[from_index]);
@@ -2431,10 +2345,10 @@ fn draw_loaded_a3d_light_gizmos(
     canvas: &mut Canvas,
     depth_buffer: &mut CameraViewportDepthBuffer,
     state: &AppState,
-    root: &Path,
+    _root: &Path,
     inner: ClipRect,
 ) -> io::Result<()> {
-    for light in loaded_a3d_lights(root)? {
+    for light in &state.loaded_a3d_lights {
         if !light.gizmo.visible {
             continue;
         }
@@ -2483,11 +2397,11 @@ fn draw_loaded_a3d_light_gizmos(
 fn draw_loaded_a3d_light_gizmos_in_ws(
     canvas: &mut Canvas,
     projector: &ObliqueProjector,
-    root: &Path,
+    state: &AppState,
 ) -> io::Result<()> {
     let visual_length_cells = 8.0;
 
-    for light in loaded_a3d_lights(root)? {
+    for light in &state.loaded_a3d_lights {
         if !light.gizmo.visible {
             continue;
         }
@@ -2530,50 +2444,15 @@ fn draw_loaded_a3d_light_gizmos_in_ws(
     Ok(())
 }
 
-fn loaded_a3d_object_render_mode(root: &Path, object: &crate::a3d::SceneObject) -> Option<String> {
-    let scene_path = root.join("scene.a3d");
-    let source = std::fs::read_to_string(&scene_path).ok()?;
-    let json = serde_json::from_str::<serde_json::Value>(&source).ok()?;
-    let objects = json.get("objects").and_then(serde_json::Value::as_array)?;
-
-    objects
-        .iter()
-        .find(|entry| {
-            entry
-                .get("id")
-                .and_then(serde_json::Value::as_str)
-                .is_some_and(|id| id == object.id)
-        })
-        .and_then(|entry| entry.get("render"))
-        .and_then(|render| render.get("mode"))
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
+fn loaded_a3d_object_render_mode(_root: &Path, object: &crate::a3d::SceneObject) -> Option<String> {
+    object.render.mode.clone()
 }
 
-fn loaded_a3d_object_mesh_path(root: &Path, object: &crate::a3d::SceneObject) -> Option<String> {
-    let scene_path = root.join("scene.a3d");
-    let source = std::fs::read_to_string(&scene_path).ok()?;
-    let json = serde_json::from_str::<serde_json::Value>(&source).ok()?;
-    let objects = json.get("objects").and_then(serde_json::Value::as_array)?;
-
-    objects
-        .iter()
-        .find(|entry| {
-            entry
-                .get("id")
-                .and_then(serde_json::Value::as_str)
-                .is_some_and(|id| id == object.id)
-        })
-        .and_then(|entry| entry.get("asset"))
-        .filter(|asset| {
-            asset
-                .get("type")
-                .and_then(serde_json::Value::as_str)
-                .is_some_and(|asset_type| asset_type == "mesh")
-        })
-        .and_then(|asset| asset.get("path"))
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
+fn loaded_a3d_object_mesh_path(_root: &Path, object: &crate::a3d::SceneObject) -> Option<String> {
+    match &object.asset {
+        AssetRef::Mesh { path } => Some(path.clone()),
+        _ => None,
+    }
 }
 
 fn dot_vec3(a: Vec3, b: Vec3) -> f32 {
@@ -2624,8 +2503,13 @@ fn draw_loaded_a3d_mesh_object_raster(
     };
 
     let mesh = load_loaded_a3d_mesh(root, &path, object)?;
-    let object_world = object.transform.matrix();
-    let light_direction = loaded_a3d_primary_light_direction(root)?;
+    let object_world = object.world_matrix();
+    let light_direction = state
+        .loaded_a3d_lights
+        .iter()
+        .find(|light| light.intensity > 0.0)
+        .and_then(|light| normalized_light_direction(light.direction))
+        .unwrap_or_else(|| Vec3::new(-1.0, -1.0, -1.0));
     let light_to_surface = light_direction * -1.0;
 
     for primitive in &mesh.faces {
@@ -2733,6 +2617,128 @@ fn draw_loaded_a3d_mesh_object_raster(
     Ok(())
 }
 
+fn load_loaded_a3d_map(root: &Path, relative_path: &str) -> io::Result<Arc<GeoJsonMapAsset>> {
+    let map_path = resolve_a3d_asset_path(root, relative_path)?;
+
+    if let Some(map) = LOADED_A3D_MAP_CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| io::Error::other("A3D map cache lock poisoned"))?
+        .get(&map_path)
+        .cloned()
+    {
+        return Ok(map);
+    }
+
+    let map = Arc::new(load_geojson_map_asset(Path::new(&map_path))?);
+    LOADED_A3D_MAP_CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| io::Error::other("A3D map cache lock poisoned"))?
+        .insert(map_path, Arc::clone(&map));
+
+    Ok(map)
+}
+
+fn draw_loaded_a3d_geo_json_map_object(
+    canvas: &mut Canvas,
+    depth_buffer: &mut CameraViewportDepthBuffer,
+    state: &AppState,
+    root: &Path,
+    inner: ClipRect,
+    object: &crate::a3d::SceneObject,
+) -> io::Result<()> {
+    if !object.render.visible {
+        return Ok(());
+    }
+
+    let AssetRef::GeoJsonMap { path, radius_scale } = &object.asset else {
+        return Ok(());
+    };
+
+    let map = load_loaded_a3d_map(root, path)?;
+    let object_world = object.world_matrix();
+    let character = object.render.stroke_character.unwrap_or('*');
+
+    for line in &map.lines {
+        for pair in line.points_lon_lat.windows(2) {
+            let (lon_a, lat_a) = pair[0];
+            let (lon_b, lat_b) = pair[1];
+            let steps = segment_steps(lon_a, lat_a, lon_b, lat_b);
+            let mut previous_world = None;
+
+            for step in 0..=steps {
+                let t = step as f32 / steps as f32;
+                let lon = lerp_angle_degrees(lon_a, lon_b, t);
+                let lat = lat_a + (lat_b - lat_a) * t;
+                let point = lon_lat_to_sphere(lon, lat, *radius_scale);
+                let world = object_world.transform_point(Vec3::new(point.x, point.y, point.z));
+
+                if let Some(previous) = previous_world {
+                    draw_camera_viewport_depth_line(
+                        canvas,
+                        depth_buffer,
+                        state,
+                        inner,
+                        previous,
+                        world,
+                        character,
+                    );
+                }
+
+                previous_world = Some(world);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn draw_loaded_a3d_geo_json_map_object_in_ws(
+    canvas: &mut Canvas,
+    projector: &ObliqueProjector,
+    root: &Path,
+    object: &crate::a3d::SceneObject,
+) -> io::Result<()> {
+    if !object.render.visible {
+        return Ok(());
+    }
+
+    let AssetRef::GeoJsonMap { path, radius_scale } = &object.asset else {
+        return Ok(());
+    };
+
+    let map = load_loaded_a3d_map(root, path)?;
+    let object_world = object.world_matrix();
+    let character = object.render.stroke_character.unwrap_or('*');
+
+    for line in &map.lines {
+        for pair in line.points_lon_lat.windows(2) {
+            let (lon_a, lat_a) = pair[0];
+            let (lon_b, lat_b) = pair[1];
+            let steps = segment_steps(lon_a, lat_a, lon_b, lat_b);
+            let mut previous = None;
+
+            for step in 0..=steps {
+                let t = step as f32 / steps as f32;
+                let lon = lerp_angle_degrees(lon_a, lon_b, t);
+                let lat = lat_a + (lat_b - lat_a) * t;
+                let point = lon_lat_to_sphere(lon, lat, *radius_scale);
+                let world = object_world.transform_point(Vec3::new(point.x, point.y, point.z));
+                let projected = projector.project(world);
+
+                if let Some(previous) = previous {
+                    canvas.draw_line(previous, projected, character);
+                }
+
+                previous = Some(projected);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn draw_loaded_a3d_mesh_object(
     canvas: &mut Canvas,
     depth_buffer: &mut CameraViewportDepthBuffer,
@@ -2761,7 +2767,7 @@ fn draw_loaded_a3d_mesh_object(
     };
 
     let mesh = load_loaded_a3d_mesh(root, path, object)?;
-    let object_world = object.transform.matrix();
+    let object_world = object.world_matrix();
     let character = object.render.stroke_character.unwrap_or('#');
     let edge_stride = loaded_a3d_object_edge_stride(root, object);
 
@@ -2805,7 +2811,7 @@ fn draw_loaded_a3d_word_object(
 
     let word_path = resolve_a3d_asset_path(root, path)?;
     let word: WordAsset = read_json(&word_path)?;
-    let object_world = object.transform.matrix();
+    let object_world = object.world_matrix();
     let stroke_character = object
         .render
         .stroke_character
@@ -2912,6 +2918,14 @@ fn render_loaded_a3d_world(
         for object in &world.objects {
             draw_loaded_a3d_word_object(canvas, &mut depth_buffer, state, root, inner, object)?;
             draw_loaded_a3d_mesh_object(canvas, &mut depth_buffer, state, root, inner, object)?;
+            draw_loaded_a3d_geo_json_map_object(
+                canvas,
+                &mut depth_buffer,
+                state,
+                root,
+                inner,
+                object,
+            )?;
         }
 
         Ok::<(), io::Error>(())
@@ -2975,7 +2989,7 @@ fn draw_loaded_a3d_word_object_in_ws(
 
     let word_path = resolve_a3d_asset_path(root, path)?;
     let word: WordAsset = read_json(&word_path)?;
-    let object_world = object.transform.matrix();
+    let object_world = object.world_matrix();
     let stroke_character = object
         .render
         .stroke_character
@@ -3055,9 +3069,10 @@ fn draw_loaded_a3d_objects_in_ws(
     for object in &world.objects {
         draw_loaded_a3d_word_object_in_ws(canvas, projector, state, root, object)?;
         draw_loaded_a3d_mesh_object_in_ws(canvas, projector, root, object)?;
+        draw_loaded_a3d_geo_json_map_object_in_ws(canvas, projector, root, object)?;
     }
 
-    draw_loaded_a3d_light_gizmos_in_ws(canvas, projector, root)?;
+    draw_loaded_a3d_light_gizmos_in_ws(canvas, projector, state)?;
 
     Ok(())
 }
@@ -3097,6 +3112,14 @@ fn render_loaded_a3d_camera_viewport_canvas(
         for object in &world.objects {
             draw_loaded_a3d_word_object(canvas, &mut depth_buffer, state, root, inner, object)?;
             draw_loaded_a3d_mesh_object(canvas, &mut depth_buffer, state, root, inner, object)?;
+            draw_loaded_a3d_geo_json_map_object(
+                canvas,
+                &mut depth_buffer,
+                state,
+                root,
+                inner,
+                object,
+            )?;
         }
 
         Ok::<(), io::Error>(())
@@ -4160,6 +4183,7 @@ fn handle_key_press(state: &mut AppState, key: KeyEvent) -> KeyHandling {
             }
             KeyCode::Enter => {
                 state.loaded_a3d_workspace.inspect_selected();
+                state.loaded_a3d_workspace.activate_inspected_xyz_target();
                 state.loaded_a3d_workspace.close_objects_panel();
                 return KeyHandling::Handled;
             }
@@ -4198,6 +4222,22 @@ fn handle_key_press(state: &mut AppState, key: KeyEvent) -> KeyHandling {
         return menu_command_for_key(key_code)
             .map(|command| apply_app_command(state, command))
             .unwrap_or(KeyHandling::Ignored);
+    }
+
+    if state.current_scene() == Scene::LoadedA3d {
+        let factor = match key_code {
+            KeyCode::Char('+') | KeyCode::Char('=') => Some(1.1),
+            KeyCode::Char('-') | KeyCode::Char('_') => Some(1.0 / 1.1),
+            _ => None,
+        };
+
+        if let Some(factor) = factor {
+            return if state.scale_active_loaded_a3d_object(factor) {
+                KeyHandling::Handled
+            } else {
+                KeyHandling::Ignored
+            };
+        }
     }
 
     // XyzControl is the primitive axis/origin input layer. It routes through
@@ -4281,13 +4321,40 @@ pub fn run() -> io::Result<()> {
     state.record_render_timings(timings);
 
     loop {
-        let now = Instant::now();
+        let frame_start = Instant::now();
+        let now = frame_start;
         let elapsed = now.duration_since(previous_time);
         previous_time = now;
 
         let update_start = Instant::now();
-        let should_render = state.update(elapsed);
+        let mut should_render = state.update(elapsed);
         let update = update_start.elapsed();
+        let mut should_quit = false;
+
+        while event::poll(Duration::ZERO)? {
+            match event::read()? {
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    match handle_key_press(&mut state, key) {
+                        KeyHandling::Quit => {
+                            should_quit = true;
+                            break;
+                        }
+                        KeyHandling::Handled => {
+                            should_render = true;
+                        }
+                        KeyHandling::Ignored => {}
+                    }
+                }
+                Event::Resize(_, _) => {
+                    should_render = true;
+                }
+                _ => {}
+            }
+        }
+
+        if should_quit {
+            break;
+        }
 
         if should_render {
             let mut timings = render_scene(&mut terminal, &state, &assets, &mut previous_frame)?;
@@ -4295,27 +4362,9 @@ pub fn run() -> io::Result<()> {
             state.record_render_timings(timings);
         }
 
-        if !event::poll(FRAME_DURATION)? {
-            continue;
-        }
-
-        let Event::Key(key) = event::read()? else {
-            continue;
-        };
-
-        if key.kind != KeyEventKind::Press {
-            continue;
-        }
-
-        match handle_key_press(&mut state, key) {
-            KeyHandling::Quit => break,
-            KeyHandling::Handled => {
-                previous_time = Instant::now();
-
-                let timings = render_scene(&mut terminal, &state, &assets, &mut previous_frame)?;
-                state.record_render_timings(timings);
-            }
-            KeyHandling::Ignored => {}
+        let remaining = FRAME_DURATION.saturating_sub(frame_start.elapsed());
+        if !remaining.is_zero() {
+            let _ = event::poll(remaining)?;
         }
     }
 
@@ -4437,7 +4486,12 @@ mod tests {
     #[test]
     fn fit_aspect_dimensions_limits_by_height_for_16_9() {
         assert_eq!(
-            super::fit_aspect_dimensions(160, 40, super::CameraViewportAspectRatio::new(16, 9), 1.0),
+            super::fit_aspect_dimensions(
+                160,
+                40,
+                super::CameraViewportAspectRatio::new(16, 9),
+                1.0
+            ),
             (71, 40)
         );
     }
@@ -4463,7 +4517,12 @@ mod tests {
     #[test]
     fn fit_aspect_dimensions_uses_cell_aspect_ratio_for_visual_16_9() {
         assert_eq!(
-            super::fit_aspect_dimensions(180, 17, super::CameraViewportAspectRatio::new(16, 9), 2.0),
+            super::fit_aspect_dimensions(
+                180,
+                17,
+                super::CameraViewportAspectRatio::new(16, 9),
+                2.0
+            ),
             (60, 17)
         );
     }

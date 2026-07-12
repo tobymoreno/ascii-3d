@@ -1,11 +1,6 @@
 use super::Frame;
 
-pub fn draw_line_overlay(
-    frame: &mut Frame,
-    a: (i32, i32, f32),
-    b: (i32, i32, f32),
-    ch: char,
-) {
+pub fn draw_line_overlay(frame: &mut Frame, a: (i32, i32, f32), b: (i32, i32, f32), ch: char) {
     let mut x0 = a.0;
     let mut y0 = a.1;
     let x1 = b.0;

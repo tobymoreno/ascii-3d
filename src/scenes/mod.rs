@@ -1,5 +1,8 @@
 use serde::Deserialize;
-use std::{fs, io, path::{Path, PathBuf}};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 mod arbitrary_vector;
 mod asset_axes;
@@ -318,7 +321,9 @@ pub fn registry_from_index_path(path: impl AsRef<Path>) -> io::Result<Vec<SceneD
     }
 
     if scenes.is_empty() {
-        return Err(io::Error::other("scene index must include at least one scene"));
+        return Err(io::Error::other(
+            "scene index must include at least one scene",
+        ));
     }
 
     Ok(scenes)
@@ -386,8 +391,16 @@ mod tests {
         assert_eq!(registry[0].scene, Scene::LoadedA3d);
         assert_eq!(registry[0].title, "Glyph A and B");
         assert_eq!(registry[0].index, 0);
-        assert!(registry.iter().any(|descriptor| descriptor.id == "world_camera_spaces"));
-        assert!(registry.iter().any(|descriptor| descriptor.id == "pitt_crew"));
+        assert!(
+            registry
+                .iter()
+                .any(|descriptor| descriptor.id == "world_camera_spaces")
+        );
+        assert!(
+            registry
+                .iter()
+                .any(|descriptor| descriptor.id == "pitt_crew")
+        );
     }
 
     #[test]
@@ -398,8 +411,14 @@ mod tests {
         assert!(registry.len() >= Scene::ALL.len());
         assert_eq!(registry[0].id, "glyph_ab");
         assert_eq!(registry[0].scene, Scene::LoadedA3d);
-        assert_eq!(registry[0].a3d_root.as_deref(), Some(std::path::Path::new("assets/a3d/glyph_ab")));
-        assert_eq!(registry.last().map(|descriptor| descriptor.scene), Some(Scene::Axes));
+        assert_eq!(
+            registry[0].a3d_root.as_deref(),
+            Some(std::path::Path::new("assets/a3d/glyph_ab"))
+        );
+        assert_eq!(
+            registry.last().map(|descriptor| descriptor.scene),
+            Some(Scene::Axes)
+        );
     }
 
     #[test]
@@ -476,7 +495,10 @@ mod tests {
             );
         }
 
-        assert!(checked_roots > 0, "expected at least one dynamic a3d_root scene");
+        assert!(
+            checked_roots > 0,
+            "expected at least one dynamic a3d_root scene"
+        );
     }
 
     #[test]
@@ -499,7 +521,10 @@ mod tests {
                 .and_then(serde_json::Value::as_str)
                 .expect("scene index entry should have id");
 
-            assert!(!id.trim().is_empty(), "scene index entry id should not be empty");
+            assert!(
+                !id.trim().is_empty(),
+                "scene index entry id should not be empty"
+            );
 
             let renderer_id = entry
                 .get("scene")
@@ -557,7 +582,10 @@ mod tests {
             );
         }
 
-        assert_eq!(checked_word_assets, 2, "glyph_ab should reference A and B word assets");
+        assert_eq!(
+            checked_word_assets, 2,
+            "glyph_ab should reference A and B word assets"
+        );
     }
 
     #[test]
@@ -576,7 +604,11 @@ mod tests {
                 .and_then(serde_json::Value::as_array)
                 .expect("word asset should contain children");
 
-            assert_eq!(children.len(), 1, "{word_asset} should contain one glyph child");
+            assert_eq!(
+                children.len(),
+                1,
+                "{word_asset} should contain one glyph child"
+            );
 
             for child in children {
                 for key in ["glyph_asset", "metadata_asset"] {
@@ -593,5 +625,4 @@ mod tests {
             }
         }
     }
-
 }

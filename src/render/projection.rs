@@ -122,8 +122,7 @@ mod tests {
     #[test]
     fn invalid_cell_aspect_ratio_uses_default() {
         let invalid = Projection::with_camera(100, 50, 20.0, 0.1, f32::NAN, 0.5);
-        let fallback =
-            Projection::with_camera(100, 50, 20.0, 0.1, DEFAULT_CELL_ASPECT_RATIO, 0.5);
+        let fallback = Projection::with_camera(100, 50, 20.0, 0.1, DEFAULT_CELL_ASPECT_RATIO, 0.5);
 
         assert_eq!(
             invalid.project_xyz(10.0, 0.0, 0.0),

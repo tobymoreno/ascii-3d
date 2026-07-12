@@ -1,0 +1,174 @@
+{
+  "version": 1,
+  "title": "KM Logo Group",
+  "objects": [
+    {
+      "id": "orange_bar_left",
+      "asset": {
+        "type": "mesh",
+        "path": "../../models/quad4.obj"
+      },
+      "transform": {
+        "position": [
+          -1.74,
+          0,
+          0
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.22,
+          1.45,
+          1
+        ]
+      },
+      "render": {
+        "visible": true,
+        "stroke_character": "I"
+      }
+    },
+    {
+      "id": "orange_diag_upper",
+      "asset": {
+        "type": "mesh",
+        "path": "../../models/quad4.obj"
+      },
+      "transform": {
+        "position": [
+          -1.08,
+          0.4,
+          0
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          -48
+        ],
+        "scale": [
+          0.22,
+          1.05,
+          1
+        ]
+      },
+      "render": {
+        "visible": true,
+        "stroke_character": "K"
+      }
+    },
+    {
+      "id": "orange_diag_lower",
+      "asset": {
+        "type": "mesh",
+        "path": "../../models/quad4.obj"
+      },
+      "transform": {
+        "position": [
+          -0.78,
+          -0.36,
+          0
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          45
+        ],
+        "scale": [
+          0.22,
+          1.35,
+          1
+        ]
+      },
+      "render": {
+        "visible": true,
+        "stroke_character": "K"
+      }
+    },
+    {
+      "id": "blue_diag_left",
+      "asset": {
+        "type": "mesh",
+        "path": "../../models/quad4.obj"
+      },
+      "transform": {
+        "position": [
+          0.22,
+          0.1,
+          0
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          45
+        ],
+        "scale": [
+          0.24,
+          1.05,
+          1
+        ]
+      },
+      "render": {
+        "visible": true,
+        "stroke_character": "V"
+      }
+    },
+    {
+      "id": "blue_diag_right",
+      "asset": {
+        "type": "mesh",
+        "path": "../../models/quad4.obj"
+      },
+      "transform": {
+        "position": [
+          0.86,
+          0.1,
+          0
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          -45
+        ],
+        "scale": [
+          0.24,
+          1.35,
+          1
+        ]
+      },
+      "render": {
+        "visible": true,
+        "stroke_character": "M"
+      }
+    },
+    {
+      "id": "blue_bar_right",
+      "asset": {
+        "type": "mesh",
+        "path": "../../models/quad4.obj"
+      },
+      "transform": {
+        "position": [
+          1.48,
+          0,
+          0
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.22,
+          1.45,
+          1
+        ]
+      },
+      "render": {
+        "visible": true,
+        "stroke_character": "I"
+      }
+    }
+  ]
+}

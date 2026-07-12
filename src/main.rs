@@ -2,7 +2,8 @@
 #[macro_use]
 extern crate objc;
 
-mod a3d;
+pub use ascii_3d::{a3d, math};
+
 mod app;
 mod axis_metadata;
 mod camera3d;
@@ -12,7 +13,6 @@ mod geometry2d;
 mod glyphs;
 mod graphics;
 mod input;
-mod math;
 mod menu;
 mod mesh;
 mod mesh_renderer;
