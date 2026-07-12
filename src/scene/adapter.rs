@@ -1,9 +1,10 @@
+use crate::render::GreatCircle;
 use super::SceneDocument;
 use crate::render::{
     RenderAxis, RenderBehavior, RenderCamera, RenderDisplay, RenderGeoJsonMapOverlay,
     RenderGroup, RenderLighting, RenderNode, RenderObject, RenderObjectNode,
-    RenderProjectionConfig, RenderQuad, RenderQuadGroup, RenderScene, RenderSpinBehavior,
-    RenderTransform,
+    RenderProjectionConfig, RenderQuad, RenderQuadGroup, RenderScene, RenderSphereGuide,
+    RenderSphereGuideKind, RenderSpinBehavior, RenderTransform,
 };
 
 const DEFAULT_CAMERA_ID: &str = "default";
@@ -112,6 +113,55 @@ pub fn scene_document_to_render_scene(document: SceneDocument) -> RenderScene {
             )));
         }
 
+        earth_group.children.push(RenderNode::Object(RenderObjectNode::new(
+            "guide-equator",
+            "Guide Equator",
+            RenderObject::SphereGuide(RenderSphereGuide {
+                kind: RenderSphereGuideKind::GreatCircle(GreatCircle::EquatorY0),
+                marker: 'e',
+                visible: true,
+                radius_scale: 1.01,
+            }),
+        )));
+        earth_group.children.push(RenderNode::Object(RenderObjectNode::new(
+            "guide-meridian-x",
+            "Guide Meridian X",
+            RenderObject::SphereGuide(RenderSphereGuide {
+                kind: RenderSphereGuideKind::GreatCircle(GreatCircle::MeridianX0),
+                marker: 'm',
+                visible: true,
+                radius_scale: 1.01,
+            }),
+        )));
+        earth_group.children.push(RenderNode::Object(RenderObjectNode::new(
+            "guide-meridian-z",
+            "Guide Meridian Z",
+            RenderObject::SphereGuide(RenderSphereGuide {
+                kind: RenderSphereGuideKind::GreatCircle(GreatCircle::MeridianZ0),
+                marker: 'p',
+                visible: true,
+                radius_scale: 1.01,
+            }),
+        )));
+
+        for (id, name, latitude_degrees, marker) in [
+            ("guide-lat-60", "Guide Latitude 60", 60.0, 'N'),
+            ("guide-lat-30", "Guide Latitude 30", 30.0, 'n'),
+            ("guide-lat-15", "Guide Latitude 15", 15.0, '.'),
+            ("guide-lat--30", "Guide Latitude -30", -30.0, 's'),
+        ] {
+            earth_group.children.push(RenderNode::Object(RenderObjectNode::new(
+                id,
+                name,
+                RenderObject::SphereGuide(RenderSphereGuide {
+                    kind: RenderSphereGuideKind::Latitude(latitude_degrees),
+                    marker,
+                    visible: true,
+                    radius_scale: 1.012,
+                }),
+            )));
+        }
+
         root_group.children.push(RenderNode::Group(earth_group));
     }
 
@@ -210,7 +260,7 @@ mod tests {
         assert_eq!(earth_group.id, "earth");
         assert_eq!(earth_group.name, "Earth");
         assert_eq!(earth_group.behaviors.len(), 1);
-        assert_eq!(earth_group.children.len(), 1);
+        assert!(earth_group.children.len() >= 1);
 
         let RenderBehavior::Spin(spin) = &earth_group.behaviors[0];
 

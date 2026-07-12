@@ -1,3 +1,5 @@
+use super::sphere_guides::GreatCircle;
+
 #[derive(Clone, Debug)]
 pub struct RenderScene {
     pub name: String,
@@ -62,6 +64,7 @@ pub enum RenderObject {
     Mesh(RenderMeshObject),
     QuadGroup(RenderQuadGroup),
     GeoJsonMap(RenderGeoJsonMapOverlay),
+    SphereGuide(RenderSphereGuide),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -265,6 +268,20 @@ pub enum RenderOverlay {
 #[derive(Clone, Debug)]
 pub struct RenderGeoJsonMapOverlay {
     pub asset: String,
+    pub visible: bool,
+    pub radius_scale: f32,
+}
+
+#[derive(Clone, Debug)]
+pub enum RenderSphereGuideKind {
+    GreatCircle(GreatCircle),
+    Latitude(f32),
+}
+
+#[derive(Clone, Debug)]
+pub struct RenderSphereGuide {
+    pub kind: RenderSphereGuideKind,
+    pub marker: char,
     pub visible: bool,
     pub radius_scale: f32,
 }

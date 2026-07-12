@@ -827,6 +827,7 @@ fn draw_meshes_from_nodes(
                             object_world,
                         );
                     }
+                    RenderObject::SphereGuide(_) => {}
                     RenderObject::QuadGroup(_) => {}
                 }
             }
