@@ -7,8 +7,10 @@ pub use geojson_map::{
     point_in_polygon, segment_steps, GeoJsonMapAsset, GeoPoint, MapLine,
 };
 mod projection;
+mod raster;
 
 pub use projection::Projection;
+pub use raster::{draw_line, fill_triangle};
 mod lines;
 mod math;
 

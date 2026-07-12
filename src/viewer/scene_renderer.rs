@@ -1,7 +1,8 @@
 use crate::{
     render::{
-        draw_line_overlay, great_circle_points, land_fill_char, latitude_circle_points,
-        lerp_angle_degrees, lon_lat_to_sphere, point_in_polygon, segment_steps, Frame,
+        draw_line, draw_line_overlay, fill_triangle, great_circle_points, land_fill_char,
+        latitude_circle_points, lerp_angle_degrees, lon_lat_to_sphere, point_in_polygon,
+        segment_steps, Frame,
         GeoJsonMapAsset, Mat4, MeshAsset, MeshVertex, Projection, RenderNode, RenderObject,
         RenderQuad, RenderQuadGroup, RenderScene, RenderSphereGuideKind, RenderTransform,
         SphereGuidePoint, Vec3,
@@ -41,85 +42,6 @@ fn screen_project(scene: &RenderScene, point: Vec3) -> Option<(i32, i32, f32)> {
         camera.projection.vertical_center_ratio,
     )
     .project_xyz(point.x, point.y, point.z)
-}
-
-
-fn edge(a: (f32, f32), b: (f32, f32), p: (f32, f32)) -> f32 {
-    (p.0 - a.0) * (b.1 - a.1) - (p.1 - a.1) * (b.0 - a.0)
-}
-
-fn fill_triangle(
-    frame: &mut Frame,
-    a: (i32, i32, f32),
-    b: (i32, i32, f32),
-    c: (i32, i32, f32),
-    ch: char,
-) {
-    let min_x = a.0.min(b.0).min(c.0).max(0);
-    let max_x = a.0.max(b.0).max(c.0).min(WIDTH as i32 - 1);
-    let min_y = a.1.min(b.1).min(c.1).max(0);
-    let max_y = a.1.max(b.1).max(c.1).min(HEIGHT as i32 - 1);
-
-    let af = (a.0 as f32, a.1 as f32);
-    let bf = (b.0 as f32, b.1 as f32);
-    let cf = (c.0 as f32, c.1 as f32);
-
-    let area = edge(af, bf, cf);
-
-    if area.abs() < f32::EPSILON {
-        return;
-    }
-
-    for y in min_y..=max_y {
-        for x in min_x..=max_x {
-            let p = (x as f32 + 0.5, y as f32 + 0.5);
-
-            let w0 = edge(bf, cf, p) / area;
-            let w1 = edge(cf, af, p) / area;
-            let w2 = edge(af, bf, p) / area;
-
-            if w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0 {
-                let z = w0 * a.2 + w1 * b.2 + w2 * c.2;
-                frame.set(x, y, z, ch);
-            }
-        }
-    }
-}
-
-fn draw_line(frame: &mut Frame, a: (i32, i32, f32), b: (i32, i32, f32), ch: char) {
-    let dx = (b.0 - a.0).abs();
-    let dy = -(b.1 - a.1).abs();
-    let sx = if a.0 < b.0 { 1 } else { -1 };
-    let sy = if a.1 < b.1 { 1 } else { -1 };
-    let mut err = dx + dy;
-    let mut x = a.0;
-    let mut y = a.1;
-    let steps = dx.max(-dy).max(1) as f32;
-    let mut step = 0.0;
-
-    loop {
-        let t = step / steps;
-        let z = a.2 * (1.0 - t) + b.2 * t;
-        frame.set(x, y, z - 0.001, ch);
-
-        if x == b.0 && y == b.1 {
-            break;
-        }
-
-        let e2 = 2 * err;
-
-        if e2 >= dy {
-            err += dy;
-            x += sx;
-        }
-
-        if e2 <= dx {
-            err += dx;
-            y += sy;
-        }
-
-        step += 1.0;
-    }
 }
 
 
