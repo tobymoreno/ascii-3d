@@ -13,7 +13,6 @@ use crate::{
 use std::{
     collections::HashMap,
     io,
-    path::{Path, PathBuf},
 };
 
 const WIDTH: usize = 96;
@@ -160,75 +159,6 @@ impl std::ops::Mul for Mat4 {
     }
 }
 
-fn validate_scene(scene: &RenderScene) -> io::Result<()> {
-    if scene.name.trim().is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "scene name must not be empty",
-        ));
-    }
-
-    if !scene.display.world_scale.is_finite() || scene.display.world_scale <= 0.0 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "scene display.world_scale must be positive and finite",
-        ));
-    }
-
-    for object in &scene.objects {
-        let RenderObject::QuadGroup(group) = object else {
-            continue;
-        };
-
-        for quad in &group.quads {
-            if quad.id.trim().is_empty() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "quad id must not be empty",
-                ));
-            }
-
-            if quad.marker.is_empty() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("quad {} marker must not be empty", quad.id),
-                ));
-            }
-
-            if quad.position.iter().any(|value| !value.is_finite()) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("quad {} position must be finite", quad.id),
-                ));
-            }
-
-            if quad.size.iter().any(|value| !value.is_finite() || *value <= 0.0) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("quad {} size must be positive and finite", quad.id),
-                ));
-            }
-
-            if !quad.rotation_z_degrees.is_finite() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("quad {} rotation_z_degrees must be finite", quad.id),
-                ));
-            }
-        }
-    }
-
-    Ok(())
-}
-
-pub fn read_scene(path: impl AsRef<Path>) -> io::Result<RenderScene> {
-    let document = load_scene_document(path)?;
-    let scene = scene_document_to_render_scene(document);
-    validate_scene(&scene)?;
-    Ok(scene)
-}
-
-
 fn marker_char(marker: &str) -> char {
     marker.chars().next().unwrap_or('#')
 }
@@ -355,81 +285,6 @@ fn draw_axes(frame: &mut Frame, scene: &RenderScene, world: Mat4) {
 
 
 
-fn collect_mesh_assets_from_nodes(nodes: &[RenderNode], assets: &mut Vec<String>) {
-    for node in nodes {
-        match node {
-            RenderNode::Group(group) => collect_mesh_assets_from_nodes(&group.children, assets),
-            RenderNode::Object(object_node) => {
-                if let RenderObject::Mesh(mesh) = &object_node.object {
-                    if !mesh.mesh_asset.trim().is_empty()
-                        && !assets.iter().any(|asset| asset == &mesh.mesh_asset)
-                    {
-                        assets.push(mesh.mesh_asset.clone());
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn collect_mesh_assets(scene: &RenderScene) -> Vec<String> {
-    let mut assets = Vec::new();
-
-    for group in &scene.groups {
-        collect_mesh_assets_from_nodes(&group.children, &mut assets);
-    }
-
-    assets
-}
-
-fn resolve_scene_asset_path(scene_path: &Path, asset: &str) -> PathBuf {
-    let asset_path = PathBuf::from(asset);
-
-    if asset_path.is_absolute() || asset_path.exists() {
-        return asset_path;
-    }
-
-    let scene_dir = scene_path.parent().unwrap_or_else(|| Path::new("."));
-
-    let scene_relative = scene_dir.join(&asset_path);
-    if scene_relative.exists() {
-        return scene_relative;
-    }
-
-    if let Some(assets_dir) = scene_dir.parent() {
-        let assets_relative = assets_dir.join(&asset_path);
-        if assets_relative.exists() {
-            return assets_relative;
-        }
-
-        if let Some(file_name) = asset_path.file_name() {
-            let model_relative = assets_dir.join("models").join(file_name);
-            if model_relative.exists() {
-                return model_relative;
-            }
-        }
-    }
-
-    scene_relative
-}
-
-pub fn load_scene_meshes(scene_path: &Path, scene: &RenderScene) -> io::Result<HashMap<String, MeshAsset>> {
-    let mut meshes = HashMap::new();
-
-    for asset in collect_mesh_assets(scene) {
-        let mesh_path = resolve_scene_asset_path(scene_path, &asset);
-
-        if !mesh_path.exists() {
-            continue;
-        }
-
-        let mesh = load_obj_mesh(mesh_path)?;
-        meshes.insert(asset, mesh);
-    }
-
-    Ok(meshes)
-}
-
 fn find_quad_group_in_nodes<'a>(nodes: &'a [RenderNode]) -> Option<&'a RenderQuadGroup> {
     for node in nodes {
         match node {
@@ -487,50 +342,6 @@ fn quad_matrix(scene: &RenderScene, quad: &RenderQuad, state: &ViewerState) -> M
 }
 
 
-
-fn collect_map_assets_from_nodes(nodes: &[RenderNode], assets: &mut Vec<String>) {
-    for node in nodes {
-        match node {
-            RenderNode::Group(group) => collect_map_assets_from_nodes(&group.children, assets),
-            RenderNode::Object(object_node) => {
-                if let RenderObject::GeoJsonMap(map) = &object_node.object {
-                    if map.visible
-                        && !map.asset.trim().is_empty()
-                        && !assets.iter().any(|asset| asset == &map.asset)
-                    {
-                        assets.push(map.asset.clone());
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn collect_map_assets(scene: &RenderScene) -> Vec<String> {
-    let mut assets = Vec::new();
-
-    for group in &scene.groups {
-        collect_map_assets_from_nodes(&group.children, &mut assets);
-    }
-
-    assets
-}
-
-pub fn load_scene_maps(scene_path: &Path, scene: &RenderScene) -> io::Result<HashMap<String, GeoJsonMapAsset>> {
-    let mut maps = HashMap::new();
-
-    for asset in collect_map_assets(scene) {
-        let map_path = resolve_scene_asset_path(scene_path, &asset);
-
-        if !map_path.exists() {
-            continue;
-        }
-
-        maps.insert(asset, load_geojson_map_asset(&map_path)?);
-    }
-
-    Ok(maps)
-}
 
 fn render_transform_matrix(transform: RenderTransform) -> Mat4 {
     Mat4::translation(Vec3::new(
