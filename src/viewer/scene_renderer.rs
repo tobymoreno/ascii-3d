@@ -2,8 +2,9 @@ use crate::{
     render::{
         draw_line_overlay, land_fill_char, lerp_angle_degrees, load_geojson_map_asset,
         load_obj_mesh, lon_lat_to_sphere, point_in_polygon, segment_steps, Frame,
-        GeoJsonMapAsset, MeshAsset, MeshVertex, Projection, RenderNode, RenderObject,
-        RenderQuad, RenderQuadGroup, RenderScene, RenderTransform,
+        great_circle_points, latitude_circle_points, GeoJsonMapAsset, MeshAsset, MeshVertex,
+        Projection, RenderNode, RenderObject, RenderQuad, RenderQuadGroup, RenderScene,
+        RenderSphereGuideKind, RenderTransform, SphereGuidePoint,
     },
     scene::{load_scene_document, scene_document_to_render_scene},
     viewer::ViewerState,
@@ -768,6 +769,76 @@ fn draw_lon_lat_line(
     }
 }
 
+
+fn draw_sphere_guide_points(
+    frame: &mut Frame,
+    scene: &RenderScene,
+    points: &[SphereGuidePoint],
+    marker: char,
+    radius_scale: f32,
+    world: Mat4,
+) {
+    let mut previous = None;
+
+    for point in points {
+        let local = Vec3::new(
+            point.x * radius_scale,
+            point.y * radius_scale,
+            point.z * radius_scale,
+        );
+        let world_point = world.transform_point(local);
+
+        if world_point.z > 0.10 {
+            previous = None;
+            continue;
+        }
+
+        if let Some(current) = screen_project(scene, world_point) {
+            if let Some(prev) = previous {
+                draw_line_overlay(frame, prev, current, marker);
+            }
+
+            previous = Some(current);
+        } else {
+            previous = None;
+        }
+    }
+}
+
+fn draw_sphere_guide(
+    frame: &mut Frame,
+    scene: &RenderScene,
+    guide: &crate::render::RenderSphereGuide,
+    world: Mat4,
+) {
+    if !guide.visible {
+        return;
+    }
+
+    match guide.kind {
+        RenderSphereGuideKind::GreatCircle(circle) => {
+            draw_sphere_guide_points(
+                frame,
+                scene,
+                &great_circle_points(circle, 96),
+                guide.marker,
+                guide.radius_scale,
+                world,
+            );
+        }
+        RenderSphereGuideKind::Latitude(latitude_degrees) => {
+            draw_sphere_guide_points(
+                frame,
+                scene,
+                &latitude_circle_points(latitude_degrees, 96),
+                guide.marker,
+                guide.radius_scale,
+                world,
+            );
+        }
+    }
+}
+
 fn draw_meshes_from_nodes(
     frame: &mut Frame,
     scene: &RenderScene,
@@ -827,7 +898,9 @@ fn draw_meshes_from_nodes(
                             object_world,
                         );
                     }
-                    RenderObject::SphereGuide(_) => {}
+                    RenderObject::SphereGuide(guide) => {
+                        draw_sphere_guide(frame, scene, guide, object_world);
+                    }
                     RenderObject::QuadGroup(_) => {}
                 }
             }
