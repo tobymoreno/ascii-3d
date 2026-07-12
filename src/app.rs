@@ -1295,6 +1295,12 @@ impl AppState {
                 .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
         }) {
             Ok(world) => {
+                self.loaded_a3d_workspace.sync_objects(
+                    world
+                        .objects
+                        .iter()
+                        .map(|object| (object.id.clone(), object.render.visible)),
+                );
                 self.loaded_a3d_root = Some(root);
                 self.loaded_a3d_manifest_path = Some(manifest_path);
                 self.loaded_a3d_world = Some(world);
