@@ -1,7 +1,8 @@
 use ascii_3d::render::{
     draw_line_overlay, land_fill_char, lerp_angle_degrees, load_geojson_map_asset,
-    load_obj_mesh, lon_lat_to_sphere, point_in_polygon, segment_steps, Frame, GeoJsonMapAsset,
-    MeshAsset, MeshVertex, Projection,
+    great_circle_points, latitude_circle_points, load_obj_mesh, lon_lat_to_sphere,
+    point_in_polygon, segment_steps, Frame, GeoJsonMapAsset, GreatCircle, MeshAsset, MeshVertex,
+    Projection, SphereGuidePoint,
 };
 use crossterm::{
     cursor,
@@ -628,39 +629,16 @@ fn shade_char(brightness: f32) -> char {
     SHADE_RAMP[index.min(SHADE_RAMP.len() - 1)] as char
 }
 
-enum GreatCircle {
-    EquatorY0,
-    MeridianX0,
-    MeridianZ0,
-}
-
 fn draw_great_circle(frame: &mut Frame, rotation: Mat3, scale: f32, origin: Vec3, circle: GreatCircle, ch: char) {
-    let steps = 96;
-    let mut previous = None;
-
-    for i in 0..=steps {
-        let theta = i as f32 / steps as f32 * std::f32::consts::TAU;
-        let (s, c) = theta.sin_cos();
-
-        let local = match circle {
-            GreatCircle::EquatorY0 => Vec3::new(c, 0.0, s),
-            GreatCircle::MeridianX0 => Vec3::new(0.0, c, s),
-            GreatCircle::MeridianZ0 => Vec3::new(c, s, 0.0),
-        };
-
-        let world = rotation.transform(local).scaled(scale * 1.01).translated(origin);
-
-        if let Some(current) = project(world) {
-            if let Some(prev) = previous {
-                draw_line_overlay(frame, prev, current, ch);
-            }
-            previous = Some(current);
-        } else {
-            previous = None;
-        }
-    }
+    draw_sphere_guide_points(
+        frame,
+        rotation,
+        scale * 1.01,
+        origin,
+        &great_circle_points(circle, 96),
+        ch,
+    );
 }
-
 
 fn draw_latitude_circle(
     frame: &mut Frame,
@@ -670,26 +648,35 @@ fn draw_latitude_circle(
     latitude_degrees: f32,
     ch: char,
 ) {
-    let steps = 96;
-    let lat = latitude_degrees.to_radians();
-    let y = lat.sin();
-    let ring_radius = lat.cos();
+    draw_sphere_guide_points(
+        frame,
+        rotation,
+        scale * 1.012,
+        origin,
+        &latitude_circle_points(latitude_degrees, 96),
+        ch,
+    );
+}
+
+fn draw_sphere_guide_points(
+    frame: &mut Frame,
+    rotation: Mat3,
+    scale: f32,
+    origin: Vec3,
+    points: &[SphereGuidePoint],
+    ch: char,
+) {
     let mut previous = None;
 
-    for i in 0..=steps {
-        let theta = i as f32 / steps as f32 * std::f32::consts::TAU;
-        let (s, c) = theta.sin_cos();
-
-        let local = Vec3::new(ring_radius * c, y, ring_radius * s);
-        let world = rotation
-            .transform(local)
-            .scaled(scale * 1.012)
-            .translated(origin);
+    for point in points {
+        let local = Vec3::new(point.x, point.y, point.z);
+        let world = rotation.transform(local).scaled(scale).translated(origin);
 
         if let Some(current) = project(world) {
             if let Some(prev) = previous {
                 draw_line_overlay(frame, prev, current, ch);
             }
+
             previous = Some(current);
         } else {
             previous = None;

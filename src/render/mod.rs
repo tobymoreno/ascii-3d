@@ -14,8 +14,12 @@ mod lines;
 pub use lines::draw_line_overlay;
 
 mod mesh;
+mod sphere_guides;
 
 pub use mesh::{load_obj_mesh, load_obj_mesh_from_str, MeshAsset, MeshTriangle, MeshVertex};
+pub use sphere_guides::{
+    great_circle_points, latitude_circle_points, GreatCircle, SphereGuidePoint,
+};
 
 mod model;
 
