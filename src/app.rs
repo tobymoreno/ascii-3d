@@ -129,7 +129,7 @@ impl Drop for TerminalGuard {
 const CAMERA_MOVE_STEP: f32 = 0.10;
 
 const SINGLE_P_WORD_ASSET: &str = "assets/words/single_p.word.json";
-const KM_LOGO_QUADS_SCENE_ASSET: &str = "assets/scenes/km_logo_quads.scene.json";
+const KM_LOGO_QUADS_SCENE_ASSET: &str = "scenes/km_logo_quads.scene.json";
 
 const P_WORD_WORLD_X: f32 = 0.35;
 const P_WORD_WORLD_Y: f32 = 0.10;
