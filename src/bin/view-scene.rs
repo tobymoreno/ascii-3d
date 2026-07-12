@@ -8,12 +8,19 @@ use ascii_3d::{
 use crossterm::{
     cursor,
     event::{self, Event},
-    execute, terminal,
+    execute,
+    terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use ratatui::{
+    backend::CrosstermBackend,
+    layout::{Constraint, Direction, Layout},
+    widgets::Paragraph,
+    Terminal,
 };
 use std::{
     collections::HashMap,
     env, io,
-    io::Write,
+    io::stdout,
     path::Path,
     time::{Duration, Instant},
 };
@@ -23,29 +30,32 @@ struct TerminalGuard;
 impl TerminalGuard {
     fn enter() -> io::Result<Self> {
         terminal::enable_raw_mode()?;
-        execute!(io::stdout(), terminal::EnterAlternateScreen, cursor::Hide)?;
+        execute!(stdout(), EnterAlternateScreen, cursor::Hide)?;
         Ok(Self)
     }
 }
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        let _ = execute!(io::stdout(), cursor::Show, terminal::LeaveAlternateScreen);
+        let _ = execute!(stdout(), cursor::Show, LeaveAlternateScreen);
         let _ = terminal::disable_raw_mode();
     }
 }
 
-fn run_viewer(mut scene: RenderScene, meshes: HashMap<String, MeshAsset>, maps: HashMap<String, GeoJsonMapAsset>) -> io::Result<()> {
+type AppTerminal = Terminal<CrosstermBackend<io::Stdout>>;
+
+fn run_viewer(
+    mut scene: RenderScene,
+    meshes: HashMap<String, MeshAsset>,
+    maps: HashMap<String, GeoJsonMapAsset>,
+) -> io::Result<()> {
     let _guard = TerminalGuard::enter()?;
-    let mut stdout = io::stdout();
+    let backend = CrosstermBackend::new(stdout());
+    let mut terminal = AppTerminal::new(backend)?;
     let mut state = ViewerState::default();
     let mut frame = Frame::new(MIN_VIEW_SCENE_WIDTH, MIN_VIEW_SCENE_HEIGHT);
     let target_frame = Duration::from_millis(33);
     let mut previous_frame_start = Instant::now();
-
-    // Clear once when entering the viewer. After this, every frame overwrites
-    // the same fixed-size buffer without clearing the terminal, which prevents flicker.
-    execute!(stdout, cursor::MoveTo(0, 0), terminal::Clear(terminal::ClearType::All))?;
 
     loop {
         let frame_start = Instant::now();
@@ -61,14 +71,44 @@ fn run_viewer(mut scene: RenderScene, meshes: HashMap<String, MeshAsset>, maps: 
             0.0
         };
 
-        let viewport = ViewerViewport::new(frame.width(), frame.height());
-        draw_render_scene(&mut frame, viewport, &scene, &meshes, &maps, &state);
+        terminal.draw(|ui| {
+            let shell = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1),
+                    Constraint::Min(1),
+                    Constraint::Length(1),
+                ])
+                .split(ui.area());
 
-        let rendered = frame.render();
+            let scene_area = shell[1];
+            let render_width = (scene_area.width as usize).max(MIN_VIEW_SCENE_WIDTH);
+            let render_height = (scene_area.height as usize).max(MIN_VIEW_SCENE_HEIGHT);
 
-        execute!(stdout, cursor::MoveTo(0, 0))?;
-        write!(stdout, "{}", rendered)?;
-        stdout.flush()?;
+            if frame.width() != render_width || frame.height() != render_height {
+                frame = Frame::new(render_width, render_height);
+            }
+
+            let viewport = ViewerViewport::new(render_width, render_height);
+            draw_render_scene(&mut frame, viewport, &scene, &meshes, &maps, &state);
+
+            let rendered = frame.render().replace('\r', "");
+            let header = format!(
+                "{} | visible {}x{} | render {}x{} | fps {:>5.1}",
+                scene.name,
+                scene_area.width,
+                scene_area.height,
+                render_width,
+                render_height,
+                state.fps,
+            );
+            let footer =
+                "arrows origin | PgUp/PgDn z | +/- zoom | x/y/z rotate | a/A axes | r reset | q quit";
+
+            ui.render_widget(Paragraph::new(header), shell[0]);
+            ui.render_widget(Paragraph::new(rendered), scene_area);
+            ui.render_widget(Paragraph::new(footer), shell[2]);
+        })?;
 
         while event::poll(Duration::from_millis(0))? {
             if let Event::Key(key) = event::read()? {
