@@ -2,7 +2,7 @@ use ascii_3d::{
     render::{
         apply_render_behaviors_to_scene, draw_line_overlay, load_obj_mesh, Frame, MeshAsset,
         MeshVertex, Projection, RenderNode, RenderObject, RenderQuad, RenderQuadGroup,
-        RenderScene,
+        RenderScene, RenderTransform,
     },
     scene::{load_scene_document, scene_document_to_render_scene},
     viewer::{handle_key, ViewerInput, ViewerState},
@@ -488,7 +488,19 @@ fn quad_matrix(scene: &RenderScene, quad: &RenderQuad, state: &ViewerState) -> M
 }
 
 
-fn mesh_world_matrix(scene: &RenderScene, state: &ViewerState) -> Mat4 {
+fn render_transform_matrix(transform: RenderTransform) -> Mat4 {
+    Mat4::translation(Vec3::new(
+        transform.position[0],
+        transform.position[1],
+        transform.position[2],
+    ))
+    * Mat4::rotation_x(transform.rotation_degrees[0].to_radians())
+    * Mat4::rotation_y(transform.rotation_degrees[1].to_radians())
+    * Mat4::rotation_z(transform.rotation_degrees[2].to_radians())
+    * Mat4::scale(transform.scale[0], transform.scale[1], transform.scale[2])
+}
+
+fn viewer_world_matrix(scene: &RenderScene, state: &ViewerState) -> Mat4 {
     Mat4::translation(Vec3::new(state.origin_x, state.origin_y, state.origin_z))
         * Mat4::rotation_x(state.rotation_x_degrees.to_radians())
         * Mat4::rotation_y(state.rotation_y_degrees.to_radians())
@@ -516,9 +528,7 @@ fn mesh_shade_char(normal: Vec3) -> char {
     ramp[index.min(ramp.len() - 1)] as char
 }
 
-fn draw_mesh_asset(frame: &mut Frame, scene: &RenderScene, mesh: &MeshAsset, state: &ViewerState) {
-    let world = mesh_world_matrix(scene, state);
-
+fn draw_mesh_asset(frame: &mut Frame, scene: &RenderScene, mesh: &MeshAsset, world: Mat4) {
     for triangle in &mesh.triangles {
         let (a, na) = transform_mesh_vertex(triangle.a, world);
         let (b, nb) = transform_mesh_vertex(triangle.b, world);
@@ -544,7 +554,7 @@ fn draw_meshes_from_nodes(
     scene: &RenderScene,
     nodes: &[RenderNode],
     meshes: &HashMap<String, MeshAsset>,
-    state: &ViewerState,
+    parent_world: Mat4,
 ) -> usize {
     let mut count = 0;
 
@@ -552,13 +562,22 @@ fn draw_meshes_from_nodes(
         match node {
             RenderNode::Group(group) => {
                 if group.visible {
-                    count += draw_meshes_from_nodes(frame, scene, &group.children, meshes, state);
+                    let group_world = parent_world * render_transform_matrix(group.transform);
+                    count += draw_meshes_from_nodes(
+                        frame,
+                        scene,
+                        &group.children,
+                        meshes,
+                        group_world,
+                    );
                 }
             }
             RenderNode::Object(object_node) => {
                 if !object_node.visible {
                     continue;
                 }
+
+                let object_world = parent_world * render_transform_matrix(object_node.transform);
 
                 let RenderObject::Mesh(mesh_object) = &object_node.object else {
                     continue;
@@ -568,7 +587,8 @@ fn draw_meshes_from_nodes(
                     continue;
                 };
 
-                draw_mesh_asset(frame, scene, mesh, state);
+                let mesh_world = object_world * render_transform_matrix(mesh_object.transform);
+                draw_mesh_asset(frame, scene, mesh, mesh_world);
                 count += 1;
             }
         }
@@ -583,11 +603,16 @@ fn draw_meshes(
     meshes: &HashMap<String, MeshAsset>,
     state: &ViewerState,
 ) -> usize {
+    let viewer_world = viewer_world_matrix(scene, state);
+
     scene
         .groups
         .iter()
         .filter(|group| group.visible)
-        .map(|group| draw_meshes_from_nodes(frame, scene, &group.children, meshes, state))
+        .map(|group| {
+            let group_world = viewer_world * render_transform_matrix(group.transform);
+            draw_meshes_from_nodes(frame, scene, &group.children, meshes, group_world)
+        })
         .sum()
 }
 
