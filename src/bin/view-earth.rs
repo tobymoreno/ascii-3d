@@ -1,4 +1,8 @@
-use ascii_3d::render::{draw_line_overlay, load_obj_mesh, Frame, MeshAsset, MeshVertex, Projection};
+use ascii_3d::render::{
+    draw_line_overlay, land_fill_char, lerp_angle_degrees, load_geojson_map_asset,
+    load_obj_mesh, lon_lat_to_sphere, point_in_polygon, segment_steps, Frame, GeoJsonMapAsset,
+    MeshAsset, MeshVertex, Projection,
+};
 use crossterm::{
     cursor,
     event::{self, Event, KeyCode, KeyModifiers},
@@ -112,16 +116,9 @@ impl Vec3 {
 
 #[derive(Debug)]
 struct MapOverlay {
-    lines: Vec<MapLine>,
+    asset: GeoJsonMapAsset,
     radius_scale: f32,
     visible: bool,
-}
-
-#[derive(Debug)]
-struct MapLine {
-    name: String,
-    marker: char,
-    points_lon_lat: Vec<(f32, f32)>,
 }
 
 #[derive(Clone, Copy)]
@@ -712,7 +709,7 @@ fn draw_map_overlay(
 
     // Decorative land fill first. This is intentionally not light-based;
     // it is a sparse graphic texture inside each projected GeoJSON contour.
-    for line in &map_overlay.lines {
+    for line in &map_overlay.asset.lines {
         draw_lon_lat_fill(
             frame,
             &line.points_lon_lat,
@@ -723,7 +720,7 @@ fn draw_map_overlay(
     }
 
     // Draw the contour on top so the land edge stays crisp.
-    for line in &map_overlay.lines {
+    for line in &map_overlay.asset.lines {
         draw_lon_lat_line(
             frame,
             &line.points_lon_lat,
@@ -822,7 +819,7 @@ fn projected_lon_lat_polygon(
             let lat = lat_a * (1.0 - t) + lat_b * t;
 
             let local = lon_lat_to_sphere(lon, lat, 1.0);
-            let rotated = rotation.transform(local);
+            let rotated = rotation.transform(Vec3::new(local.x, local.y, local.z));
 
             // Match the outline behavior: skip the far hemisphere so land
             // texture does not bleed through the back of the globe.
@@ -847,40 +844,7 @@ fn projected_lon_lat_polygon(
     polygon
 }
 
-fn point_in_polygon(px: f32, py: f32, polygon: &[(i32, i32, f32)]) -> bool {
-    let mut inside = false;
-    let mut previous = polygon.len() - 1;
 
-    for current in 0..polygon.len() {
-        let xi = polygon[current].0 as f32;
-        let yi = polygon[current].1 as f32;
-        let xj = polygon[previous].0 as f32;
-        let yj = polygon[previous].1 as f32;
-
-        let crosses = (yi > py) != (yj > py);
-        if crosses {
-            let x_at_y = (xj - xi) * (py - yi) / ((yj - yi).abs().max(0.0001)) + xi;
-            if px < x_at_y {
-                inside = !inside;
-            }
-        }
-
-        previous = current;
-    }
-
-    inside
-}
-
-fn land_fill_char(x: i32, y: i32) -> Option<char> {
-    // Stable pseudo-texture. Sparse by design so the sphere shade still shows.
-    let n = (x * 17 + y * 31 + x * y * 3).rem_euclid(11);
-
-    match n {
-        0 | 1 | 2 => Some('+'),
-        3 => Some(':'),
-        _ => None,
-    }
-}
 
 fn draw_lon_lat_line(
     frame: &mut Frame,
@@ -908,7 +872,7 @@ fn draw_lon_lat_line(
             let lat = lat_a * (1.0 - t) + lat_b * t;
 
             let local = lon_lat_to_sphere(lon, lat, 1.0);
-            let rotated = rotation.transform(local);
+            let rotated = rotation.transform(Vec3::new(local.x, local.y, local.z));
 
             // Only draw the camera-facing hemisphere, otherwise the back-side map
             // would show through the globe as an overlay.
@@ -931,35 +895,9 @@ fn draw_lon_lat_line(
     }
 }
 
-fn segment_steps(lon_a: f32, lat_a: f32, lon_b: f32, lat_b: f32) -> usize {
-    let lon_delta = (lon_b - lon_a).abs();
-    let lat_delta = (lat_b - lat_a).abs();
-    let degrees = lon_delta.max(lat_delta);
-    ((degrees / 4.0).ceil() as usize).clamp(2, 16)
-}
 
-fn lerp_angle_degrees(a: f32, b: f32, t: f32) -> f32 {
-    let mut delta = b - a;
 
-    if delta > 180.0 {
-        delta -= 360.0;
-    } else if delta < -180.0 {
-        delta += 360.0;
-    }
 
-    a + delta * t
-}
-
-fn lon_lat_to_sphere(lon_degrees: f32, lat_degrees: f32, radius: f32) -> Vec3 {
-    let lon = lon_degrees.to_radians();
-    let lat = lat_degrees.to_radians();
-
-    Vec3::new(
-        radius * lat.cos() * lon.cos(),
-        radius * lat.sin(),
-        radius * lat.cos() * lon.sin(),
-    )
-}
 
 fn draw_axes(frame: &mut Frame, rotation: Mat3, scale: f32, origin_offset: Vec3) {
     let axis_len = scale * 1.35;
@@ -1013,107 +951,12 @@ fn load_map_overlay(scene_path: &Path, scene: &EarthScene) -> Result<Option<MapO
     };
 
     let map_path = resolve_mesh_path(scene_path, &config.asset);
-    let text = fs::read_to_string(&map_path)?;
-    let value: serde_json::Value = serde_json::from_str(&text)?;
-
-    let mut lines = Vec::new();
-
-    let Some(features) = value.get("features").and_then(|value| value.as_array()) else {
-        return Ok(Some(MapOverlay {
-            lines,
-            radius_scale: config.radius_scale,
-            visible: config.visible,
-        }));
-    };
-
-    for feature in features {
-        let name = feature
-            .get("properties")
-            .and_then(|properties| properties.get("name"))
-            .and_then(|name| name.as_str())
-            .unwrap_or("unnamed")
-            .to_string();
-
-        let marker = feature
-            .get("properties")
-            .and_then(|properties| properties.get("marker"))
-            .and_then(|marker| marker.as_str())
-            .and_then(|marker| marker.chars().next())
-            .unwrap_or('*');
-
-        let Some(geometry) = feature.get("geometry") else {
-            continue;
-        };
-
-        let geometry_type = geometry
-            .get("type")
-            .and_then(|geometry_type| geometry_type.as_str())
-            .unwrap_or("");
-
-        match geometry_type {
-            "Polygon" => {
-                if let Some(rings) = geometry.get("coordinates").and_then(|coords| coords.as_array()) {
-                    for ring in rings {
-                        if let Some(points) = parse_lon_lat_ring(ring) {
-                            lines.push(MapLine {
-                                name: name.clone(),
-                                marker,
-                                points_lon_lat: points,
-                            });
-                        }
-                    }
-                }
-            }
-            "MultiPolygon" => {
-                if let Some(polygons) = geometry.get("coordinates").and_then(|coords| coords.as_array()) {
-                    for polygon in polygons {
-                        let Some(rings) = polygon.as_array() else {
-                            continue;
-                        };
-
-                        for ring in rings {
-                            if let Some(points) = parse_lon_lat_ring(ring) {
-                                lines.push(MapLine {
-                                    name: name.clone(),
-                                    marker,
-                                    points_lon_lat: points,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
+    let asset = load_geojson_map_asset(&map_path)?;
 
     Ok(Some(MapOverlay {
-        lines,
+        asset,
         radius_scale: config.radius_scale,
         visible: config.visible,
     }))
 }
 
-fn parse_lon_lat_ring(value: &serde_json::Value) -> Option<Vec<(f32, f32)>> {
-    let coordinates = value.as_array()?;
-    let mut points = Vec::new();
-
-    for coordinate in coordinates {
-        let pair = coordinate.as_array()?;
-
-        if pair.len() < 2 {
-            continue;
-        }
-
-        let lon = pair[0].as_f64()? as f32;
-        let lat = pair[1].as_f64()? as f32;
-
-        points.push((lon, lat));
-    }
-
-    if points.len() >= 2 {
-        Some(points)
-    } else {
-        None
-    }
-}
