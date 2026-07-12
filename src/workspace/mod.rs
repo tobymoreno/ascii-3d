@@ -4,7 +4,10 @@ mod loaded_a3d;
 mod response;
 
 pub use event::WorkspaceEvent;
-pub use loaded_a3d::LoadedA3dWorkspace;
+pub use loaded_a3d::{
+    LoadedA3dWorkspace, WorldEditorEntry, WorldEditorTarget, CAMERA_TARGET_ID,
+    SCENE_ORIGIN_TARGET_ID,
+};
 pub use response::WorkspaceResponse;
 
 /// Boundary for scene-specific workspace behavior.
