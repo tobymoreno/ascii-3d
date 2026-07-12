@@ -48,6 +48,12 @@ use crate::{
         render_world_camera_spaces,
     },
     tui::FilePickerView,
+    workspace::{
+        LoadedA3dWorkspace,
+        gizmo::{
+            loaded_a3d_lights, loaded_a3d_primary_light_direction, normalized_light_direction,
+        },
+    },
     xyz_control::{XyzControl, XyzControlEvent},
 };
 
@@ -454,6 +460,7 @@ struct AppState {
     loaded_a3d_debug_popup_until: Option<Instant>,
     loaded_a3d_error: Option<String>,
     a3d_file_picker: Option<A3dFilePicker>,
+    loaded_a3d_workspace: LoadedA3dWorkspace,
     show_frame_timing: bool,
     show_debug_console: bool,
     confirm_exit: bool,
@@ -489,6 +496,7 @@ impl AppState {
             loaded_a3d_debug_popup_until: None,
             loaded_a3d_error: None,
             a3d_file_picker: None,
+            loaded_a3d_workspace: LoadedA3dWorkspace::new(),
             show_frame_timing: false,
             show_debug_console: false,
             confirm_exit: false,
@@ -2269,127 +2277,6 @@ fn draw_loaded_a3d_mesh_object_in_ws(
     Ok(())
 }
 
-struct LoadedA3dLightGizmo {
-    visible: bool,
-    length: f32,
-    source_character: char,
-    ray_character: char,
-}
-
-struct LoadedA3dLight {
-    id: String,
-    position: Vec3,
-    direction: Vec3,
-    intensity: f32,
-    gizmo: LoadedA3dLightGizmo,
-}
-
-fn read_json_vec3(value: &serde_json::Value) -> Option<Vec3> {
-    let values = value.as_array()?;
-
-    if values.len() != 3 {
-        return None;
-    }
-
-    Some(Vec3::new(
-        values[0].as_f64()? as f32,
-        values[1].as_f64()? as f32,
-        values[2].as_f64()? as f32,
-    ))
-}
-
-fn read_json_char(value: Option<&serde_json::Value>, default_value: char) -> char {
-    value
-        .and_then(serde_json::Value::as_str)
-        .and_then(|text| text.chars().next())
-        .unwrap_or(default_value)
-}
-
-fn loaded_a3d_lights(root: &Path) -> io::Result<Vec<LoadedA3dLight>> {
-    let scene_path = root.join("scene.a3d");
-    let source = std::fs::read_to_string(&scene_path)?;
-    let json = serde_json::from_str::<serde_json::Value>(&source).map_err(|error| {
-        io::Error::other(format!(
-            "failed to parse A3D lights from {}: {}",
-            scene_path.display(),
-            error
-        ))
-    })?;
-
-    let Some(lights) = json.get("lights").and_then(serde_json::Value::as_array) else {
-        return Ok(Vec::new());
-    };
-
-    let mut parsed_lights = Vec::new();
-
-    for light in lights {
-        let id = light
-            .get("id")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("light")
-            .to_string();
-
-        let position = light
-            .get("position")
-            .and_then(read_json_vec3)
-            .unwrap_or_else(|| Vec3::new(0.0, 0.0, 0.0));
-
-        let direction = light
-            .get("direction")
-            .and_then(read_json_vec3)
-            .unwrap_or_else(|| Vec3::new(-1.0, -1.0, -1.0));
-
-        let intensity = light
-            .get("intensity")
-            .and_then(serde_json::Value::as_f64)
-            .map(|value| value as f32)
-            .filter(|value| value.is_finite() && *value >= 0.0)
-            .unwrap_or(1.0);
-
-        let gizmo = light.get("gizmo").unwrap_or(&serde_json::Value::Null);
-        let visible = gizmo
-            .get("visible")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(true);
-
-        let length = gizmo
-            .get("length")
-            .and_then(serde_json::Value::as_f64)
-            .map(|value| value as f32)
-            .filter(|value| value.is_finite() && *value > 0.0)
-            .unwrap_or(1.5);
-
-        let source_character = read_json_char(gizmo.get("source_character"), 'L');
-        let ray_character = read_json_char(gizmo.get("ray_character"), '-');
-
-        parsed_lights.push(LoadedA3dLight {
-            id,
-            position,
-            direction,
-            intensity,
-            gizmo: LoadedA3dLightGizmo {
-                visible,
-                length,
-                source_character,
-                ray_character,
-            },
-        });
-    }
-
-    Ok(parsed_lights)
-}
-
-fn normalized_light_direction(direction: Vec3) -> Option<Vec3> {
-    let length =
-        (direction.x * direction.x + direction.y * direction.y + direction.z * direction.z).sqrt();
-
-    if length <= f32::EPSILON {
-        return None;
-    }
-
-    Some(direction * (1.0 / length))
-}
-
 fn draw_loaded_a3d_light_gizmos(
     canvas: &mut Canvas,
     depth_buffer: &mut CameraViewportDepthBuffer,
@@ -2559,20 +2446,6 @@ fn normalize_vec3(value: Vec3) -> Option<Vec3> {
     }
 
     Some(value * (1.0 / length))
-}
-
-fn loaded_a3d_primary_light_direction(root: &Path) -> io::Result<Vec3> {
-    for light in loaded_a3d_lights(root)? {
-        if light.intensity <= 0.0 {
-            continue;
-        }
-
-        if let Some(direction) = normalize_vec3(light.direction) {
-            return Ok(direction);
-        }
-    }
-
-    Ok(Vec3::new(-1.0, -1.0, -1.0))
 }
 
 fn shade_character_for_brightness(brightness: f32) -> char {
@@ -3181,6 +3054,16 @@ fn render_scene_frame(
     match state.current_scene() {
         Scene::LoadedA3d => {
             render_loaded_a3d_studio_world(&mut canvas, state, &projector, world_debug_viewport)?;
+        }
+
+        Scene::LogoQuads => {
+            render_logo_quads(
+                &mut canvas,
+                &projector,
+                &assets.quad4_mesh,
+                &assets.logo_quads_scene_config,
+                state.animation_angle_degrees,
+            )?;
         }
 
         Scene::WorldCameraSpaces => {

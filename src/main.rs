@@ -22,6 +22,7 @@ mod projection_config;
 mod scene_config;
 mod scenes;
 mod tui;
+mod workspace;
 mod world_space;
 mod xyz_control;
 

@@ -1,3 +1,9 @@
+use ascii_3d::render::{
+    draw_line_overlay, land_fill_char, lerp_angle_degrees, load_geojson_map_asset,
+    great_circle_points, latitude_circle_points, load_obj_mesh, lon_lat_to_sphere,
+    point_in_polygon, segment_steps, Frame, GeoJsonMapAsset, GreatCircle, MeshAsset, MeshVertex,
+    Projection, SphereGuidePoint,
+};
 use crossterm::{
     cursor,
     event::{self, Event, KeyCode, KeyModifiers},
@@ -15,6 +21,9 @@ use std::{
 
 const WIDTH: usize = 100;
 const HEIGHT: usize = 38;
+const EARTH_CAMERA_DISTANCE: f32 = 34.0;
+const EARTH_NEAR_CLIP: f32 = 1.0;
+const EARTH_VERTICAL_CENTER_RATIO: f32 = 0.54;
 const SHADE_RAMP: &[u8] = b" .:-=+*#%@";
 
 #[derive(Debug, Deserialize)]
@@ -63,7 +72,7 @@ struct Vec3 {
 }
 
 impl Vec3 {
-    fn new(x: f32, y: f32, z: f32) -> Self {
+    const fn new(x: f32, y: f32, z: f32) -> Self {
         Self { x, y, z }
     }
 
@@ -76,12 +85,13 @@ impl Vec3 {
     }
 
     fn normalized(self) -> Self {
-        let len = self.length();
-        if len <= f32::EPSILON {
-            self
-        } else {
-            Self::new(self.x / len, self.y / len, self.z / len)
+        let length = self.length();
+
+        if length <= f32::EPSILON {
+            return Self::new(0.0, 1.0, 0.0);
         }
+
+        Self::new(self.x / length, self.y / length, self.z / length)
     }
 
     fn lerp(self, other: Self, t: f32) -> Self {
@@ -95,40 +105,21 @@ impl Vec3 {
     fn translated(self, offset: Self) -> Self {
         Self::new(self.x + offset.x, self.y + offset.y, self.z + offset.z)
     }
-}
 
-#[derive(Clone, Copy, Debug)]
-struct Vertex {
-    position: Vec3,
-    normal: Vec3,
-}
+    fn from_array(values: [f32; 3]) -> Self {
+        Self::new(values[0], values[1], values[2])
+    }
 
-#[derive(Clone, Copy, Debug)]
-struct Triangle {
-    a: Vertex,
-    b: Vertex,
-    c: Vertex,
-}
-
-#[derive(Debug)]
-struct Mesh {
-    triangles: Vec<Triangle>,
-    vertex_count: usize,
-    normal_count: usize,
+    fn to_array(self) -> [f32; 3] {
+        [self.x, self.y, self.z]
+    }
 }
 
 #[derive(Debug)]
 struct MapOverlay {
-    lines: Vec<MapLine>,
+    asset: GeoJsonMapAsset,
     radius_scale: f32,
     visible: bool,
-}
-
-#[derive(Debug)]
-struct MapLine {
-    name: String,
-    marker: char,
-    points_lon_lat: Vec<(f32, f32)>,
 }
 
 #[derive(Clone, Copy)]
@@ -210,88 +201,6 @@ impl std::ops::Mul for Mat3 {
     }
 }
 
-struct Frame {
-    cells: Vec<char>,
-    depth: Vec<f32>,
-}
-
-impl Frame {
-    fn new() -> Self {
-        Self {
-            cells: vec![' '; WIDTH * HEIGHT],
-            depth: vec![f32::INFINITY; WIDTH * HEIGHT],
-        }
-    }
-
-    fn clear(&mut self) {
-        self.cells.fill(' ');
-        self.depth.fill(f32::INFINITY);
-    }
-
-    fn set(&mut self, x: i32, y: i32, z: f32, ch: char) {
-        if x < 0 || y < 0 {
-            return;
-        }
-
-        let x = x as usize;
-        let y = y as usize;
-
-        if x >= WIDTH || y >= HEIGHT {
-            return;
-        }
-
-        let index = y * WIDTH + x;
-
-        if z < self.depth[index] {
-            self.depth[index] = z;
-            self.cells[index] = ch;
-        }
-    }
-
-    fn set_overlay(&mut self, x: i32, y: i32, ch: char) {
-        if x < 0 || y < 0 {
-            return;
-        }
-
-        let x = x as usize;
-        let y = y as usize;
-
-        if x >= WIDTH || y >= HEIGHT {
-            return;
-        }
-
-        self.cells[y * WIDTH + x] = ch;
-    }
-
-    fn draw_text(&mut self, x: usize, y: usize, text: &str) {
-        if y >= HEIGHT {
-            return;
-        }
-
-        for (offset, ch) in text.chars().enumerate() {
-            let x = x + offset;
-            if x >= WIDTH {
-                break;
-            }
-
-            self.cells[y * WIDTH + x] = ch;
-        }
-    }
-
-    fn render(&self) -> String {
-        let mut out = String::with_capacity((WIDTH + 2) * HEIGHT);
-
-        for y in 0..HEIGHT {
-            for x in 0..WIDTH {
-                out.push(self.cells[y * WIDTH + x]);
-            }
-            out.push('\r');
-            out.push('\n');
-        }
-
-        out
-    }
-}
 
 #[derive(Debug)]
 struct ViewerState {
@@ -353,9 +262,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     result
 }
 
-fn run_viewer(stdout: &mut io::Stdout, scene: &EarthScene, mesh: &Mesh, map_overlay: Option<&MapOverlay>) -> Result<(), Box<dyn Error>> {
+fn run_viewer(stdout: &mut io::Stdout, scene: &EarthScene, mesh: &MeshAsset, map_overlay: Option<&MapOverlay>) -> Result<(), Box<dyn Error>> {
     let target_frame = Duration::from_millis(33);
-    let mut frame = Frame::new();
+    let mut frame = Frame::new(WIDTH, HEIGHT);
     let mut state = ViewerState::default();
 
     let light = Vec3::new(
@@ -544,7 +453,7 @@ fn run_viewer(stdout: &mut io::Stdout, scene: &EarthScene, mesh: &Mesh, map_over
     }
 }
 
-fn draw_earth(frame: &mut Frame, scene: &EarthScene, mesh: &Mesh, state: &ViewerState, light: Vec3, map_overlay: Option<&MapOverlay>) {
+fn draw_earth(frame: &mut Frame, scene: &EarthScene, mesh: &MeshAsset, state: &ViewerState, light: Vec3, map_overlay: Option<&MapOverlay>) {
     let rotation = Mat3::rotation_z(state.rotation_z)
         * Mat3::rotation_y(state.rotation_y)
         * Mat3::rotation_x(state.rotation_x);
@@ -557,11 +466,11 @@ fn draw_earth(frame: &mut Frame, scene: &EarthScene, mesh: &Mesh, state: &Viewer
         let b = transform_vertex(triangle.b, rotation, scale, origin);
         let c = transform_vertex(triangle.c, rotation, scale, origin);
 
-        let Some(pa) = project(a.position) else { continue };
-        let Some(pb) = project(b.position) else { continue };
-        let Some(pc) = project(c.position) else { continue };
+        let Some(pa) = project(Vec3::from_array(a.position)) else { continue };
+        let Some(pb) = project(Vec3::from_array(b.position)) else { continue };
+        let Some(pc) = project(Vec3::from_array(c.position)) else { continue };
 
-        fill_triangle(frame, pa, pb, pc, a.normal, b.normal, c.normal, light);
+        fill_triangle(frame, pa, pb, pc, Vec3::from_array(a.normal), Vec3::from_array(b.normal), Vec3::from_array(c.normal), light);
     }
 
     if let Some(map_overlay) = map_overlay {
@@ -602,7 +511,7 @@ fn draw_earth(frame: &mut Frame, scene: &EarthScene, mesh: &Mesh, state: &Viewer
         1,
         1,
         &format!(
-            "rot x/y/z={:+.1}/{:+.1}/{:+.1} | origin {:+.1}/{:+.1}/{:+.1} | zoom {:.2} | axes {} | guides {} | spin {}:{} | fps {:>5.1}",
+            "rot x/y/z={:+.1}/{:+.1}/{:+.1} | origin {:+.1}/{:+.1}/{:+.1} | zoom {:.2} | cell {:.2} | axes {} | guides {} | spin {}:{} | fps {:>5.1}",
             state.rotation_x,
             state.rotation_y,
             state.rotation_z,
@@ -610,6 +519,7 @@ fn draw_earth(frame: &mut Frame, scene: &EarthScene, mesh: &Mesh, state: &Viewer
             state.origin_y,
             state.origin_z,
             state.zoom,
+            Projection::terminal_cell_aspect_ratio(),
             if state.show_axes { "on" } else { "off" },
             if state.show_guides { "on" } else { "off" },
             if state.spin { "on" } else { "off" },
@@ -625,13 +535,17 @@ fn draw_earth(frame: &mut Frame, scene: &EarthScene, mesh: &Mesh, state: &Viewer
     );
 }
 
-fn transform_vertex(vertex: Vertex, rotation: Mat3, scale: f32, origin: Vec3) -> Vertex {
-    Vertex {
+fn transform_vertex(vertex: MeshVertex, rotation: Mat3, scale: f32, origin: Vec3) -> MeshVertex {
+    let position = Vec3::from_array(vertex.position);
+    let normal = Vec3::from_array(vertex.normal);
+
+    MeshVertex {
         position: rotation
-            .transform(vertex.position)
+            .transform(position)
             .scaled(scale)
-            .translated(origin),
-        normal: rotation.transform(vertex.normal).normalized(),
+            .translated(origin)
+            .to_array(),
+        normal: rotation.transform(normal).normalized().to_array(),
     }
 }
 
@@ -646,29 +560,14 @@ impl Scaled for Vec3 {
 }
 
 fn project(point: Vec3) -> Option<(i32, i32, f32)> {
-    let camera_distance = 34.0;
-    let near_clip = 1.0;
-    let depth = camera_distance + point.z;
-
-    if !point.x.is_finite() || !point.y.is_finite() || !point.z.is_finite() || depth <= near_clip {
-        return None;
-    }
-
-    let perspective = camera_distance / depth;
-
-    if !perspective.is_finite() {
-        return None;
-    }
-
-    let aspect_correction = 2.0;
-    let x = point.x * perspective * aspect_correction + WIDTH as f32 * 0.5;
-    let y = HEIGHT as f32 * 0.54 - point.y * perspective;
-
-    if !x.is_finite() || !y.is_finite() {
-        return None;
-    }
-
-    Some((x.round() as i32, y.round() as i32, depth))
+    Projection::terminal_with_camera(
+        WIDTH,
+        HEIGHT,
+        EARTH_CAMERA_DISTANCE,
+        EARTH_NEAR_CLIP,
+        EARTH_VERTICAL_CENTER_RATIO,
+    )
+    .project_xyz(point.x, point.y, point.z)
 }
 
 fn fill_triangle(
@@ -730,39 +629,16 @@ fn shade_char(brightness: f32) -> char {
     SHADE_RAMP[index.min(SHADE_RAMP.len() - 1)] as char
 }
 
-enum GreatCircle {
-    EquatorY0,
-    MeridianX0,
-    MeridianZ0,
-}
-
 fn draw_great_circle(frame: &mut Frame, rotation: Mat3, scale: f32, origin: Vec3, circle: GreatCircle, ch: char) {
-    let steps = 96;
-    let mut previous = None;
-
-    for i in 0..=steps {
-        let theta = i as f32 / steps as f32 * std::f32::consts::TAU;
-        let (s, c) = theta.sin_cos();
-
-        let local = match circle {
-            GreatCircle::EquatorY0 => Vec3::new(c, 0.0, s),
-            GreatCircle::MeridianX0 => Vec3::new(0.0, c, s),
-            GreatCircle::MeridianZ0 => Vec3::new(c, s, 0.0),
-        };
-
-        let world = rotation.transform(local).scaled(scale * 1.01).translated(origin);
-
-        if let Some(current) = project(world) {
-            if let Some(prev) = previous {
-                draw_line_overlay(frame, prev, current, ch);
-            }
-            previous = Some(current);
-        } else {
-            previous = None;
-        }
-    }
+    draw_sphere_guide_points(
+        frame,
+        rotation,
+        scale * 1.01,
+        origin,
+        &great_circle_points(circle, 96),
+        ch,
+    );
 }
-
 
 fn draw_latitude_circle(
     frame: &mut Frame,
@@ -772,26 +648,35 @@ fn draw_latitude_circle(
     latitude_degrees: f32,
     ch: char,
 ) {
-    let steps = 96;
-    let lat = latitude_degrees.to_radians();
-    let y = lat.sin();
-    let ring_radius = lat.cos();
+    draw_sphere_guide_points(
+        frame,
+        rotation,
+        scale * 1.012,
+        origin,
+        &latitude_circle_points(latitude_degrees, 96),
+        ch,
+    );
+}
+
+fn draw_sphere_guide_points(
+    frame: &mut Frame,
+    rotation: Mat3,
+    scale: f32,
+    origin: Vec3,
+    points: &[SphereGuidePoint],
+    ch: char,
+) {
     let mut previous = None;
 
-    for i in 0..=steps {
-        let theta = i as f32 / steps as f32 * std::f32::consts::TAU;
-        let (s, c) = theta.sin_cos();
-
-        let local = Vec3::new(ring_radius * c, y, ring_radius * s);
-        let world = rotation
-            .transform(local)
-            .scaled(scale * 1.012)
-            .translated(origin);
+    for point in points {
+        let local = Vec3::new(point.x, point.y, point.z);
+        let world = rotation.transform(local).scaled(scale).translated(origin);
 
         if let Some(current) = project(world) {
             if let Some(prev) = previous {
                 draw_line_overlay(frame, prev, current, ch);
             }
+
             previous = Some(current);
         } else {
             previous = None;
@@ -811,7 +696,7 @@ fn draw_map_overlay(
 
     // Decorative land fill first. This is intentionally not light-based;
     // it is a sparse graphic texture inside each projected GeoJSON contour.
-    for line in &map_overlay.lines {
+    for line in &map_overlay.asset.lines {
         draw_lon_lat_fill(
             frame,
             &line.points_lon_lat,
@@ -822,7 +707,7 @@ fn draw_map_overlay(
     }
 
     // Draw the contour on top so the land edge stays crisp.
-    for line in &map_overlay.lines {
+    for line in &map_overlay.asset.lines {
         draw_lon_lat_line(
             frame,
             &line.points_lon_lat,
@@ -921,7 +806,7 @@ fn projected_lon_lat_polygon(
             let lat = lat_a * (1.0 - t) + lat_b * t;
 
             let local = lon_lat_to_sphere(lon, lat, 1.0);
-            let rotated = rotation.transform(local);
+            let rotated = rotation.transform(Vec3::new(local.x, local.y, local.z));
 
             // Match the outline behavior: skip the far hemisphere so land
             // texture does not bleed through the back of the globe.
@@ -946,40 +831,7 @@ fn projected_lon_lat_polygon(
     polygon
 }
 
-fn point_in_polygon(px: f32, py: f32, polygon: &[(i32, i32, f32)]) -> bool {
-    let mut inside = false;
-    let mut previous = polygon.len() - 1;
 
-    for current in 0..polygon.len() {
-        let xi = polygon[current].0 as f32;
-        let yi = polygon[current].1 as f32;
-        let xj = polygon[previous].0 as f32;
-        let yj = polygon[previous].1 as f32;
-
-        let crosses = (yi > py) != (yj > py);
-        if crosses {
-            let x_at_y = (xj - xi) * (py - yi) / ((yj - yi).abs().max(0.0001)) + xi;
-            if px < x_at_y {
-                inside = !inside;
-            }
-        }
-
-        previous = current;
-    }
-
-    inside
-}
-
-fn land_fill_char(x: i32, y: i32) -> Option<char> {
-    // Stable pseudo-texture. Sparse by design so the sphere shade still shows.
-    let n = (x * 17 + y * 31 + x * y * 3).rem_euclid(11);
-
-    match n {
-        0 | 1 | 2 => Some('+'),
-        3 => Some(':'),
-        _ => None,
-    }
-}
 
 fn draw_lon_lat_line(
     frame: &mut Frame,
@@ -1007,7 +859,7 @@ fn draw_lon_lat_line(
             let lat = lat_a * (1.0 - t) + lat_b * t;
 
             let local = lon_lat_to_sphere(lon, lat, 1.0);
-            let rotated = rotation.transform(local);
+            let rotated = rotation.transform(Vec3::new(local.x, local.y, local.z));
 
             // Only draw the camera-facing hemisphere, otherwise the back-side map
             // would show through the globe as an overlay.
@@ -1030,35 +882,9 @@ fn draw_lon_lat_line(
     }
 }
 
-fn segment_steps(lon_a: f32, lat_a: f32, lon_b: f32, lat_b: f32) -> usize {
-    let lon_delta = (lon_b - lon_a).abs();
-    let lat_delta = (lat_b - lat_a).abs();
-    let degrees = lon_delta.max(lat_delta);
-    ((degrees / 4.0).ceil() as usize).clamp(2, 16)
-}
 
-fn lerp_angle_degrees(a: f32, b: f32, t: f32) -> f32 {
-    let mut delta = b - a;
 
-    if delta > 180.0 {
-        delta -= 360.0;
-    } else if delta < -180.0 {
-        delta += 360.0;
-    }
 
-    a + delta * t
-}
-
-fn lon_lat_to_sphere(lon_degrees: f32, lat_degrees: f32, radius: f32) -> Vec3 {
-    let lon = lon_degrees.to_radians();
-    let lat = lat_degrees.to_radians();
-
-    Vec3::new(
-        radius * lat.cos() * lon.cos(),
-        radius * lat.sin(),
-        radius * lat.cos() * lon.sin(),
-    )
-}
 
 fn draw_axes(frame: &mut Frame, rotation: Mat3, scale: f32, origin_offset: Vec3) {
     let axis_len = scale * 1.35;
@@ -1082,36 +908,6 @@ fn draw_axes(frame: &mut Frame, rotation: Mat3, scale: f32, origin_offset: Vec3)
 
     if let Some(z) = z {
         draw_line_overlay(frame, origin, z, 'z');
-    }
-}
-
-fn draw_line_overlay(frame: &mut Frame, a: (i32, i32, f32), b: (i32, i32, f32), ch: char) {
-    let dx = (b.0 - a.0).abs();
-    let dy = -(b.1 - a.1).abs();
-    let sx = if a.0 < b.0 { 1 } else { -1 };
-    let sy = if a.1 < b.1 { 1 } else { -1 };
-    let mut err = dx + dy;
-    let mut x = a.0;
-    let mut y = a.1;
-
-    loop {
-        frame.set_overlay(x, y, ch);
-
-        if x == b.0 && y == b.1 {
-            break;
-        }
-
-        let e2 = 2 * err;
-
-        if e2 >= dy {
-            err += dy;
-            x += sx;
-        }
-
-        if e2 <= dx {
-            err += dx;
-            y += sy;
-        }
     }
 }
 
@@ -1142,218 +938,12 @@ fn load_map_overlay(scene_path: &Path, scene: &EarthScene) -> Result<Option<MapO
     };
 
     let map_path = resolve_mesh_path(scene_path, &config.asset);
-    let text = fs::read_to_string(&map_path)?;
-    let value: serde_json::Value = serde_json::from_str(&text)?;
-
-    let mut lines = Vec::new();
-
-    let Some(features) = value.get("features").and_then(|value| value.as_array()) else {
-        return Ok(Some(MapOverlay {
-            lines,
-            radius_scale: config.radius_scale,
-            visible: config.visible,
-        }));
-    };
-
-    for feature in features {
-        let name = feature
-            .get("properties")
-            .and_then(|properties| properties.get("name"))
-            .and_then(|name| name.as_str())
-            .unwrap_or("unnamed")
-            .to_string();
-
-        let marker = feature
-            .get("properties")
-            .and_then(|properties| properties.get("marker"))
-            .and_then(|marker| marker.as_str())
-            .and_then(|marker| marker.chars().next())
-            .unwrap_or('*');
-
-        let Some(geometry) = feature.get("geometry") else {
-            continue;
-        };
-
-        let geometry_type = geometry
-            .get("type")
-            .and_then(|geometry_type| geometry_type.as_str())
-            .unwrap_or("");
-
-        match geometry_type {
-            "Polygon" => {
-                if let Some(rings) = geometry.get("coordinates").and_then(|coords| coords.as_array()) {
-                    for ring in rings {
-                        if let Some(points) = parse_lon_lat_ring(ring) {
-                            lines.push(MapLine {
-                                name: name.clone(),
-                                marker,
-                                points_lon_lat: points,
-                            });
-                        }
-                    }
-                }
-            }
-            "MultiPolygon" => {
-                if let Some(polygons) = geometry.get("coordinates").and_then(|coords| coords.as_array()) {
-                    for polygon in polygons {
-                        let Some(rings) = polygon.as_array() else {
-                            continue;
-                        };
-
-                        for ring in rings {
-                            if let Some(points) = parse_lon_lat_ring(ring) {
-                                lines.push(MapLine {
-                                    name: name.clone(),
-                                    marker,
-                                    points_lon_lat: points,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
+    let asset = load_geojson_map_asset(&map_path)?;
 
     Ok(Some(MapOverlay {
-        lines,
+        asset,
         radius_scale: config.radius_scale,
         visible: config.visible,
     }))
 }
 
-fn parse_lon_lat_ring(value: &serde_json::Value) -> Option<Vec<(f32, f32)>> {
-    let coordinates = value.as_array()?;
-    let mut points = Vec::new();
-
-    for coordinate in coordinates {
-        let pair = coordinate.as_array()?;
-
-        if pair.len() < 2 {
-            continue;
-        }
-
-        let lon = pair[0].as_f64()? as f32;
-        let lat = pair[1].as_f64()? as f32;
-
-        points.push((lon, lat));
-    }
-
-    if points.len() >= 2 {
-        Some(points)
-    } else {
-        None
-    }
-}
-
-fn load_obj_mesh(path: &Path) -> Result<Mesh, Box<dyn Error>> {
-    let text = fs::read_to_string(path)?;
-    let mut positions = Vec::<Vec3>::new();
-    let mut normals = Vec::<Vec3>::new();
-    let mut triangles = Vec::<Triangle>::new();
-
-    for line in text.lines() {
-        let line = line.trim();
-
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-
-        let mut parts = line.split_whitespace();
-        let Some(kind) = parts.next() else {
-            continue;
-        };
-
-        match kind {
-            "v" => {
-                let x: f32 = parts.next().ok_or("missing vertex x")?.parse()?;
-                let y: f32 = parts.next().ok_or("missing vertex y")?.parse()?;
-                let z: f32 = parts.next().ok_or("missing vertex z")?.parse()?;
-                positions.push(Vec3::new(x, y, z));
-            }
-            "vn" => {
-                let x: f32 = parts.next().ok_or("missing normal x")?.parse()?;
-                let y: f32 = parts.next().ok_or("missing normal y")?.parse()?;
-                let z: f32 = parts.next().ok_or("missing normal z")?.parse()?;
-                normals.push(Vec3::new(x, y, z).normalized());
-            }
-            "f" => {
-                let refs = parts
-                    .map(parse_face_ref)
-                    .collect::<Result<Vec<_>, _>>()?;
-
-                if refs.len() < 3 {
-                    continue;
-                }
-
-                for i in 1..refs.len() - 1 {
-                    let a = vertex_from_ref(refs[0], &positions, &normals)?;
-                    let b = vertex_from_ref(refs[i], &positions, &normals)?;
-                    let c = vertex_from_ref(refs[i + 1], &positions, &normals)?;
-                    triangles.push(Triangle { a, b, c });
-                }
-            }
-            _ => {}
-        }
-    }
-
-    Ok(Mesh {
-        triangles,
-        vertex_count: positions.len(),
-        normal_count: normals.len(),
-    })
-}
-
-#[derive(Clone, Copy)]
-struct FaceRef {
-    vertex_index: usize,
-    normal_index: Option<usize>,
-}
-
-fn parse_face_ref(text: &str) -> Result<FaceRef, Box<dyn Error>> {
-    let mut parts = text.split('/');
-
-    let vertex_index = parts
-        .next()
-        .ok_or("missing face vertex index")?
-        .parse::<usize>()?
-        .checked_sub(1)
-        .ok_or("OBJ indices are 1-based")?;
-
-    let _uv_index = parts.next();
-
-    let normal_index = parts
-        .next()
-        .and_then(|part| {
-            if part.is_empty() {
-                None
-            } else {
-                Some(part.parse::<usize>())
-            }
-        })
-        .transpose()?
-        .and_then(|index| index.checked_sub(1));
-
-    Ok(FaceRef {
-        vertex_index,
-        normal_index,
-    })
-}
-
-fn vertex_from_ref(
-    reference: FaceRef,
-    positions: &[Vec3],
-    normals: &[Vec3],
-) -> Result<Vertex, Box<dyn Error>> {
-    let position = *positions
-        .get(reference.vertex_index)
-        .ok_or("face vertex index out of bounds")?;
-
-    let normal = reference
-        .normal_index
-        .and_then(|index| normals.get(index).copied())
-        .unwrap_or_else(|| position.normalized());
-
-    Ok(Vertex { position, normal })
-}
