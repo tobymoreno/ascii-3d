@@ -14,11 +14,12 @@ pub struct Projection {
 }
 
 impl Projection {
-    pub fn terminal_with_camera(
+    pub fn with_camera(
         width: usize,
         height: usize,
         camera_distance: f32,
         near_clip: f32,
+        cell_aspect_ratio: f32,
         vertical_center_ratio: f32,
     ) -> Self {
         Self {
@@ -26,9 +27,26 @@ impl Projection {
             height,
             camera_distance,
             near_clip,
-            cell_aspect_ratio: terminal_cell_aspect_ratio(),
+            cell_aspect_ratio: valid_cell_aspect_ratio(cell_aspect_ratio),
             vertical_center_ratio,
         }
+    }
+
+    pub fn terminal_with_camera(
+        width: usize,
+        height: usize,
+        camera_distance: f32,
+        near_clip: f32,
+        vertical_center_ratio: f32,
+    ) -> Self {
+        Self::with_camera(
+            width,
+            height,
+            camera_distance,
+            near_clip,
+            cached_terminal_cell_aspect_ratio(),
+            vertical_center_ratio,
+        )
     }
 
     pub fn terminal_cell_aspect_ratio() -> f32 {
@@ -60,16 +78,56 @@ impl Projection {
     }
 }
 
-fn terminal_cell_aspect_ratio() -> f32 {
+fn valid_cell_aspect_ratio(cell_aspect_ratio: f32) -> f32 {
+    if cell_aspect_ratio.is_finite() && cell_aspect_ratio > 0.0 {
+        cell_aspect_ratio.clamp(0.25, 2.0)
+    } else {
+        DEFAULT_CELL_ASPECT_RATIO
+    }
+}
+
+fn cached_terminal_cell_aspect_ratio() -> f32 {
     static CELL_ASPECT_RATIO: OnceLock<f32> = OnceLock::new();
 
-    *CELL_ASPECT_RATIO.get_or_init(|| match terminal::window_size() {
+    *CELL_ASPECT_RATIO.get_or_init(terminal_cell_aspect_ratio)
+}
+
+fn terminal_cell_aspect_ratio() -> f32 {
+    match terminal::window_size() {
         Ok(size) if size.width > 0 && size.height > 0 && size.columns > 0 && size.rows > 0 => {
             let cell_width = size.width as f32 / size.columns as f32;
             let cell_height = size.height as f32 / size.rows as f32;
 
-            (cell_width / cell_height).clamp(0.25, 2.0)
+            valid_cell_aspect_ratio(cell_width / cell_height)
         }
         _ => DEFAULT_CELL_ASPECT_RATIO,
-    })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explicit_cell_aspect_ratio_changes_horizontal_projection() {
+        let square = Projection::with_camera(100, 50, 20.0, 0.1, 1.0, 0.5);
+        let narrow = Projection::with_camera(100, 50, 20.0, 0.1, 0.5, 0.5);
+
+        let square_x = square.project_xyz(10.0, 0.0, 0.0).unwrap().0;
+        let narrow_x = narrow.project_xyz(10.0, 0.0, 0.0).unwrap().0;
+
+        assert!(narrow_x > square_x);
+    }
+
+    #[test]
+    fn invalid_cell_aspect_ratio_uses_default() {
+        let invalid = Projection::with_camera(100, 50, 20.0, 0.1, f32::NAN, 0.5);
+        let fallback =
+            Projection::with_camera(100, 50, 20.0, 0.1, DEFAULT_CELL_ASPECT_RATIO, 0.5);
+
+        assert_eq!(
+            invalid.project_xyz(10.0, 0.0, 0.0),
+            fallback.project_xyz(10.0, 0.0, 0.0)
+        );
+    }
 }

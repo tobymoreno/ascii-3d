@@ -89,7 +89,7 @@ fn run_viewer(
                 frame = Frame::new(render_width, render_height);
             }
 
-            let viewport = ViewerViewport::new(render_width, render_height);
+            let viewport = ViewerViewport::terminal(render_width, render_height);
             draw_render_scene(&mut frame, viewport, &scene, &meshes, &maps, &state);
 
             let rendered = frame.render().replace('\r', "");

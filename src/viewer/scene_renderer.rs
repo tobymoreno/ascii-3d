@@ -15,21 +15,39 @@ use std::collections::HashMap;
 pub const MIN_VIEW_SCENE_WIDTH: usize = 96;
 pub const MIN_VIEW_SCENE_HEIGHT: usize = 34;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ViewerViewport {
     pub width: usize,
     pub height: usize,
+    pub cell_aspect_ratio: f32,
 }
 
 impl ViewerViewport {
-    pub const fn new(width: usize, height: usize) -> Self {
-        Self { width, height }
+    pub fn terminal(width: usize, height: usize) -> Self {
+        Self::with_cell_aspect_ratio(
+            width,
+            height,
+            Projection::terminal_cell_aspect_ratio(),
+        )
+    }
+
+    pub const fn with_cell_aspect_ratio(
+        width: usize,
+        height: usize,
+        cell_aspect_ratio: f32,
+    ) -> Self {
+        Self {
+            width,
+            height,
+            cell_aspect_ratio,
+        }
     }
 
     pub fn clamped(self) -> Self {
         Self {
             width: self.width.max(MIN_VIEW_SCENE_WIDTH),
             height: self.height.max(MIN_VIEW_SCENE_HEIGHT),
+            cell_aspect_ratio: self.cell_aspect_ratio,
         }
     }
 }
@@ -50,11 +68,12 @@ fn shade_char(color: Option<&str>, marker: char) -> char {
 fn screen_project(scene: &RenderScene, viewport: ViewerViewport, point: Vec3) -> Option<(i32, i32, f32)> {
     let camera = scene.active_camera()?;
 
-    Projection::terminal_with_camera(
+    Projection::with_camera(
         viewport.width,
         viewport.height,
         camera.projection.camera_distance,
         camera.projection.near_clip,
+        viewport.cell_aspect_ratio,
         camera.projection.vertical_center_ratio,
     )
     .project_xyz(point.x, point.y, point.z)
