@@ -49,6 +49,8 @@ impl LoadedWorld {
                 body.update_object(object, self.physics, dt_seconds);
             }
         }
+
+        self.rebuild_parent_matrices();
     }
 
     pub fn object(&self, id: &str) -> Option<&SceneObject> {
@@ -79,6 +81,70 @@ impl LoadedWorld {
             object.parent_matrix = parent_matrix;
             world_matrices.insert(object.id.clone(), object.world_matrix());
         }
+    }
+
+    pub fn object_effectively_visible(&self, id: &str) -> bool {
+        let Some(object) = self.object(id) else {
+            return false;
+        };
+        if !object.render.visible {
+            return false;
+        }
+
+        let mut ancestor = id.rsplit_once('/').map(|(parent, _)| parent);
+        while let Some(parent_id) = ancestor {
+            let Some(parent) = self.object(parent_id) else {
+                break;
+            };
+            if !parent.render.visible {
+                return false;
+            }
+            ancestor = parent_id.rsplit_once('/').map(|(next, _)| next);
+        }
+
+        true
+    }
+
+    pub fn translate_object(&mut self, id: &str, delta: [f32; 3]) -> bool {
+        let Some(object) = self.object_mut(id) else {
+            return false;
+        };
+        for (component, delta) in object.transform.position.iter_mut().zip(delta) {
+            *component += delta;
+        }
+        self.rebuild_parent_matrices();
+        true
+    }
+
+    pub fn rotate_object(&mut self, id: &str, delta_degrees: [f32; 3]) -> bool {
+        let Some(object) = self.object_mut(id) else {
+            return false;
+        };
+        for (component, delta) in object
+            .transform
+            .rotation_degrees
+            .iter_mut()
+            .zip(delta_degrees)
+        {
+            *component += delta;
+        }
+        self.rebuild_parent_matrices();
+        true
+    }
+
+    pub fn reset_object_transform(&mut self, id: &str) -> bool {
+        let Some(object) = self.object_mut(id) else {
+            return false;
+        };
+        object.transform = super::Transform::default();
+        self.rebuild_parent_matrices();
+        true
+    }
+
+    pub fn toggle_object_visibility(&mut self, id: &str) -> Option<bool> {
+        let object = self.object_mut(id)?;
+        object.render.visible = !object.render.visible;
+        Some(object.render.visible)
     }
 
     pub fn scale_object_uniform(&mut self, id: &str, factor: f32) -> bool {

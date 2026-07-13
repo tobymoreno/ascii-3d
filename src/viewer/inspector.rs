@@ -445,10 +445,6 @@ fn apply_transform_key(transform: &mut RenderTransform, code: KeyCode) {
             transform.rotation_degrees = [0.0, 0.0, 0.0];
             transform.scale = [1.0, 1.0, 1.0];
         }
-        KeyCode::Char('0') => {
-            transform.position = [0.0, 0.0, 0.0];
-            transform.rotation_degrees = [0.0, 0.0, 0.0];
-        }
         _ => {}
     }
 }
