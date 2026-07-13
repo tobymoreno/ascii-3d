@@ -1,11 +1,13 @@
 mod frame;
 mod geojson_map;
+mod geojson_pipeline;
 
 pub use frame::Frame;
 pub use geojson_map::{
     GeoJsonMapAsset, GeoPoint, MapLine, land_fill_char, lerp_angle_degrees, load_geojson_map_asset,
     lon_lat_to_sphere, point_in_polygon, segment_steps,
 };
+pub use geojson_pipeline::{visit_geojson_segments, visit_lon_lat_samples};
 mod projection;
 mod raster;
 

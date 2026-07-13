@@ -3,8 +3,8 @@ use crate::{
         Frame, GeoJsonMapAsset, Mat4, Projection, RenderNode, RenderObject, RenderQuad,
         RenderQuadGroup, RenderScene, RenderSphereGuideKind, RenderTransform, SphereGuidePoint,
         Vec3, draw_line, draw_line_overlay, fill_triangle, great_circle_points, land_fill_char,
-        latitude_circle_points, lerp_angle_degrees, lon_lat_to_sphere, point_in_polygon,
-        prepare_frame_mesh, segment_steps, visit_prepared_triangles,
+        latitude_circle_points, point_in_polygon, prepare_frame_mesh, visit_geojson_segments,
+        visit_lon_lat_samples, visit_prepared_triangles,
     },
     viewer::ViewerState,
 };
@@ -362,34 +362,23 @@ fn projected_lon_lat_polygon(
         return polygon;
     }
 
-    for pair in points_lon_lat.windows(2) {
-        let (lon_a, lat_a) = pair[0];
-        let (lon_b, lat_b) = pair[1];
-        let steps = segment_steps(lon_a, lat_a, lon_b, lat_b);
+    visit_lon_lat_samples(points_lon_lat, radius, |local| {
+        let world_point = world.transform_point(Vec3::new(local[0], local[1], local[2]));
 
-        for step in 0..=steps {
-            let t = step as f32 / steps as f32;
-            let lon = lerp_angle_degrees(lon_a, lon_b, t);
-            let lat = lat_a * (1.0 - t) + lat_b * t;
+        if let Some(projected) = screen_project(scene, viewport, world_point) {
+            if projected.2 >= center_depth {
+                return;
+            }
 
-            let local = lon_lat_to_sphere(lon, lat, radius);
-            let world_point = world.transform_point(Vec3::new(local.x, local.y, local.z));
-
-            if let Some(projected) = screen_project(scene, viewport, world_point) {
-                if projected.2 >= center_depth {
-                    continue;
-                }
-
-                if polygon
-                    .last()
-                    .map(|last: &(i32, i32, f32)| last.0 != projected.0 || last.1 != projected.1)
-                    .unwrap_or(true)
-                {
-                    polygon.push(projected);
-                }
+            if polygon
+                .last()
+                .map(|last: &(i32, i32, f32)| last.0 != projected.0 || last.1 != projected.1)
+                .unwrap_or(true)
+            {
+                polygon.push(projected);
             }
         }
-    }
+    });
 
     polygon
 }
@@ -404,40 +393,39 @@ fn draw_lon_lat_line(
     world: Mat4,
     center_depth: f32,
 ) {
-    if points_lon_lat.len() < 2 {
-        return;
-    }
+    let map = GeoJsonMapAsset {
+        lines: vec![crate::render::MapLine {
+            name: "inline".to_string(),
+            marker,
+            points_lon_lat: points_lon_lat.to_vec(),
+        }],
+    };
 
-    let mut previous = None;
+    visit_geojson_segments(
+        &map,
+        radius,
+        |local| {
+            world
+                .transform_point(Vec3::new(local[0], local[1], local[2]))
+                .to_array()
+        },
+        |world_point| {
+            screen_project(
+                scene,
+                viewport,
+                Vec3::new(world_point[0], world_point[1], world_point[2]),
+            )
+            .is_some_and(|projected| projected.2 < center_depth)
+        },
+        |segment_marker, from, to| {
+            let from = screen_project(scene, viewport, Vec3::new(from[0], from[1], from[2]));
+            let to = screen_project(scene, viewport, Vec3::new(to[0], to[1], to[2]));
 
-    for pair in points_lon_lat.windows(2) {
-        let (lon_a, lat_a) = pair[0];
-        let (lon_b, lat_b) = pair[1];
-        let steps = segment_steps(lon_a, lat_a, lon_b, lat_b);
-
-        for step in 0..=steps {
-            let t = step as f32 / steps as f32;
-            let lon = lerp_angle_degrees(lon_a, lon_b, t);
-            let lat = lat_a * (1.0 - t) + lat_b * t;
-
-            let local = lon_lat_to_sphere(lon, lat, radius);
-            let world_point = world.transform_point(Vec3::new(local.x, local.y, local.z));
-
-            if let Some(current) = screen_project(scene, viewport, world_point) {
-                if current.2 >= center_depth {
-                    previous = None;
-                    continue;
-                }
-
-                if let Some(prev) = previous {
-                    draw_line_overlay(frame, prev, current, marker);
-                }
-                previous = Some(current);
-            } else {
-                previous = None;
+            if let (Some(from), Some(to)) = (from, to) {
+                draw_line_overlay(frame, from, to, segment_marker);
             }
-        }
-    }
+        },
+    );
 }
 
 fn draw_sphere_guide_points(

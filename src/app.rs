@@ -15,9 +15,9 @@ use ascii_3d::{
         draw_properties_panel,
     },
     render::{
-        GeoJsonMapAsset, MeshPrepareOptions, lerp_angle_degrees, load_geojson_map_asset,
-        load_prepared_mesh, lon_lat_to_sphere, prepare_frame_mesh, rasterize_triangle_clipped,
-        segment_steps, visit_prepared_triangles,
+        GeoJsonMapAsset, MeshPrepareOptions, load_geojson_map_asset, load_prepared_mesh,
+        prepare_frame_mesh, rasterize_triangle_clipped, visit_geojson_segments,
+        visit_prepared_triangles,
     },
 };
 
@@ -2671,51 +2671,36 @@ fn draw_loaded_a3d_geo_json_map_object(
     let object_center_camera = world_to_camera_space(state, object_center_world);
     let character = object.render.stroke_character.unwrap_or('*');
 
-    for line in &map.lines {
-        for pair in line.points_lon_lat.windows(2) {
-            let (lon_a, lat_a) = pair[0];
-            let (lon_b, lat_b) = pair[1];
-            let steps = segment_steps(lon_a, lat_a, lon_b, lat_b);
-            let mut previous_world = None;
-
-            for step in 0..=steps {
-                let t = step as f32 / steps as f32;
-                let lon = lerp_angle_degrees(lon_a, lon_b, t);
-                let lat = lat_a + (lat_b - lat_a) * t;
-                let point = lon_lat_to_sphere(lon, lat, *radius_scale);
-                let world = object_world.transform_point(Vec3::new(point.x, point.y, point.z));
-
-                let front_facing = match (object_center_camera, world_to_camera_space(state, world))
-                {
-                    (Some(center_camera), Some(point_camera)) => {
-                        let outward = point_camera - center_camera;
-                        let toward_camera = point_camera * -1.0;
-                        dot_vec3(outward, toward_camera) > 0.0
-                    }
-                    _ => false,
-                };
-
-                if !front_facing {
-                    previous_world = None;
-                    continue;
+    visit_geojson_segments(
+        &map,
+        *radius_scale,
+        |local| {
+            let point = object_world.transform_point(Vec3::new(local[0], local[1], local[2]));
+            [point.x, point.y, point.z]
+        },
+        |world| {
+            let world = Vec3::new(world[0], world[1], world[2]);
+            match (object_center_camera, world_to_camera_space(state, world)) {
+                (Some(center_camera), Some(point_camera)) => {
+                    let outward = point_camera - center_camera;
+                    let toward_camera = point_camera * -1.0;
+                    dot_vec3(outward, toward_camera) > 0.0
                 }
-
-                if let Some(previous) = previous_world {
-                    draw_camera_viewport_depth_line(
-                        canvas,
-                        depth_buffer,
-                        state,
-                        inner,
-                        previous,
-                        world,
-                        character,
-                    );
-                }
-
-                previous_world = Some(world);
+                _ => false,
             }
-        }
-    }
+        },
+        |_, from, to| {
+            draw_camera_viewport_depth_line(
+                canvas,
+                depth_buffer,
+                state,
+                inner,
+                Vec3::new(from[0], from[1], from[2]),
+                Vec3::new(to[0], to[1], to[2]),
+                character,
+            );
+        },
+    );
 
     Ok(())
 }
@@ -2738,29 +2723,22 @@ fn draw_loaded_a3d_geo_json_map_object_in_ws(
     let object_world = object.world_matrix();
     let character = object.render.stroke_character.unwrap_or('*');
 
-    for line in &map.lines {
-        for pair in line.points_lon_lat.windows(2) {
-            let (lon_a, lat_a) = pair[0];
-            let (lon_b, lat_b) = pair[1];
-            let steps = segment_steps(lon_a, lat_a, lon_b, lat_b);
-            let mut previous = None;
-
-            for step in 0..=steps {
-                let t = step as f32 / steps as f32;
-                let lon = lerp_angle_degrees(lon_a, lon_b, t);
-                let lat = lat_a + (lat_b - lat_a) * t;
-                let point = lon_lat_to_sphere(lon, lat, *radius_scale);
-                let world = object_world.transform_point(Vec3::new(point.x, point.y, point.z));
-                let projected = projector.project(world);
-
-                if let Some(previous) = previous {
-                    canvas.draw_line(previous, projected, character);
-                }
-
-                previous = Some(projected);
-            }
-        }
-    }
+    visit_geojson_segments(
+        &map,
+        *radius_scale,
+        |local| {
+            let point = object_world.transform_point(Vec3::new(local[0], local[1], local[2]));
+            [point.x, point.y, point.z]
+        },
+        |_| true,
+        |_, from, to| {
+            canvas.draw_line(
+                projector.project(Vec3::new(from[0], from[1], from[2])),
+                projector.project(Vec3::new(to[0], to[1], to[2])),
+                character,
+            );
+        },
+    );
 
     Ok(())
 }
