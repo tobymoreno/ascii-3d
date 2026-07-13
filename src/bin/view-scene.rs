@@ -1,17 +1,23 @@
 use ascii_3d::{
-    a3d::{AssetRef, LoadedWorld, SceneObject, load_a3d_project},
-    render::{Frame, GeoJsonMapAsset, MeshAsset, RenderScene, apply_render_behaviors_to_scene},
+    a3d::{AssetRef, BehaviorConfig, LoadedWorld, SceneObject, load_a3d_project},
+    editor_ui::{
+        EditorAction, EditorEvent, MenuBarState, ObjectHierarchyState, PropertiesState,
+        draw_menu_bar, draw_object_hierarchy, draw_properties_panel,
+    },
+    render::{Frame, GeoJsonMapAsset, RenderScene, apply_render_behaviors_to_scene},
     scene::{
-        DisplayDocument, GroupDocument, NodeDocument, ObjectDocument, ObjectKindDocument,
-        SceneDocument, TransformDocument, load_scene_document, save_scene_document,
-        scene_document_to_render_scene, set_scene_document_visibility,
+        AxisDocument, BehaviorDocument, DisplayDocument, GroupDocument, MeshPrepareDocument,
+        NodeDocument, ObjectDocument, ObjectKindDocument, SceneDocument, TransformDocument,
+        load_scene_document, save_scene_document, scene_document_to_render_scene,
+        set_scene_document_visibility,
     },
     viewer::{
-        CAMERA_HELPER_PATH, MIN_VIEW_SCENE_HEIGHT, MIN_VIEW_SCENE_WIDTH, SCENE_ORIGIN_HELPER_PATH,
-        VIEWER_MENU_TITLES, ViewerInput, ViewerInspectorState, ViewerState, ViewerViewport,
-        WORLD_AXES_HELPER_PATH, collect_scene_objects_with_helpers, draw_render_scene, handle_key,
-        handle_scene_object_transform_key, load_scene_maps, load_scene_meshes,
-        scene_helper_property_lines, scene_object_property_lines, toggle_scene_object_visibility,
+        CAMERA_HELPER_PATH, FILE_MENU_ID, MIN_VIEW_SCENE_HEIGHT, MIN_VIEW_SCENE_WIDTH,
+        OBJECTS_MENU_ID, SCENE_ORIGIN_HELPER_PATH, ViewerInput, ViewerInspectorState, ViewerState,
+        ViewerViewport, collect_scene_objects_with_helpers, draw_render_scene, editor_items,
+        handle_camera_key, handle_scene_object_transform_key, handle_scene_origin_key,
+        load_scene_maps, load_scene_meshes, property_rows, reset_scene_object_transform,
+        toggle_scene_object_visibility, viewer_menu_definitions,
     },
 };
 use crossterm::{
@@ -25,14 +31,15 @@ use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Tabs},
+    text::Line,
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
 };
 use std::{
     collections::HashMap,
     env, io,
     io::stdout,
     path::{Path, PathBuf},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -59,7 +66,7 @@ fn run_viewer(
     mut scene_path: PathBuf,
     mut document: SceneDocument,
     mut scene: RenderScene,
-    meshes: HashMap<String, MeshAsset>,
+    meshes: HashMap<String, Arc<ascii_3d::mesh::Mesh>>,
     maps: HashMap<String, GeoJsonMapAsset>,
     save_enabled: bool,
 ) -> io::Result<()> {
@@ -71,6 +78,11 @@ fn run_viewer(
     inspector.active_object_path = Some(CAMERA_HELPER_PATH.to_string());
     inspector.active_xyz_target_path = CAMERA_HELPER_PATH.to_string();
     let mut object_entries = collect_scene_objects_with_helpers(&scene, state.show_axes);
+    let mut hierarchy_items = editor_items(&object_entries);
+    let menu_definitions = viewer_menu_definitions();
+    let mut menu_bar = MenuBarState::default();
+    let mut hierarchy = ObjectHierarchyState::default();
+    let mut properties = PropertiesState::default();
     let mut save_status: Option<String> = None;
     let mut frame = Frame::new(MIN_VIEW_SCENE_WIDTH, MIN_VIEW_SCENE_HEIGHT);
     let target_frame = Duration::from_millis(33);
@@ -131,8 +143,8 @@ fn run_viewer(
             draw_menu_bar(
                 ui,
                 shell[0],
-                inspector.selected_menu,
-                inspector.menu_focused || inspector.file_open || inspector.objects_open,
+                &menu_definitions,
+                &menu_bar,
                 &format!("fps {:>5.1}", state.fps),
             );
             ui.render_widget(scene_block, scene_area);
@@ -156,49 +168,52 @@ fn run_viewer(
                 );
             }
 
-            if inspector.objects_open {
-                draw_objects_popup(
+            if hierarchy.is_open() {
+                draw_object_hierarchy(
                     ui,
                     centered_rect(
                         58,
-                        (object_entries.len() as u16 + 4).clamp(6, 24),
+                        (hierarchy_items.len() as u16 + 4).clamp(6, 24),
                         ui.area(),
                     ),
-                    &object_entries,
-                    inspector.selected_object,
+                    &hierarchy_items,
+                    &hierarchy,
+                    "Objects",
                 );
             }
 
-            if inspector.properties_open {
-                let property_lines = inspector
-                    .active_object_path
-                    .as_deref()
-                    .and_then(|path| {
-                        scene_helper_property_lines(
-                            path,
+            if properties.is_open() {
+                let rows = properties
+                    .target()
+                    .map(|target| {
+                        property_rows(
+                            &scene,
+                            target,
                             state.show_axes,
                             Some(inspector.active_xyz_target_path.as_str()),
                         )
-                        .or_else(|| {
-                            scene_object_property_lines(
-                                &scene,
-                                path,
-                                Some(inspector.active_xyz_target_path.as_str()),
-                            )
-                        })
                     })
-                    .unwrap_or_else(|| vec!["Object not found".to_string()]);
+                    .unwrap_or_else(|| vec![]);
+                let object_name = properties
+                    .target()
+                    .and_then(|target| {
+                        hierarchy_items
+                            .iter()
+                            .find(|item| item.target.key == target.key)
+                            .map(|item| item.label.as_str())
+                    })
+                    .unwrap_or("Object");
 
-                draw_properties_popup(
+                draw_properties_panel(
                     ui,
                     centered_rect(
                         72,
-                        (property_lines.len() as u16 + 4).clamp(8, 28),
+                        (rows.len() as u16 + 4).clamp(8, 28),
                         ui.area(),
                     ),
-                    active_object,
-                    &property_lines,
-                    inspector.selected_property_item,
+                    object_name,
+                    &rows,
+                    &properties,
                 );
             }
         })?;
@@ -293,87 +308,132 @@ fn run_viewer(
                 continue;
             }
 
-            if inspector.properties_open {
-                let is_runtime_helper = inspector
-                    .active_object_path
-                    .as_deref()
-                    .is_some_and(|path| path.starts_with("@scene/"));
-                let property_action_count = if is_runtime_helper { 1 } else { 2 };
+            if properties.is_open() {
+                let rows = properties
+                    .target()
+                    .map(|target| {
+                        property_rows(
+                            &scene,
+                            target,
+                            state.show_axes,
+                            Some(inspector.active_xyz_target_path.as_str()),
+                        )
+                    })
+                    .unwrap_or_default();
 
-                match key.code {
-                    KeyCode::Esc => inspector.close_properties(),
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        inspector.move_property_up(property_action_count)
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        inspector.move_property_down(property_action_count)
-                    }
-                    KeyCode::Enter | KeyCode::Char(' ') => {
-                        if let Some(path) = inspector.active_object_path.clone() {
-                            if inspector.selected_property_item == 0 {
-                                inspector.active_xyz_target_path = path.clone();
-                                let label =
-                                    inspector.active_label(&object_entries).unwrap_or("object");
-                                save_status = Some(format!("XYZ target activated: {label}"));
-                            } else if let Some(visible) =
-                                toggle_scene_object_visibility(&mut scene, &path)
-                            {
-                                set_scene_document_visibility(&mut document, &path, visible);
-                                object_entries =
-                                    collect_scene_objects_with_helpers(&scene, state.show_axes);
-                                save_status = Some("Unsaved visibility change".to_string());
-                            }
+                if let Some(editor_event) = properties.handle_key(key.code, &rows) {
+                    match editor_event {
+                        EditorEvent::CloseRequested => {
+                            hierarchy.open(&hierarchy_items);
                         }
+                        EditorEvent::ActionRequested { target, action, .. } => match action {
+                            EditorAction::ActivateControlTarget => {
+                                inspector.active_object_path = Some(target.path.clone());
+                                inspector.active_xyz_target_path = target.path.clone();
+                                let label = hierarchy_items
+                                    .iter()
+                                    .find(|item| item.target.key == target.key)
+                                    .map(|item| item.label.as_str())
+                                    .unwrap_or("object");
+                                save_status = Some(format!("XYZ target activated: {label}"));
+                            }
+                            EditorAction::ToggleVisibility => {
+                                if let Some(visible) =
+                                    toggle_scene_object_visibility(&mut scene, &target.path)
+                                {
+                                    set_scene_document_visibility(
+                                        &mut document,
+                                        &target.path,
+                                        visible,
+                                    );
+                                    object_entries =
+                                        collect_scene_objects_with_helpers(&scene, state.show_axes);
+                                    hierarchy_items = editor_items(&object_entries);
+                                    hierarchy.replace_items(&hierarchy_items);
+                                    save_status = Some("Unsaved visibility change".to_string());
+                                }
+                            }
+                            EditorAction::ResetTransform => {
+                                let reset = if target.path == CAMERA_HELPER_PATH {
+                                    state = ViewerState::default();
+                                    true
+                                } else if target.path == SCENE_ORIGIN_HELPER_PATH {
+                                    state.origin_x = 0.0;
+                                    state.origin_y = 0.0;
+                                    state.origin_z = 0.0;
+                                    state.rotation_x_degrees = 0.0;
+                                    state.rotation_y_degrees = 0.0;
+                                    state.rotation_z_degrees = 0.0;
+                                    state.zoom = 1.0;
+                                    true
+                                } else {
+                                    reset_scene_object_transform(&mut scene, &target.path)
+                                };
+
+                                if reset {
+                                    save_status = Some(format!("Reset transform: {}", target.id));
+                                }
+                            }
+                            _ => {}
+                        },
+                        _ => {}
                     }
-                    _ => {}
                 }
 
                 continue;
             }
 
-            if inspector.objects_open {
-                match key.code {
-                    KeyCode::Esc => inspector.close_popup(),
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        inspector.move_object_up(object_entries.len())
+            if hierarchy.is_open() {
+                if let Some(editor_event) = hierarchy.handle_key(key.code, &hierarchy_items) {
+                    match editor_event {
+                        EditorEvent::InspectRequested { target, .. } => {
+                            inspector.active_object_path = Some(target.path.clone());
+                            hierarchy.close();
+                            properties.open(target);
+                        }
+                        EditorEvent::CloseRequested => menu_bar.focus(),
+                        _ => {}
                     }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        inspector.move_object_down(object_entries.len())
-                    }
-                    KeyCode::Enter => inspector.activate_selected(&object_entries),
-                    _ => {}
                 }
-
                 continue;
             }
 
-            if inspector.menu_focused {
-                match key.code {
-                    KeyCode::Esc | KeyCode::Tab => inspector.menu_focused = false,
-                    KeyCode::Left => inspector.move_menu_left(),
-                    KeyCode::Right => inspector.move_menu_right(),
-                    KeyCode::Enter => inspector.open_selected_menu(object_entries.len()),
-                    _ => {}
+            if menu_bar.focused() {
+                if let Some(EditorEvent::MenuOpened { menu_id }) =
+                    menu_bar.handle_key(key.code, &menu_definitions)
+                {
+                    if menu_id.0 == FILE_MENU_ID {
+                        inspector.file_open = true;
+                        inspector.selected_file_item = 0;
+                    } else if menu_id.0 == OBJECTS_MENU_ID {
+                        hierarchy.open(&hierarchy_items);
+                    }
                 }
-
                 continue;
             }
 
             match key.code {
-                KeyCode::Tab => inspector.focus_menu(),
+                KeyCode::Tab => menu_bar.focus(),
                 _ => {
                     let path = inspector.active_xyz_target_path.as_str();
 
                     if path == CAMERA_HELPER_PATH || path == SCENE_ORIGIN_HELPER_PATH {
                         let axes_before = state.show_axes;
 
-                        if handle_key(key.code, &mut state) == ViewerInput::Quit {
+                        let result = if path == CAMERA_HELPER_PATH {
+                            handle_camera_key(key.code, &mut state)
+                        } else {
+                            handle_scene_origin_key(key.code, &mut state)
+                        };
+                        if result == ViewerInput::Quit {
                             return Ok(());
                         }
 
                         if state.show_axes != axes_before {
                             object_entries =
                                 collect_scene_objects_with_helpers(&scene, state.show_axes);
+                            hierarchy_items = editor_items(&object_entries);
+                            hierarchy.replace_items(&hierarchy_items);
                         }
                     } else {
                         if key.code == KeyCode::Char('q') || key.code == KeyCode::Esc {
@@ -400,38 +460,6 @@ fn run_viewer(
             std::thread::sleep(target_frame - elapsed);
         }
     }
-}
-
-fn draw_menu_bar(
-    frame: &mut ratatui::Frame<'_>,
-    area: Rect,
-    selected_menu: usize,
-    focused: bool,
-    status: &str,
-) {
-    let titles = VIEWER_MENU_TITLES
-        .iter()
-        .map(|title| Line::from(Span::raw(format!(" {title} "))))
-        .collect::<Vec<_>>();
-
-    let tabs = Tabs::new(titles)
-        .divider(" ")
-        .select(selected_menu)
-        .highlight_style(if focused {
-            Style::default()
-                .add_modifier(Modifier::REVERSED)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
-        });
-
-    let header = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(34), Constraint::Min(1)])
-        .split(area);
-
-    frame.render_widget(tabs, header[0]);
-    frame.render_widget(Paragraph::new(status), header[1]);
 }
 
 fn draw_file_popup(frame: &mut ratatui::Frame<'_>, area: Rect, scene_path: &Path, selected: usize) {
@@ -486,79 +514,6 @@ Type path  Backspace delete  Enter save  Esc cancel"
     frame.render_widget(popup, area);
 }
 
-fn draw_objects_popup(
-    frame: &mut ratatui::Frame<'_>,
-    area: Rect,
-    entries: &[ascii_3d::viewer::SceneObjectEntry],
-    selected: usize,
-) {
-    let items = entries
-        .iter()
-        .enumerate()
-        .map(|(index, entry)| {
-            let selector = if index == selected { ">" } else { " " };
-            ListItem::new(Line::from(format!("{selector} {}", entry.display_label())))
-        })
-        .collect::<Vec<_>>();
-
-    let list = List::new(items).block(
-        Block::default()
-            .title(" Objects  Enter=select  Esc=close ")
-            .borders(Borders::ALL),
-    );
-
-    frame.render_widget(Clear, area);
-    frame.render_widget(list, area);
-}
-
-fn draw_properties_popup(
-    frame: &mut ratatui::Frame<'_>,
-    area: Rect,
-    object_name: &str,
-    lines: &[String],
-    selected_action: usize,
-) {
-    let mut action_index = 0usize;
-    let items = lines
-        .iter()
-        .map(|line| {
-            let is_action = line.starts_with("xyz control:") || line.starts_with("visible:");
-            let selected = is_action && action_index == selected_action;
-            let prefix = if selected { "> " } else { "  " };
-
-            if is_action {
-                action_index += 1;
-            }
-
-            let suffix = if line.starts_with("xyz control:") {
-                "  [Enter/Space to activate]"
-            } else if line.starts_with("visible:") {
-                "  [Enter/Space to toggle]"
-            } else {
-                ""
-            };
-
-            let item = ListItem::new(Line::from(format!("{prefix}{line}{suffix}")));
-            if selected {
-                item.style(Style::default().add_modifier(Modifier::REVERSED))
-            } else {
-                item
-            }
-        })
-        .collect::<Vec<_>>();
-
-    let popup = List::new(items).block(
-        Block::default()
-            .title(format!(
-                " Properties: {object_name}  Up/Down select  Enter activate  Esc=back "
-            ))
-            .borders(Borders::ALL),
-    );
-
-    frame.render_widget(Clear, area);
-    frame.render_widget(popup, area);
-}
-
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     let width = width.min(area.width);
     let height = height.min(area.height);
@@ -579,8 +534,58 @@ fn a3d_transform_document(object: &SceneObject) -> TransformDocument {
     }
 }
 
+fn a3d_behavior_documents(object: &SceneObject) -> Vec<BehaviorDocument> {
+    let mut documents = Vec::new();
+
+    for behavior in &object.behaviors {
+        let BehaviorConfig::Rotate {
+            axis,
+            degrees_per_second,
+        } = behavior
+        else {
+            continue;
+        };
+
+        for (component, render_axis) in [
+            (axis[0], AxisDocument::X),
+            (axis[1], AxisDocument::Y),
+            (axis[2], AxisDocument::Z),
+        ] {
+            if component.abs() <= f32::EPSILON {
+                continue;
+            }
+
+            documents.push(BehaviorDocument::Spin {
+                axis: render_axis,
+                degrees_per_second: degrees_per_second * component,
+                enabled: true,
+            });
+        }
+    }
+
+    documents
+}
+
 fn direct_parent_id(id: &str) -> Option<&str> {
     id.rsplit_once('/').map(|(parent, _)| parent)
+}
+
+fn a3d_mesh_prepare_document(object: &SceneObject) -> MeshPrepareDocument {
+    let simplify = object
+        .render
+        .ascii_simplify
+        .as_ref()
+        .filter(|config| config.enabled);
+
+    MeshPrepareDocument {
+        normalize_to_size: Some(1.0),
+        grid_size: simplify.and_then(|config| {
+            (config.grid_size.is_finite() && config.grid_size > 0.0).then_some(config.grid_size)
+        }),
+        target_vertices: simplify
+            .and_then(|config| config.target_vertices.filter(|value| *value > 0)),
+        cache: simplify.is_some_and(|config| config.cache),
+    }
 }
 
 fn a3d_group_document(group: &SceneObject, world: &LoadedWorld) -> GroupDocument {
@@ -605,9 +610,11 @@ fn a3d_group_document(group: &SceneObject, world: &LoadedWorld) -> GroupDocument
                     .to_string(),
                 transform: a3d_transform_document(object),
                 visible: object.render.visible,
-                behaviors: Vec::new(),
+                behaviors: a3d_behavior_documents(object),
                 object: ObjectKindDocument::Mesh {
                     asset: path.clone(),
+                    backface_cull: object.render.backface_cull,
+                    prepare: a3d_mesh_prepare_document(object),
                 },
             })),
             AssetRef::GeoJsonMap { path, radius_scale } => {
@@ -626,7 +633,7 @@ fn a3d_group_document(group: &SceneObject, world: &LoadedWorld) -> GroupDocument
                         .to_string(),
                     transform: a3d_transform_document(object),
                     visible: object.render.visible,
-                    behaviors: Vec::new(),
+                    behaviors: a3d_behavior_documents(object),
                     object: ObjectKindDocument::GeoJsonMap {
                         asset: path.clone(),
                         radius_scale: *radius_scale,
@@ -653,7 +660,7 @@ fn a3d_group_document(group: &SceneObject, world: &LoadedWorld) -> GroupDocument
         transform: a3d_transform_document(group),
         visible: group.render.visible,
         editor_composite: group.editor_composite,
-        behaviors: Vec::new(),
+        behaviors: a3d_behavior_documents(group),
         children,
     }
 }
@@ -691,9 +698,42 @@ fn a3d_world_to_scene_document(world: &LoadedWorld) -> SceneDocument {
                 name: object.id.clone(),
                 transform: a3d_transform_document(object),
                 visible: object.render.visible,
-                behaviors: Vec::new(),
+                behaviors: a3d_behavior_documents(object),
                 object: ObjectKindDocument::Mesh {
                     asset: path.clone(),
+                    backface_cull: object.render.backface_cull,
+                    prepare: a3d_mesh_prepare_document(object),
+                },
+            })],
+        });
+    }
+
+    for object in world
+        .objects
+        .iter()
+        .filter(|object| !object.id.contains('/'))
+        .filter(|object| matches!(object.asset, AssetRef::GeoJsonMap { .. }))
+    {
+        let AssetRef::GeoJsonMap { path, radius_scale } = &object.asset else {
+            continue;
+        };
+
+        groups.push(GroupDocument {
+            id: object.id.clone(),
+            name: object.id.clone(),
+            transform: TransformDocument::default(),
+            visible: object.render.visible,
+            editor_composite: object.editor_composite,
+            behaviors: Vec::new(),
+            children: vec![NodeDocument::Object(ObjectDocument {
+                id: "map".to_string(),
+                name: object.id.clone(),
+                transform: a3d_transform_document(object),
+                visible: object.render.visible,
+                behaviors: a3d_behavior_documents(object),
+                object: ObjectKindDocument::GeoJsonMap {
+                    asset: path.clone(),
+                    radius_scale: *radius_scale,
                 },
             })],
         });

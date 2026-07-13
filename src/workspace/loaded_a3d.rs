@@ -150,6 +150,23 @@ impl LoadedA3dWorkspace {
         self.inspected_target.as_ref()
     }
 
+    pub fn inspect_target(&mut self, target: WorldEditorTarget) -> bool {
+        if !self.contains_target(&target) {
+            return false;
+        }
+        self.inspected_target = Some(target);
+        true
+    }
+
+    pub fn activate_target(&mut self, target: WorldEditorTarget) -> bool {
+        if !self.contains_target(&target) {
+            return false;
+        }
+        self.inspected_target = Some(target.clone());
+        self.active_xyz_target = target;
+        true
+    }
+
     pub fn activate_inspected_xyz_target(&mut self) -> bool {
         let Some(target) = self.inspected_target.clone() else {
             return false;

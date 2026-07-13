@@ -216,7 +216,7 @@ const HELP_ITEMS: &[MenuItem] = &[
         "World axes: x/X y/Y z/Z rotate; Ctrl+arrows move origin",
         AppCommand::CloseMenu,
     ),
-    MenuItem::placeholder("Camera mode: WASD/QE move camera", AppCommand::CloseMenu),
+    MenuItem::placeholder("Camera: arrows move; +/- dolly; x/y/z rotate", AppCommand::CloseMenu),
     MenuItem::placeholder("Light mode: WASD/QE move light", AppCommand::CloseMenu),
     MenuItem::placeholder("Menus: j/k or arrows, Enter, Esc", AppCommand::CloseMenu),
 ];

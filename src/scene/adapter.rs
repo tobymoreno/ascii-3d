@@ -1,12 +1,12 @@
 use super::{
-    AxisDocument, BehaviorDocument, GroupDocument, NodeDocument, ObjectDocument,
-    ObjectKindDocument, SceneDocument, SphereGuideDocument, TransformDocument,
+    AxisDocument, BehaviorDocument, GroupDocument, MeshPrepareDocument, NodeDocument,
+    ObjectDocument, ObjectKindDocument, SceneDocument, SphereGuideDocument, TransformDocument,
 };
 use crate::render::{
-    GreatCircle, RenderAxis, RenderBehavior, RenderCamera, RenderDisplay, RenderGeoJsonMapOverlay,
-    RenderGroup, RenderLighting, RenderMeshObject, RenderNode, RenderObject, RenderObjectNode,
-    RenderProjectionConfig, RenderQuad, RenderQuadGroup, RenderScene, RenderSphereGuide,
-    RenderSphereGuideKind, RenderSpinBehavior, RenderTransform,
+    GreatCircle, MeshPrepareOptions, RenderAxis, RenderBehavior, RenderCamera, RenderDisplay,
+    RenderGeoJsonMapOverlay, RenderGroup, RenderLighting, RenderMeshObject, RenderNode,
+    RenderObject, RenderObjectNode, RenderProjectionConfig, RenderQuad, RenderQuadGroup,
+    RenderScene, RenderSphereGuide, RenderSphereGuideKind, RenderSpinBehavior, RenderTransform,
 };
 
 const DEFAULT_CAMERA_ID: &str = "default";
@@ -109,6 +109,8 @@ pub fn scene_document_to_render_scene(document: SceneDocument) -> RenderScene {
                 RenderObject::Mesh(RenderMeshObject {
                     mesh_asset: document.mesh_asset,
                     transform: RenderTransform::default(),
+                    backface_cull: false,
+                    prepare: MeshPrepareOptions::default(),
                 }),
             )));
 
@@ -142,6 +144,15 @@ fn group_document_contains_mesh(group: &GroupDocument) -> bool {
     })
 }
 
+fn mesh_prepare_document_to_options(document: MeshPrepareDocument) -> MeshPrepareOptions {
+    MeshPrepareOptions {
+        normalize_to_size: document.normalize_to_size,
+        grid_size: document.grid_size,
+        target_vertices: document.target_vertices,
+        cache: document.cache,
+    }
+}
+
 fn group_document_to_render_group(document: GroupDocument) -> RenderGroup {
     let mut group = RenderGroup::new(document.id, document.name);
     group.transform = transform_document_to_render_transform(document.transform);
@@ -171,9 +182,15 @@ fn node_document_to_render_node(document: NodeDocument) -> RenderNode {
 
 fn object_document_to_render_object_node(document: ObjectDocument) -> RenderObjectNode {
     let object = match document.object {
-        ObjectKindDocument::Mesh { asset } => RenderObject::Mesh(RenderMeshObject {
+        ObjectKindDocument::Mesh {
+            asset,
+            backface_cull,
+            prepare,
+        } => RenderObject::Mesh(RenderMeshObject {
             mesh_asset: asset,
             transform: RenderTransform::default(),
+            backface_cull,
+            prepare: mesh_prepare_document_to_options(prepare),
         }),
         ObjectKindDocument::GeoJsonMap {
             asset,
@@ -255,8 +272,8 @@ mod tests {
     use crate::{
         render::{RenderNode, RenderObject},
         scene::{
-            DisplayDocument, GroupDocument, NodeDocument, ObjectDocument, ObjectKindDocument,
-            SceneDocument, TransformDocument,
+            DisplayDocument, GroupDocument, MeshPrepareDocument, NodeDocument, ObjectDocument,
+            ObjectKindDocument, SceneDocument, TransformDocument,
         },
     };
 
@@ -327,6 +344,8 @@ mod tests {
                 behaviors: Vec::new(),
                 object: ObjectKindDocument::Mesh {
                     asset: "sphere.obj".to_string(),
+                    backface_cull: false,
+                    prepare: MeshPrepareDocument::default(),
                 },
             })],
         });

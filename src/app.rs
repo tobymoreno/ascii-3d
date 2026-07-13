@@ -7,10 +7,18 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ratatui::{Terminal, backend::CrosstermBackend};
+use ratatui::{Terminal, backend::CrosstermBackend, layout::Rect};
 
-use ascii_3d::render::{
-    GeoJsonMapAsset, lerp_angle_degrees, load_geojson_map_asset, lon_lat_to_sphere, segment_steps,
+use ascii_3d::{
+    editor_ui::{
+        EditorAction, EditorEvent, ObjectHierarchyState, PropertiesState, draw_object_hierarchy,
+        draw_properties_panel,
+    },
+    render::{
+        GeoJsonMapAsset, MeshPrepareOptions, load_geojson_map_asset, load_prepared_mesh,
+        prepare_frame_mesh, rasterize_triangle_clipped, visit_geojson_segments,
+        visit_prepared_triangles,
+    },
 };
 
 use crossterm::{
@@ -57,6 +65,7 @@ use crate::{
     workspace::{
         LoadedA3dWorkspace, WorldEditorTarget,
         gizmo::{LoadedA3dLight, loaded_a3d_lights, normalized_light_direction},
+        loaded_a3d_editor_items, loaded_a3d_property_rows, loaded_a3d_world_target,
     },
     xyz_control::{XyzControl, XyzControlEvent},
 };
@@ -535,6 +544,8 @@ struct AppState {
     loaded_a3d_error: Option<String>,
     a3d_file_picker: Option<A3dFilePicker>,
     loaded_a3d_workspace: LoadedA3dWorkspace,
+    loaded_a3d_hierarchy: ObjectHierarchyState,
+    loaded_a3d_properties: PropertiesState,
     show_frame_timing: bool,
     show_debug_console: bool,
     confirm_exit: bool,
@@ -577,6 +588,8 @@ impl AppState {
             loaded_a3d_error: None,
             a3d_file_picker: None,
             loaded_a3d_workspace: LoadedA3dWorkspace::new(),
+            loaded_a3d_hierarchy: ObjectHierarchyState::default(),
+            loaded_a3d_properties: PropertiesState::default(),
             show_frame_timing: false,
             show_debug_console: false,
             confirm_exit: false,
@@ -975,6 +988,16 @@ impl AppState {
     }
 
     fn apply_xyz_control_event(&mut self, event: XyzControlEvent) -> bool {
+        if self.current_scene() == Scene::LoadedA3d {
+            match self.loaded_a3d_workspace.active_xyz_target().clone() {
+                WorldEditorTarget::Object(id) => {
+                    return self.apply_loaded_a3d_object_xyz_event(&id, event);
+                }
+                WorldEditorTarget::Camera => self.control_mode = ControlMode::Camera,
+                WorldEditorTarget::SceneOrigin => self.control_mode = ControlMode::Scene,
+            }
+        }
+
         match self.control_mode {
             ControlMode::Scene => match event {
                 XyzControlEvent::Rotate { axis, direction } => {
@@ -1429,6 +1452,74 @@ impl AppState {
         self.push_debug_console_line(format!("world editor: scaled {target_id} by {factor:.4}"));
 
         true
+    }
+
+    fn loaded_a3d_editor_items(&self) -> Vec<ascii_3d::editor_ui::EditorItem> {
+        loaded_a3d_editor_items(
+            self.loaded_a3d_workspace.entries(),
+            self.loaded_a3d_world.as_ref(),
+        )
+    }
+
+    fn sync_loaded_a3d_editor_objects(&mut self) {
+        let Some(world) = self.loaded_a3d_world.as_ref() else {
+            return;
+        };
+        self.loaded_a3d_workspace.sync_objects(
+            world
+                .objects
+                .iter()
+                .filter(|object| !object.editor_hidden)
+                .map(|object| (object.id.clone(), object.render.visible)),
+        );
+        let items = self.loaded_a3d_editor_items();
+        self.loaded_a3d_hierarchy.replace_items(&items);
+    }
+
+    fn toggle_loaded_a3d_visibility(&mut self, target_id: &str) -> bool {
+        let Some(world) = self.loaded_a3d_world.as_mut() else {
+            return false;
+        };
+        if world.toggle_object_visibility(target_id).is_none() {
+            return false;
+        }
+        self.sync_loaded_a3d_editor_objects();
+        true
+    }
+
+    fn reset_loaded_a3d_editor_target(&mut self, target: &WorldEditorTarget) -> bool {
+        match target {
+            WorldEditorTarget::Camera => {
+                self.reset_world_camera();
+                true
+            }
+            WorldEditorTarget::SceneOrigin => self.reset_world_axes(),
+            WorldEditorTarget::Object(id) => self
+                .loaded_a3d_world
+                .as_mut()
+                .is_some_and(|world| world.reset_object_transform(id)),
+        }
+    }
+
+    fn apply_loaded_a3d_object_xyz_event(
+        &mut self,
+        target_id: &str,
+        event: XyzControlEvent,
+    ) -> bool {
+        let Some(world) = self.loaded_a3d_world.as_mut() else {
+            return false;
+        };
+        match event {
+            XyzControlEvent::Rotate { axis, direction } => {
+                let delta = self.xyz_control.rotation_delta(axis, direction);
+                world.rotate_object(target_id, [delta.x, delta.y, delta.z])
+            }
+            XyzControlEvent::MoveOrigin { axis, direction } => {
+                let delta = self.xyz_control.origin_delta(axis, direction);
+                world.translate_object(target_id, [delta.x, delta.y, delta.z])
+            }
+            XyzControlEvent::Reset => world.reset_object_transform(target_id),
+        }
     }
 
     fn loaded_a3d_has_enabled_rotation_behavior(&self) -> bool {
@@ -2249,65 +2340,35 @@ fn loaded_a3d_object_edge_stride(_root: &Path, object: &crate::a3d::SceneObject)
     object.render.edge_stride.max(1)
 }
 
-fn loaded_a3d_object_ascii_simplify_grid_size(
+fn loaded_a3d_object_ascii_simplify(
     _root: &Path,
     object: &crate::a3d::SceneObject,
-) -> Option<f32> {
+) -> MeshPrepareOptions {
     object
         .render
         .ascii_simplify
         .as_ref()
         .filter(|config| config.enabled)
-        .map(|config| config.grid_size)
-        .filter(|value| value.is_finite() && *value > 0.0)
+        .map(|config| MeshPrepareOptions {
+            normalize_to_size: Some(1.0),
+            grid_size: (config.grid_size.is_finite() && config.grid_size > 0.0)
+                .then_some(config.grid_size),
+            target_vertices: config.target_vertices.filter(|value| *value > 0),
+            cache: config.cache,
+        })
+        .unwrap_or(MeshPrepareOptions {
+            normalize_to_size: Some(1.0),
+            ..MeshPrepareOptions::default()
+        })
 }
-
-static LOADED_A3D_MESH_CACHE: OnceLock<Mutex<HashMap<String, Arc<Mesh>>>> = OnceLock::new();
-static LOADED_A3D_MAP_CACHE: OnceLock<Mutex<HashMap<String, Arc<GeoJsonMapAsset>>>> =
-    OnceLock::new();
 
 fn load_loaded_a3d_mesh(
     root: &Path,
     relative_path: &str,
     object: &crate::a3d::SceneObject,
-) -> io::Result<Arc<Mesh>> {
+) -> io::Result<Arc<ascii_3d::mesh::Mesh>> {
     let mesh_path = resolve_a3d_asset_path(root, relative_path)?;
-    let simplify = loaded_a3d_object_ascii_simplify_grid_size(root, object);
-    let cache_key = format!("{mesh_path}|simplify={simplify:?}");
-
-    if let Some(mesh) = LOADED_A3D_MESH_CACHE
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .map_err(|_| io::Error::other("A3D mesh cache lock poisoned"))?
-        .get(&cache_key)
-        .cloned()
-    {
-        return Ok(mesh);
-    }
-
-    let mut mesh = load_obj(Path::new(&mesh_path)).map_err(|error| {
-        io::Error::other(format!("failed to load A3D mesh {}: {}", mesh_path, error))
-    })?;
-
-    if !mesh.normalize_to_size(1.0) {
-        return Err(io::Error::other(format!(
-            "could not normalize A3D mesh {}",
-            mesh_path
-        )));
-    }
-
-    if let Some(grid_size) = simplify {
-        mesh = mesh.simplify_by_vertex_grid(grid_size);
-    }
-
-    let mesh = Arc::new(mesh);
-    LOADED_A3D_MESH_CACHE
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .map_err(|_| io::Error::other("A3D mesh cache lock poisoned"))?
-        .insert(cache_key, Arc::clone(&mesh));
-
-    Ok(mesh)
+    load_prepared_mesh(&mesh_path, loaded_a3d_object_ascii_simplify(root, object))
 }
 
 fn draw_loaded_a3d_mesh_object_in_ws(
@@ -2512,107 +2573,52 @@ fn draw_loaded_a3d_mesh_object_raster(
         .unwrap_or_else(|| Vec3::new(-1.0, -1.0, -1.0));
     let light_to_surface = light_direction * -1.0;
 
-    for primitive in &mesh.faces {
-        if primitive.len() < 3 {
-            continue;
-        }
-
-        let first_index = primitive[0];
-
-        for triangle_index in 1..primitive.len().saturating_sub(1) {
-            let indexes = [
-                first_index,
-                primitive[triangle_index],
-                primitive[triangle_index + 1],
-            ];
-
-            if indexes.iter().any(|index| *index >= mesh.vertices.len()) {
-                continue;
-            }
-
-            let world = [
-                object_world.transform_point(mesh.vertices[indexes[0]]),
-                object_world.transform_point(mesh.vertices[indexes[1]]),
-                object_world.transform_point(mesh.vertices[indexes[2]]),
-            ];
-
-            let normal = cross_vec3(world[1] - world[0], world[2] - world[0]);
-            let Some(normal) = normalize_vec3(normal) else {
-                continue;
-            };
-
-            let diffuse = dot_vec3(normal, light_to_surface).max(0.0);
-            let brightness = (0.18 + diffuse * 0.82).clamp(0.0, 1.0);
-            let character = shade_character_for_brightness(brightness);
-
-            let Some(camera0) = world_to_camera_space(state, world[0]) else {
-                continue;
-            };
-            let Some(camera1) = world_to_camera_space(state, world[1]) else {
-                continue;
-            };
-            let Some(camera2) = world_to_camera_space(state, world[2]) else {
-                continue;
-            };
-
-            let Some((p0, z0)) = project_camera_space_to_viewport_with_depth(
-                camera0,
+    let prepared = prepare_frame_mesh(
+        &mesh,
+        |position| {
+            let world =
+                object_world.transform_point(Vec3::new(position[0], position[1], position[2]));
+            [world.x, world.y, world.z]
+        },
+        |world| {
+            world_to_camera_space(state, Vec3::new(world[0], world[1], world[2]))
+                .map(|camera| [camera.x, camera.y, camera.z])
+        },
+        |camera| {
+            project_camera_space_to_viewport_with_depth(
+                Vec3::new(camera[0], camera[1], camera[2]),
                 inner,
                 camera_viewport_cell_aspect_ratio(state),
                 camera_viewport_perspective_scale(state),
-            ) else {
-                continue;
-            };
+            )
+            .map(|(point, depth)| (point.x, point.y, depth))
+        },
+    );
 
-            let Some((p1, z1)) = project_camera_space_to_viewport_with_depth(
-                camera1,
-                inner,
-                camera_viewport_cell_aspect_ratio(state),
-                camera_viewport_perspective_scale(state),
-            ) else {
-                continue;
-            };
+    visit_prepared_triangles(&mesh, &prepared, object.render.backface_cull, |triangle| {
+        let normal = Vec3::new(
+            triangle.world_normal[0],
+            triangle.world_normal[1],
+            triangle.world_normal[2],
+        );
+        let diffuse = dot_vec3(normal, light_to_surface).max(0.0);
+        let brightness = (0.18 + diffuse * 0.82).clamp(0.0, 1.0);
+        let character = shade_character_for_brightness(brightness);
 
-            let Some((p2, z2)) = project_camera_space_to_viewport_with_depth(
-                camera2,
-                inner,
-                camera_viewport_cell_aspect_ratio(state),
-                camera_viewport_perspective_scale(state),
-            ) else {
-                continue;
-            };
-
-            let min_x = p0.x.min(p1.x).min(p2.x);
-            let max_x = p0.x.max(p1.x).max(p2.x);
-            let min_y = p0.y.min(p1.y).min(p2.y);
-            let max_y = p0.y.max(p1.y).max(p2.y);
-
-            let area = edge_function(p0, p1, p2);
-
-            if area.abs() <= f32::EPSILON {
-                continue;
-            }
-
-            for y in min_y..=max_y {
-                for x in min_x..=max_x {
-                    let point = Point2::new(x, y);
-                    let w0 = edge_function(p1, p2, point) / area;
-                    let w1 = edge_function(p2, p0, point) / area;
-                    let w2 = edge_function(p0, p1, point) / area;
-
-                    if w0 < -0.001 || w1 < -0.001 || w2 < -0.001 {
-                        continue;
-                    }
-
-                    let depth = z0 * w0 + z1 * w1 + z2 * w2;
-
-                    if depth_buffer.try_update(point, depth) {
-                        canvas.set(point, character);
-                    }
+        rasterize_triangle_clipped(
+            inner.width,
+            inner.height,
+            triangle.screen[0],
+            triangle.screen[1],
+            triangle.screen[2],
+            |x, y, depth| {
+                let point = Point2::new(x, y);
+                if depth_buffer.try_update(point, depth) {
+                    canvas.set(point, character);
                 }
-            }
-        }
-    }
+            },
+        );
+    });
 
     Ok(())
 }
@@ -2640,6 +2646,9 @@ fn load_loaded_a3d_map(root: &Path, relative_path: &str) -> io::Result<Arc<GeoJs
     Ok(map)
 }
 
+static LOADED_A3D_MAP_CACHE: OnceLock<Mutex<HashMap<String, Arc<GeoJsonMapAsset>>>> =
+    OnceLock::new();
+
 fn draw_loaded_a3d_geo_json_map_object(
     canvas: &mut Canvas,
     depth_buffer: &mut CameraViewportDepthBuffer,
@@ -2658,38 +2667,40 @@ fn draw_loaded_a3d_geo_json_map_object(
 
     let map = load_loaded_a3d_map(root, path)?;
     let object_world = object.world_matrix();
+    let object_center_world = object_world.transform_point(Vec3::new(0.0, 0.0, 0.0));
+    let object_center_camera = world_to_camera_space(state, object_center_world);
     let character = object.render.stroke_character.unwrap_or('*');
 
-    for line in &map.lines {
-        for pair in line.points_lon_lat.windows(2) {
-            let (lon_a, lat_a) = pair[0];
-            let (lon_b, lat_b) = pair[1];
-            let steps = segment_steps(lon_a, lat_a, lon_b, lat_b);
-            let mut previous_world = None;
-
-            for step in 0..=steps {
-                let t = step as f32 / steps as f32;
-                let lon = lerp_angle_degrees(lon_a, lon_b, t);
-                let lat = lat_a + (lat_b - lat_a) * t;
-                let point = lon_lat_to_sphere(lon, lat, *radius_scale);
-                let world = object_world.transform_point(Vec3::new(point.x, point.y, point.z));
-
-                if let Some(previous) = previous_world {
-                    draw_camera_viewport_depth_line(
-                        canvas,
-                        depth_buffer,
-                        state,
-                        inner,
-                        previous,
-                        world,
-                        character,
-                    );
+    visit_geojson_segments(
+        &map,
+        *radius_scale,
+        |local| {
+            let point = object_world.transform_point(Vec3::new(local[0], local[1], local[2]));
+            [point.x, point.y, point.z]
+        },
+        |world| {
+            let world = Vec3::new(world[0], world[1], world[2]);
+            match (object_center_camera, world_to_camera_space(state, world)) {
+                (Some(center_camera), Some(point_camera)) => {
+                    let outward = point_camera - center_camera;
+                    let toward_camera = point_camera * -1.0;
+                    dot_vec3(outward, toward_camera) > 0.0
                 }
-
-                previous_world = Some(world);
+                _ => false,
             }
-        }
-    }
+        },
+        |_, from, to| {
+            draw_camera_viewport_depth_line(
+                canvas,
+                depth_buffer,
+                state,
+                inner,
+                Vec3::new(from[0], from[1], from[2]),
+                Vec3::new(to[0], to[1], to[2]),
+                character,
+            );
+        },
+    );
 
     Ok(())
 }
@@ -2712,29 +2723,22 @@ fn draw_loaded_a3d_geo_json_map_object_in_ws(
     let object_world = object.world_matrix();
     let character = object.render.stroke_character.unwrap_or('*');
 
-    for line in &map.lines {
-        for pair in line.points_lon_lat.windows(2) {
-            let (lon_a, lat_a) = pair[0];
-            let (lon_b, lat_b) = pair[1];
-            let steps = segment_steps(lon_a, lat_a, lon_b, lat_b);
-            let mut previous = None;
-
-            for step in 0..=steps {
-                let t = step as f32 / steps as f32;
-                let lon = lerp_angle_degrees(lon_a, lon_b, t);
-                let lat = lat_a + (lat_b - lat_a) * t;
-                let point = lon_lat_to_sphere(lon, lat, *radius_scale);
-                let world = object_world.transform_point(Vec3::new(point.x, point.y, point.z));
-                let projected = projector.project(world);
-
-                if let Some(previous) = previous {
-                    canvas.draw_line(previous, projected, character);
-                }
-
-                previous = Some(projected);
-            }
-        }
-    }
+    visit_geojson_segments(
+        &map,
+        *radius_scale,
+        |local| {
+            let point = object_world.transform_point(Vec3::new(local[0], local[1], local[2]));
+            [point.x, point.y, point.z]
+        },
+        |_| true,
+        |_, from, to| {
+            canvas.draw_line(
+                projector.project(Vec3::new(from[0], from[1], from[2])),
+                projector.project(Vec3::new(to[0], to[1], to[2])),
+                character,
+            );
+        },
+    );
 
     Ok(())
 }
@@ -2916,6 +2920,9 @@ fn render_loaded_a3d_world(
 
     canvas.with_clip_rect(inner, |canvas| {
         for object in &world.objects {
+            if !world.object_effectively_visible(&object.id) {
+                continue;
+            }
             draw_loaded_a3d_word_object(canvas, &mut depth_buffer, state, root, inner, object)?;
             draw_loaded_a3d_mesh_object(canvas, &mut depth_buffer, state, root, inner, object)?;
             draw_loaded_a3d_geo_json_map_object(
@@ -3067,6 +3074,9 @@ fn draw_loaded_a3d_objects_in_ws(
     };
 
     for object in &world.objects {
+        if !world.object_effectively_visible(&object.id) {
+            continue;
+        }
         draw_loaded_a3d_word_object_in_ws(canvas, projector, state, root, object)?;
         draw_loaded_a3d_mesh_object_in_ws(canvas, projector, root, object)?;
         draw_loaded_a3d_geo_json_map_object_in_ws(canvas, projector, root, object)?;
@@ -3624,7 +3634,6 @@ fn render_scene(
 
     let debug_popup_lines = exit_confirm_popup_lines(state)
         .or_else(|| scene_browser_popup_lines(state))
-        .or_else(|| world_objects_popup_lines(state))
         .or_else(|| debug_console_popup_lines(state));
     let frame_timing_lines = state.frame_timing_lines();
     let file_picker_labels = state.a3d_file_picker.as_ref().map(|picker| picker.labels());
@@ -3632,6 +3641,18 @@ fn render_scene(
         .a3d_file_picker
         .as_ref()
         .map(|picker| picker.current_dir.display().to_string());
+    let loaded_editor_items = state.loaded_a3d_editor_items();
+    let loaded_property_rows = state
+        .loaded_a3d_properties
+        .target()
+        .map(|target| {
+            loaded_a3d_property_rows(
+                target,
+                state.loaded_a3d_world.as_ref(),
+                state.loaded_a3d_workspace.active_xyz_target(),
+            )
+        })
+        .unwrap_or_default();
 
     let tui_start = Instant::now();
     terminal.draw(|frame| {
@@ -3659,6 +3680,38 @@ fn render_scene(
             frame_timing_lines.as_deref(),
             file_picker_view,
         );
+
+        if state.loaded_a3d_hierarchy.is_open() {
+            draw_object_hierarchy(
+                frame,
+                centered_editor_rect(
+                    64,
+                    (loaded_editor_items.len() as u16 + 4).clamp(7, 28),
+                    frame.area(),
+                ),
+                &loaded_editor_items,
+                &state.loaded_a3d_hierarchy,
+                "A3D Objects",
+            );
+        }
+        if state.loaded_a3d_properties.is_open() {
+            let object_name = state
+                .loaded_a3d_properties
+                .target()
+                .map(|target| target.id.as_str())
+                .unwrap_or("A3D target");
+            draw_properties_panel(
+                frame,
+                centered_editor_rect(
+                    76,
+                    (loaded_property_rows.len() as u16 + 4).clamp(8, 30),
+                    frame.area(),
+                ),
+                object_name,
+                &loaded_property_rows,
+                &state.loaded_a3d_properties,
+            );
+        }
     })?;
     let tui_draw = tui_start.elapsed();
 
@@ -3671,6 +3724,17 @@ fn render_scene(
         tui_draw,
         total_render: total_start.elapsed(),
     })
+}
+
+fn centered_editor_rect(width: u16, height: u16, area: Rect) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+    Rect::new(
+        area.x + area.width.saturating_sub(width) / 2,
+        area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3806,7 +3870,8 @@ fn apply_app_command(state: &mut AppState, command: AppCommand) -> KeyHandling {
         }
 
         AppCommand::OpenWorldObjects => {
-            state.loaded_a3d_workspace.open_objects_panel();
+            let items = state.loaded_a3d_editor_items();
+            state.loaded_a3d_hierarchy.open(&items);
             state.close_menu();
             KeyHandling::Handled
         }
@@ -4167,28 +4232,61 @@ fn handle_key_press(state: &mut AppState, key: KeyEvent) -> KeyHandling {
         }
     }
 
-    if state.loaded_a3d_workspace.objects_panel_open() {
-        match key_code {
-            KeyCode::Esc => {
-                state.loaded_a3d_workspace.close_objects_panel();
-                return KeyHandling::Handled;
+    if state.loaded_a3d_properties.is_open() {
+        let rows = state
+            .loaded_a3d_properties
+            .target()
+            .map(|target| {
+                loaded_a3d_property_rows(
+                    target,
+                    state.loaded_a3d_world.as_ref(),
+                    state.loaded_a3d_workspace.active_xyz_target(),
+                )
+            })
+            .unwrap_or_default();
+        if let Some(editor_event) = state.loaded_a3d_properties.handle_key(key_code, &rows) {
+            match editor_event {
+                EditorEvent::CloseRequested => {
+                    let items = state.loaded_a3d_editor_items();
+                    state.loaded_a3d_hierarchy.open(&items);
+                }
+                EditorEvent::ActionRequested { target, action, .. } => {
+                    let world_target = loaded_a3d_world_target(&target);
+                    match action {
+                        EditorAction::ActivateControlTarget => {
+                            state.loaded_a3d_workspace.activate_target(world_target);
+                        }
+                        EditorAction::ToggleVisibility => {
+                            state.toggle_loaded_a3d_visibility(&target.path);
+                        }
+                        EditorAction::ResetTransform => {
+                            state.reset_loaded_a3d_editor_target(&world_target);
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
             }
-            KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => {
-                state.loaded_a3d_workspace.move_selection_up();
-                return KeyHandling::Handled;
-            }
-            KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') => {
-                state.loaded_a3d_workspace.move_selection_down();
-                return KeyHandling::Handled;
-            }
-            KeyCode::Enter => {
-                state.loaded_a3d_workspace.inspect_selected();
-                state.loaded_a3d_workspace.activate_inspected_xyz_target();
-                state.loaded_a3d_workspace.close_objects_panel();
-                return KeyHandling::Handled;
-            }
-            _ => return KeyHandling::Handled,
         }
+        return KeyHandling::Handled;
+    }
+
+    if state.loaded_a3d_hierarchy.is_open() {
+        let items = state.loaded_a3d_editor_items();
+        if let Some(editor_event) = state.loaded_a3d_hierarchy.handle_key(key_code, &items) {
+            match editor_event {
+                EditorEvent::InspectRequested { target, .. } => {
+                    state
+                        .loaded_a3d_workspace
+                        .inspect_target(loaded_a3d_world_target(&target));
+                    state.loaded_a3d_hierarchy.close();
+                    state.loaded_a3d_properties.open(target);
+                }
+                EditorEvent::CloseRequested => {}
+                _ => {}
+            }
+        }
+        return KeyHandling::Handled;
     }
 
     if state.a3d_file_picker.is_some() {
@@ -4225,6 +4323,32 @@ fn handle_key_press(state: &mut AppState, key: KeyEvent) -> KeyHandling {
     }
 
     if state.current_scene() == Scene::LoadedA3d {
+        if matches!(
+            state.loaded_a3d_workspace.active_xyz_target(),
+            WorldEditorTarget::Camera
+        ) {
+            match key_code {
+                KeyCode::Char('+') | KeyCode::Char('=') => {
+                    state.move_world_camera_forward(CAMERA_MOVE_STEP);
+                    return KeyHandling::Handled;
+                }
+                KeyCode::Char('-') | KeyCode::Char('_') => {
+                    state.move_world_camera_forward(-CAMERA_MOVE_STEP);
+                    return KeyHandling::Handled;
+                }
+                // Retire the old WASD forward/back aliases in the A3D editor.
+                // Consume them here so they cannot fall through to legacy
+                // camera-mode bindings.
+                KeyCode::Char('w')
+                | KeyCode::Char('W')
+                | KeyCode::Char('s')
+                | KeyCode::Char('S') => {
+                    return KeyHandling::Handled;
+                }
+                _ => {}
+            }
+        }
+
         let factor = match key_code {
             KeyCode::Char('+') | KeyCode::Char('=') => Some(1.1),
             KeyCode::Char('-') | KeyCode::Char('_') => Some(1.0 / 1.1),
@@ -4306,6 +4430,104 @@ fn handle_key_press(state: &mut AppState, key: KeyEvent) -> KeyHandling {
         .unwrap_or(KeyHandling::Ignored)
 }
 
+const CONTINUOUS_INPUT_SAMPLE_INTERVAL: Duration = Duration::from_millis(16);
+const CONTINUOUS_INPUT_CONTINUITY_WINDOW: Duration = Duration::from_millis(500);
+
+#[derive(Default)]
+struct ContinuousInputSampler {
+    active: Option<(KeyCode, KeyModifiers)>,
+    started_at: Option<Instant>,
+    last_seen_at: Option<Instant>,
+    last_applied_at: Option<Instant>,
+    pending: Option<KeyEvent>,
+}
+
+impl ContinuousInputSampler {
+    fn observe(&mut self, key: KeyEvent, now: Instant) {
+        let identity = (key.code, key.modifiers);
+        let continues_hold = self.active.as_ref() == Some(&identity)
+            && self.last_seen_at.is_some_and(|last_seen| {
+                now.duration_since(last_seen) <= CONTINUOUS_INPUT_CONTINUITY_WINDOW
+            });
+
+        if !continues_hold {
+            self.started_at = Some(now);
+            self.last_applied_at = None;
+        }
+
+        self.active = Some(identity);
+        self.last_seen_at = Some(now);
+        self.pending = Some(key);
+    }
+
+    fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    fn sample(&mut self, now: Instant) -> Option<(KeyEvent, usize)> {
+        let key = self.pending?;
+
+        if self.last_applied_at.is_some_and(|last_applied| {
+            now.duration_since(last_applied) < CONTINUOUS_INPUT_SAMPLE_INTERVAL
+        }) {
+            return None;
+        }
+
+        self.pending = None;
+        self.last_applied_at = Some(now);
+
+        let held_for = self
+            .started_at
+            .map(|started| now.duration_since(started))
+            .unwrap_or_default();
+
+        let step_count = if held_for < Duration::from_millis(350) {
+            1
+        } else if held_for < Duration::from_millis(900) {
+            2
+        } else {
+            3
+        };
+
+        Some((key, step_count))
+    }
+}
+
+fn is_continuous_control_key(state: &AppState, key: KeyEvent) -> bool {
+    if state.current_scene() != Scene::LoadedA3d
+        || state.confirm_exit
+        || state.active_menu.is_some()
+        || state.scene_browser_open
+        || state.a3d_file_picker.is_some()
+        || state.loaded_a3d_hierarchy.is_open()
+        || state.loaded_a3d_properties.is_open()
+        || state.show_debug_console
+        || is_loaded_a3d_debug_popup_visible(state)
+    {
+        return false;
+    }
+
+    matches!(
+        key.code,
+        KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Up
+            | KeyCode::Down
+            | KeyCode::PageUp
+            | KeyCode::PageDown
+            | KeyCode::Char('x')
+            | KeyCode::Char('X')
+            | KeyCode::Char('y')
+            | KeyCode::Char('Y')
+            | KeyCode::Char('z')
+            | KeyCode::Char('Z')
+            | KeyCode::Char('+')
+            | KeyCode::Char('=')
+            | KeyCode::Char('-')
+            | KeyCode::Char('_')
+    )
+}
+
 pub fn run() -> io::Result<()> {
     let assets = load_scene_assets()?;
     let _terminal_guard = TerminalGuard::enter()?;
@@ -4316,6 +4538,7 @@ pub fn run() -> io::Result<()> {
     state.load_a3d_file(initial_a3d_manifest_path());
     let mut previous_time = Instant::now();
     let mut previous_frame: Option<String> = None;
+    let mut continuous_input = ContinuousInputSampler::default();
 
     let timings = render_scene(&mut terminal, &state, &assets, &mut previous_frame)?;
     state.record_render_timings(timings);
@@ -4333,7 +4556,40 @@ pub fn run() -> io::Result<()> {
 
         while event::poll(Duration::ZERO)? {
             match event::read()? {
-                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                Event::Key(key)
+                    if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
+                {
+                    if is_continuous_control_key(&state, key) {
+                        continuous_input.observe(key, Instant::now());
+                    } else if key.kind == KeyEventKind::Press {
+                        continuous_input.clear();
+                        match handle_key_press(&mut state, key) {
+                            KeyHandling::Quit => {
+                                should_quit = true;
+                                break;
+                            }
+                            KeyHandling::Handled => {
+                                should_render = true;
+                            }
+                            KeyHandling::Ignored => {}
+                        }
+                    }
+                }
+                Event::Resize(_, _) => {
+                    continuous_input.clear();
+                    should_render = true;
+                }
+                _ => {}
+            }
+        }
+
+        if should_quit {
+            break;
+        }
+
+        if let Some((key, step_count)) = continuous_input.sample(Instant::now()) {
+            if is_continuous_control_key(&state, key) {
+                for _ in 0..step_count {
                     match handle_key_press(&mut state, key) {
                         KeyHandling::Quit => {
                             should_quit = true;
@@ -4345,10 +4601,8 @@ pub fn run() -> io::Result<()> {
                         KeyHandling::Ignored => {}
                     }
                 }
-                Event::Resize(_, _) => {
-                    should_render = true;
-                }
-                _ => {}
+            } else {
+                continuous_input.clear();
             }
         }
 

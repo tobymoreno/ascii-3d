@@ -129,11 +129,23 @@ impl Transform {
 pub struct AsciiSimplifyConfig {
     #[serde(default = "AsciiSimplifyConfig::default_enabled")]
     pub enabled: bool,
+
+    #[serde(default)]
     pub grid_size: f32,
+
+    #[serde(default)]
+    pub target_vertices: Option<usize>,
+
+    #[serde(default = "AsciiSimplifyConfig::default_cache")]
+    pub cache: bool,
 }
 
 impl AsciiSimplifyConfig {
     const fn default_enabled() -> bool {
+        true
+    }
+
+    const fn default_cache() -> bool {
         true
     }
 }
@@ -154,6 +166,9 @@ pub struct RenderConfig {
 
     #[serde(default)]
     pub ascii_simplify: Option<AsciiSimplifyConfig>,
+
+    #[serde(default)]
+    pub backface_cull: bool,
 }
 
 impl Default for RenderConfig {
@@ -164,6 +179,7 @@ impl Default for RenderConfig {
             mode: None,
             edge_stride: Self::default_edge_stride(),
             ascii_simplify: None,
+            backface_cull: false,
         }
     }
 }

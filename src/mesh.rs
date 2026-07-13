@@ -1,4 +1,9 @@
-use std::collections::{BTreeSet, HashMap};
+use std::{
+    collections::{BTreeSet, HashMap},
+    fs::File,
+    io::{self, Write},
+    path::Path,
+};
 
 use crate::math::Vec3;
 
@@ -219,14 +224,81 @@ impl Mesh {
         Self::new(vertices, faces)
     }
 
+    /// Simplifies toward a requested vertex budget by searching for a
+    /// vertex-grid size that produces no more than the target.
+    pub fn simplify_to_target_vertices(&self, target_vertices: usize) -> Self {
+        if target_vertices == 0 || self.vertices.len() <= target_vertices {
+            return self.clone();
+        }
+
+        let Some(bounds) = self.bounds() else {
+            return self.clone();
+        };
+        let max_dimension = bounds.largest_dimension();
+        if max_dimension <= f32::EPSILON {
+            return self.clone();
+        }
+
+        let mut low = max_dimension / 4096.0;
+        let mut high = max_dimension;
+        let mut best = self.clone();
+
+        for _ in 0..24 {
+            let grid = (low + high) * 0.5;
+            let candidate = self.simplify_by_vertex_grid(grid);
+
+            if candidate.vertices.len() > target_vertices {
+                low = grid;
+            } else {
+                high = grid;
+                if candidate.vertices.len() > best.vertices.len()
+                    || best.vertices.len() > target_vertices
+                {
+                    best = candidate;
+                }
+            }
+        }
+
+        if best.vertices.len() > target_vertices {
+            self.simplify_by_vertex_grid(high)
+        } else {
+            best
+        }
+    }
+
+    /// Writes the mesh as a simple OBJ containing positions and faces/lines.
+    pub fn write_obj(&self, path: &Path) -> io::Result<()> {
+        let mut file = File::create(path)?;
+
+        for vertex in &self.vertices {
+            writeln!(file, "v {} {} {}", vertex.x, vertex.y, vertex.z)?;
+        }
+
+        for primitive in &self.faces {
+            match primitive.as_slice() {
+                [a, b] => {
+                    writeln!(file, "l {} {}", a + 1, b + 1)?;
+                }
+                indexes if indexes.len() >= 3 => {
+                    write!(file, "f")?;
+                    for index in indexes {
+                        write!(file, " {}", index + 1)?;
+                    }
+                    writeln!(file)?;
+                }
+                _ => {}
+            }
+        }
+
+        file.flush()
+    }
+
     /// Derives every unique drawable edge.
     ///
     /// Entries with two indexes represent explicit line segments.
     /// Entries with three or more indexes represent closed polygon faces.
     ///
-    /// An edge is stored in canonical order:
-    ///
-    ///     (min_index, max_index)
+    /// An edge is stored in canonical order as `(min_index, max_index)`.
     ///
     /// Therefore `(2, 5)` and `(5, 2)` are treated as the same edge.
     pub fn unique_edges(&self) -> Vec<Edge> {
@@ -279,7 +351,6 @@ mod tests {
         assert_eq!(mesh.unique_edges().len(), 12);
     }
 
-    #[test]
     #[test]
     fn simplify_by_vertex_grid_preserves_unit_box_with_tiny_grid() {
         let mesh = Mesh::unit_box();

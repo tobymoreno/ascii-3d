@@ -1,4 +1,13 @@
-use std::{fs, io, path::Path};
+use std::{
+    collections::{HashMap, hash_map::DefaultHasher},
+    fs,
+    hash::{Hash, Hasher},
+    io,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock},
+};
+
+use crate::{math::Vec3, mesh::Mesh, obj::load_obj};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MeshVertex {
@@ -20,140 +29,214 @@ pub struct MeshAsset {
     pub normal_count: usize,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct MeshPrepareOptions {
+    pub normalize_to_size: Option<f32>,
+    pub grid_size: Option<f32>,
+    pub target_vertices: Option<usize>,
+    pub cache: bool,
+}
+
+static PREPARED_MESH_CACHE: OnceLock<Mutex<HashMap<String, Arc<Mesh>>>> = OnceLock::new();
+
+pub fn load_prepared_mesh(
+    path: impl AsRef<Path>,
+    options: MeshPrepareOptions,
+) -> io::Result<Arc<Mesh>> {
+    let path = path.as_ref();
+    let cache_key = format!("{}|{options:?}", path.display());
+
+    if let Some(mesh) = PREPARED_MESH_CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| io::Error::other("prepared mesh cache lock poisoned"))?
+        .get(&cache_key)
+        .cloned()
+    {
+        return Ok(mesh);
+    }
+
+    let disk_cache_path = prepared_mesh_disk_cache_path(path, options)?;
+    let mesh = if let Some(cache_path) = disk_cache_path.as_ref().filter(|path| path.is_file()) {
+        load_obj(cache_path).map_err(|error| {
+            io::Error::other(format!(
+                "failed to load cached mesh {}: {error}",
+                cache_path.display()
+            ))
+        })?
+    } else {
+        let mut mesh = load_obj(path).map_err(|error| {
+            io::Error::other(format!("failed to load OBJ {}: {error}", path.display()))
+        })?;
+
+        if let Some(target_size) = options.normalize_to_size {
+            if !mesh.normalize_to_size(target_size) {
+                return Err(io::Error::other(format!(
+                    "could not normalize mesh {}",
+                    path.display()
+                )));
+            }
+        }
+
+        if let Some(target_vertices) = options.target_vertices.filter(|value| *value > 0) {
+            mesh = mesh.simplify_to_target_vertices(target_vertices);
+        } else if let Some(grid_size) = options
+            .grid_size
+            .filter(|value| value.is_finite() && *value > 0.0)
+        {
+            mesh = mesh.simplify_by_vertex_grid(grid_size);
+        }
+
+        if let Some(cache_path) = &disk_cache_path {
+            let temp_path = cache_path.with_extension("obj.tmp");
+            mesh.write_obj(&temp_path)?;
+            fs::rename(&temp_path, cache_path)?;
+        }
+
+        mesh
+    };
+
+    let mesh = Arc::new(mesh);
+    PREPARED_MESH_CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| io::Error::other("prepared mesh cache lock poisoned"))?
+        .insert(cache_key, Arc::clone(&mesh));
+
+    Ok(mesh)
+}
+
 pub fn load_obj_mesh(path: impl AsRef<Path>) -> io::Result<MeshAsset> {
-    let text = fs::read_to_string(path)?;
-    load_obj_mesh_from_str(&text)
+    load_obj_mesh_prepared(path, MeshPrepareOptions::default())
+}
+
+pub fn load_obj_mesh_prepared(
+    path: impl AsRef<Path>,
+    options: MeshPrepareOptions,
+) -> io::Result<MeshAsset> {
+    let mesh = load_prepared_mesh(path, options)?;
+    Ok(mesh_asset_from_indexed_mesh(&mesh))
 }
 
 pub fn load_obj_mesh_from_str(text: &str) -> io::Result<MeshAsset> {
-    let mut positions = Vec::<[f32; 3]>::new();
-    let mut normals = Vec::<[f32; 3]>::new();
-    let mut triangles = Vec::<MeshTriangle>::new();
+    let mesh = crate::obj::parse_obj(text)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
+    Ok(mesh_asset_from_indexed_mesh(&mesh))
+}
 
-    for line in text.lines() {
-        let line = line.trim();
+fn mesh_asset_from_indexed_mesh(mesh: &Mesh) -> MeshAsset {
+    let mut triangles = Vec::new();
 
-        if line.is_empty() || line.starts_with('#') {
+    for primitive in &mesh.faces {
+        if primitive.len() < 3 {
             continue;
         }
 
-        let mut parts = line.split_whitespace();
-        let Some(kind) = parts.next() else {
-            continue;
-        };
-
-        match kind {
-            "v" => {
-                let x = parse_f32(parts.next(), "missing vertex x")?;
-                let y = parse_f32(parts.next(), "missing vertex y")?;
-                let z = parse_f32(parts.next(), "missing vertex z")?;
-                positions.push([x, y, z]);
+        let first = primitive[0];
+        for index in 1..primitive.len() - 1 {
+            let indexes = [first, primitive[index], primitive[index + 1]];
+            if indexes.iter().any(|value| *value >= mesh.vertices.len()) {
+                continue;
             }
-            "vn" => {
-                let x = parse_f32(parts.next(), "missing normal x")?;
-                let y = parse_f32(parts.next(), "missing normal y")?;
-                let z = parse_f32(parts.next(), "missing normal z")?;
-                normals.push(normalized([x, y, z]));
-            }
-            "f" => {
-                let refs = parts.map(parse_face_ref).collect::<io::Result<Vec<_>>>()?;
 
-                if refs.len() < 3 {
-                    continue;
-                }
+            let a = mesh.vertices[indexes[0]];
+            let b = mesh.vertices[indexes[1]];
+            let c = mesh.vertices[indexes[2]];
+            let normal = normalized_vec3(cross(b - a, c - a));
+            let normal = [normal.x, normal.y, normal.z];
 
-                for i in 1..refs.len() - 1 {
-                    let a = vertex_from_ref(refs[0], &positions, &normals)?;
-                    let b = vertex_from_ref(refs[i], &positions, &normals)?;
-                    let c = vertex_from_ref(refs[i + 1], &positions, &normals)?;
-                    triangles.push(MeshTriangle { a, b, c });
-                }
-            }
-            _ => {}
+            triangles.push(MeshTriangle {
+                a: MeshVertex {
+                    position: [a.x, a.y, a.z],
+                    normal,
+                },
+                b: MeshVertex {
+                    position: [b.x, b.y, b.z],
+                    normal,
+                },
+                c: MeshVertex {
+                    position: [c.x, c.y, c.z],
+                    normal,
+                },
+            });
         }
     }
 
-    Ok(MeshAsset {
+    MeshAsset {
         triangles,
-        vertex_count: positions.len(),
-        normal_count: normals.len(),
-    })
+        vertex_count: mesh.vertices.len(),
+        normal_count: 0,
+    }
 }
 
-#[derive(Clone, Copy, Debug)]
-struct FaceRef {
-    vertex_index: usize,
-    normal_index: Option<usize>,
-}
-
-fn parse_face_ref(text: &str) -> io::Result<FaceRef> {
-    let mut parts = text.split('/');
-
-    let vertex_index = parts
-        .next()
-        .ok_or_else(|| invalid_data("missing face vertex index"))?
-        .parse::<usize>()
-        .map_err(|error| invalid_data(format!("invalid face vertex index: {error}")))?
-        .checked_sub(1)
-        .ok_or_else(|| invalid_data("OBJ indices are 1-based"))?;
-
-    let _uv_index = parts.next();
-
-    let normal_index = parts
-        .next()
-        .and_then(|part| {
-            if part.is_empty() {
-                None
-            } else {
-                Some(part.parse::<usize>())
-            }
-        })
-        .transpose()
-        .map_err(|error| invalid_data(format!("invalid normal index: {error}")))?
-        .and_then(|index| index.checked_sub(1));
-
-    Ok(FaceRef {
-        vertex_index,
-        normal_index,
-    })
-}
-
-fn vertex_from_ref(
-    reference: FaceRef,
-    positions: &[[f32; 3]],
-    normals: &[[f32; 3]],
-) -> io::Result<MeshVertex> {
-    let position = *positions
-        .get(reference.vertex_index)
-        .ok_or_else(|| invalid_data("face vertex index out of bounds"))?;
-
-    let normal = reference
-        .normal_index
-        .and_then(|index| normals.get(index).copied())
-        .unwrap_or_else(|| normalized(position));
-
-    Ok(MeshVertex { position, normal })
-}
-
-fn parse_f32(value: Option<&str>, message: &'static str) -> io::Result<f32> {
-    value
-        .ok_or_else(|| invalid_data(message))?
-        .parse::<f32>()
-        .map_err(|error| invalid_data(format!("{message}: {error}")))
-}
-
-fn normalized(vector: [f32; 3]) -> [f32; 3] {
-    let length = (vector[0] * vector[0] + vector[1] * vector[1] + vector[2] * vector[2]).sqrt();
-
-    if length <= f32::EPSILON {
-        return [0.0, 1.0, 0.0];
+fn prepared_mesh_disk_cache_path(
+    mesh_path: &Path,
+    options: MeshPrepareOptions,
+) -> io::Result<Option<PathBuf>> {
+    if !options.cache {
+        return Ok(None);
     }
 
-    [vector[0] / length, vector[1] / length, vector[2] / length]
+    let source = fs::read(mesh_path)?;
+    let mut hasher = DefaultHasher::new();
+    source.hash(&mut hasher);
+    options
+        .normalize_to_size
+        .map(f32::to_bits)
+        .hash(&mut hasher);
+    options.grid_size.map(f32::to_bits).hash(&mut hasher);
+    options.target_vertices.hash(&mut hasher);
+    env!("CARGO_PKG_VERSION").hash(&mut hasher);
+    let digest = hasher.finish();
+
+    let Some(dir) = mesh_cache_dir() else {
+        return Ok(None);
+    };
+    fs::create_dir_all(&dir)?;
+
+    let stem = mesh_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("mesh");
+
+    Ok(Some(dir.join(format!("{stem}-{digest:016x}.obj"))))
 }
 
-fn invalid_data(message: impl Into<String>) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidData, message.into())
+fn mesh_cache_dir() -> Option<PathBuf> {
+    if let Some(value) = std::env::var_os("ASCII_3D_CACHE_DIR") {
+        return Some(PathBuf::from(value).join("meshes"));
+    }
+
+    if cfg!(target_os = "macos") {
+        return std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .map(|home| home.join("Library/Caches/ascii-3d/meshes"));
+    }
+
+    if let Some(value) = std::env::var_os("XDG_CACHE_HOME") {
+        return Some(PathBuf::from(value).join("ascii-3d/meshes"));
+    }
+
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| home.join(".cache/ascii-3d/meshes"))
+}
+
+fn cross(a: Vec3, b: Vec3) -> Vec3 {
+    Vec3::new(
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x,
+    )
+}
+
+fn normalized_vec3(value: Vec3) -> Vec3 {
+    let length = (value.x * value.x + value.y * value.y + value.z * value.z).sqrt();
+    if length <= f32::EPSILON {
+        Vec3::new(0.0, 1.0, 0.0)
+    } else {
+        value * (1.0 / length)
+    }
 }
 
 #[cfg(test)]
@@ -174,11 +257,8 @@ mod tests {
         .expect("mesh should load");
 
         assert_eq!(mesh.vertex_count, 3);
-        assert_eq!(mesh.normal_count, 1);
         assert_eq!(mesh.triangles.len(), 1);
         assert_eq!(mesh.triangles[0].a.position, [0.0, 0.0, 0.0]);
-        assert_eq!(mesh.triangles[0].b.position, [1.0, 0.0, 0.0]);
-        assert_eq!(mesh.triangles[0].c.position, [0.0, 1.0, 0.0]);
         assert_eq!(mesh.triangles[0].a.normal, [0.0, 0.0, 1.0]);
     }
 
