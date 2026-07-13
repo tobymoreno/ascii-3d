@@ -28,8 +28,8 @@ pub fn handle_camera_key(code: KeyCode, state: &mut ViewerState) -> ViewerInput 
         KeyCode::Right => state.origin_x -= 0.5,
         KeyCode::Up => state.origin_y -= 0.5,
         KeyCode::Down => state.origin_y += 0.5,
-        KeyCode::Char('+') | KeyCode::Char('=') | KeyCode::PageUp => state.origin_z += 0.5,
-        KeyCode::Char('-') | KeyCode::Char('_') | KeyCode::PageDown => state.origin_z -= 0.5,
+        KeyCode::Char('+') | KeyCode::Char('=') | KeyCode::PageUp => state.origin_z -= 0.5,
+        KeyCode::Char('-') | KeyCode::Char('_') | KeyCode::PageDown => state.origin_z += 0.5,
         KeyCode::Char('0') => {
             state.origin_x = 0.0;
             state.origin_y = 0.0;
@@ -84,7 +84,7 @@ mod tests {
         let zoom = state.zoom;
         handle_camera_key(KeyCode::Char('+'), &mut state);
         assert_eq!(state.zoom, zoom);
-        assert_eq!(state.origin_z, 0.5);
+        assert_eq!(state.origin_z, -0.5);
     }
 
     #[test]

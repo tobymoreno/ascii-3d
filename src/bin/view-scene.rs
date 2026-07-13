@@ -4,7 +4,7 @@ use ascii_3d::{
         EditorAction, EditorEvent, MenuBarState, ObjectHierarchyState, PropertiesState,
         draw_menu_bar, draw_object_hierarchy, draw_properties_panel,
     },
-    render::{Frame, GeoJsonMapAsset, MeshAsset, RenderScene, apply_render_behaviors_to_scene},
+    render::{Frame, GeoJsonMapAsset, RenderScene, apply_render_behaviors_to_scene},
     scene::{
         AxisDocument, BehaviorDocument, DisplayDocument, GroupDocument, MeshPrepareDocument,
         NodeDocument, ObjectDocument, ObjectKindDocument, SceneDocument, TransformDocument,
@@ -39,6 +39,7 @@ use std::{
     env, io,
     io::stdout,
     path::{Path, PathBuf},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -65,7 +66,7 @@ fn run_viewer(
     mut scene_path: PathBuf,
     mut document: SceneDocument,
     mut scene: RenderScene,
-    meshes: HashMap<String, MeshAsset>,
+    meshes: HashMap<String, Arc<ascii_3d::mesh::Mesh>>,
     maps: HashMap<String, GeoJsonMapAsset>,
     save_enabled: bool,
 ) -> io::Result<()> {
@@ -702,6 +703,37 @@ fn a3d_world_to_scene_document(world: &LoadedWorld) -> SceneDocument {
                     asset: path.clone(),
                     backface_cull: object.render.backface_cull,
                     prepare: a3d_mesh_prepare_document(object),
+                },
+            })],
+        });
+    }
+
+    for object in world
+        .objects
+        .iter()
+        .filter(|object| !object.id.contains('/'))
+        .filter(|object| matches!(object.asset, AssetRef::GeoJsonMap { .. }))
+    {
+        let AssetRef::GeoJsonMap { path, radius_scale } = &object.asset else {
+            continue;
+        };
+
+        groups.push(GroupDocument {
+            id: object.id.clone(),
+            name: object.id.clone(),
+            transform: TransformDocument::default(),
+            visible: object.render.visible,
+            editor_composite: object.editor_composite,
+            behaviors: Vec::new(),
+            children: vec![NodeDocument::Object(ObjectDocument {
+                id: "map".to_string(),
+                name: object.id.clone(),
+                transform: a3d_transform_document(object),
+                visible: object.render.visible,
+                behaviors: a3d_behavior_documents(object),
+                object: ObjectKindDocument::GeoJsonMap {
+                    asset: path.clone(),
+                    radius_scale: *radius_scale,
                 },
             })],
         });

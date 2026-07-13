@@ -2,12 +2,13 @@ use std::{
     collections::HashMap,
     io,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use crate::{
     render::{
-        GeoJsonMapAsset, MeshAsset, MeshPrepareOptions, RenderNode, RenderObject, RenderScene,
-        load_geojson_map_asset, load_obj_mesh_prepared,
+        GeoJsonMapAsset, MeshPrepareOptions, RenderNode, RenderObject, RenderScene,
+        load_geojson_map_asset, load_prepared_mesh,
     },
     scene::{load_scene_document, scene_document_to_render_scene},
 };
@@ -177,7 +178,7 @@ fn resolve_scene_asset_path(scene_path: &Path, asset: &str) -> PathBuf {
 pub fn load_scene_meshes(
     scene_path: &Path,
     scene: &RenderScene,
-) -> io::Result<HashMap<String, MeshAsset>> {
+) -> io::Result<HashMap<String, Arc<crate::mesh::Mesh>>> {
     let mut meshes = HashMap::new();
 
     for (asset, prepare) in collect_mesh_assets(scene) {
@@ -187,7 +188,7 @@ pub fn load_scene_meshes(
             continue;
         }
 
-        meshes.insert(asset, load_obj_mesh_prepared(path, prepare)?);
+        meshes.insert(asset, load_prepared_mesh(path, prepare)?);
     }
 
     Ok(meshes)

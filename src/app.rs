@@ -16,7 +16,8 @@ use ascii_3d::{
     },
     render::{
         GeoJsonMapAsset, MeshPrepareOptions, lerp_angle_degrees, load_geojson_map_asset,
-        load_prepared_mesh, lon_lat_to_sphere, rasterize_triangle_clipped, segment_steps,
+        load_prepared_mesh, lon_lat_to_sphere, prepare_frame_mesh, rasterize_triangle_clipped,
+        segment_steps, visit_prepared_triangles,
     },
 };
 
@@ -2572,107 +2573,52 @@ fn draw_loaded_a3d_mesh_object_raster(
         .unwrap_or_else(|| Vec3::new(-1.0, -1.0, -1.0));
     let light_to_surface = light_direction * -1.0;
 
-    let transformed = mesh
-        .vertices
-        .iter()
-        .map(|vertex| object_world.transform_point(*vertex))
-        .collect::<Vec<_>>();
+    let prepared = prepare_frame_mesh(
+        &mesh,
+        |position| {
+            let world =
+                object_world.transform_point(Vec3::new(position[0], position[1], position[2]));
+            [world.x, world.y, world.z]
+        },
+        |world| {
+            world_to_camera_space(state, Vec3::new(world[0], world[1], world[2]))
+                .map(|camera| [camera.x, camera.y, camera.z])
+        },
+        |camera| {
+            project_camera_space_to_viewport_with_depth(
+                Vec3::new(camera[0], camera[1], camera[2]),
+                inner,
+                camera_viewport_cell_aspect_ratio(state),
+                camera_viewport_perspective_scale(state),
+            )
+            .map(|(point, depth)| (point.x, point.y, depth))
+        },
+    );
 
-    let camera_vertices = transformed
-        .iter()
-        .map(|world| world_to_camera_space(state, *world))
-        .collect::<Vec<_>>();
+    visit_prepared_triangles(&mesh, &prepared, object.render.backface_cull, |triangle| {
+        let normal = Vec3::new(
+            triangle.world_normal[0],
+            triangle.world_normal[1],
+            triangle.world_normal[2],
+        );
+        let diffuse = dot_vec3(normal, light_to_surface).max(0.0);
+        let brightness = (0.18 + diffuse * 0.82).clamp(0.0, 1.0);
+        let character = shade_character_for_brightness(brightness);
 
-    let projected = camera_vertices
-        .iter()
-        .map(|camera| {
-            (*camera).and_then(|camera| {
-                project_camera_space_to_viewport_with_depth(
-                    camera,
-                    inner,
-                    camera_viewport_cell_aspect_ratio(state),
-                    camera_viewport_perspective_scale(state),
-                )
-            })
-        })
-        .collect::<Vec<_>>();
-
-    for primitive in &mesh.faces {
-        if primitive.len() < 3 {
-            continue;
-        }
-
-        let first_index = primitive[0];
-
-        for triangle_index in 1..primitive.len().saturating_sub(1) {
-            let indexes = [
-                first_index,
-                primitive[triangle_index],
-                primitive[triangle_index + 1],
-            ];
-
-            if indexes.iter().any(|index| *index >= mesh.vertices.len()) {
-                continue;
-            }
-
-            let world = [
-                transformed[indexes[0]],
-                transformed[indexes[1]],
-                transformed[indexes[2]],
-            ];
-
-            let normal = cross_vec3(world[1] - world[0], world[2] - world[0]);
-            let Some(normal) = normalize_vec3(normal) else {
-                continue;
-            };
-
-            if object.render.backface_cull {
-                let Some(camera0) = camera_vertices[indexes[0]] else {
-                    continue;
-                };
-                let Some(camera1) = camera_vertices[indexes[1]] else {
-                    continue;
-                };
-                let Some(camera2) = camera_vertices[indexes[2]] else {
-                    continue;
-                };
-                let camera_normal = cross_vec3(camera1 - camera0, camera2 - camera0);
-                let centroid = (camera0 + camera1 + camera2) * (1.0 / 3.0);
-                if dot_vec3(camera_normal, centroid) >= 0.0 {
-                    continue;
+        rasterize_triangle_clipped(
+            inner.width,
+            inner.height,
+            triangle.screen[0],
+            triangle.screen[1],
+            triangle.screen[2],
+            |x, y, depth| {
+                let point = Point2::new(x, y);
+                if depth_buffer.try_update(point, depth) {
+                    canvas.set(point, character);
                 }
-            }
-
-            let diffuse = dot_vec3(normal, light_to_surface).max(0.0);
-            let brightness = (0.18 + diffuse * 0.82).clamp(0.0, 1.0);
-            let character = shade_character_for_brightness(brightness);
-
-            let Some((p0, z0)) = projected[indexes[0]] else {
-                continue;
-            };
-            let Some((p1, z1)) = projected[indexes[1]] else {
-                continue;
-            };
-            let Some((p2, z2)) = projected[indexes[2]] else {
-                continue;
-            };
-
-            rasterize_triangle_clipped(
-                inner.width,
-                inner.height,
-                (p0.x, p0.y, z0),
-                (p1.x, p1.y, z1),
-                (p2.x, p2.y, z2),
-                |x, y, depth| {
-                    let point = Point2::new(x, y);
-
-                    if depth_buffer.try_update(point, depth) {
-                        canvas.set(point, character);
-                    }
-                },
-            );
-        }
-    }
+            },
+        );
+    });
 
     Ok(())
 }

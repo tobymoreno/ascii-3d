@@ -1,15 +1,15 @@
 use crate::{
     render::{
-        Frame, GeoJsonMapAsset, Mat4, MeshAsset, MeshVertex, Projection, RenderNode, RenderObject,
-        RenderQuad, RenderQuadGroup, RenderScene, RenderSphereGuideKind, RenderTransform,
-        SphereGuidePoint, Vec3, draw_line, draw_line_overlay, fill_triangle, great_circle_points,
-        land_fill_char, latitude_circle_points, lerp_angle_degrees, lon_lat_to_sphere,
-        point_in_polygon, segment_steps,
+        Frame, GeoJsonMapAsset, Mat4, Projection, RenderNode, RenderObject, RenderQuad,
+        RenderQuadGroup, RenderScene, RenderSphereGuideKind, RenderTransform, SphereGuidePoint,
+        Vec3, draw_line, draw_line_overlay, fill_triangle, great_circle_points, land_fill_char,
+        latitude_circle_points, lerp_angle_degrees, lon_lat_to_sphere, point_in_polygon,
+        prepare_frame_mesh, segment_steps, visit_prepared_triangles,
     },
     viewer::ViewerState,
 };
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 pub const MIN_VIEW_SCENE_WIDTH: usize = 96;
 pub const MIN_VIEW_SCENE_HEIGHT: usize = 34;
@@ -191,13 +191,6 @@ fn viewer_world_matrix(scene: &RenderScene, state: &ViewerState) -> Mat4 {
         )
 }
 
-fn transform_mesh_vertex(vertex: MeshVertex, world: Mat4) -> (Vec3, Vec3) {
-    let position = world.transform_point(Vec3::from_array(vertex.position));
-    let normal = Vec3::from_array(vertex.normal).normalized();
-
-    (position, normal)
-}
-
 fn mesh_shade_char(normal: Vec3) -> char {
     let light = Vec3::new(-0.45, 0.7, -0.55).normalized();
     let brightness = (0.15_f32 + normal.dot(light).max(0.0_f32) * 0.75_f32).clamp(0.0_f32, 1.0_f32);
@@ -211,41 +204,41 @@ fn draw_mesh_asset(
     frame: &mut Frame,
     scene: &RenderScene,
     viewport: ViewerViewport,
-    mesh: &MeshAsset,
+    mesh: &crate::mesh::Mesh,
     world: Mat4,
     backface_cull: bool,
 ) {
-    for triangle in &mesh.triangles {
-        let (a, na) = transform_mesh_vertex(triangle.a, world);
-        let (b, nb) = transform_mesh_vertex(triangle.b, world);
-        let (c, nc) = transform_mesh_vertex(triangle.c, world);
+    let prepared = prepare_frame_mesh(
+        mesh,
+        |position| {
+            let point = world.transform_point(Vec3::from_array(position));
+            point.to_array()
+        },
+        Some,
+        |camera| screen_project(scene, viewport, Vec3::from_array(camera)),
+    );
 
-        let Some(pa) = screen_project(scene, viewport, a) else {
-            continue;
-        };
-        let Some(pb) = screen_project(scene, viewport, b) else {
-            continue;
-        };
-        let Some(pc) = screen_project(scene, viewport, c) else {
-            continue;
-        };
-
+    // The viewer projection uses its historical screen-space winding
+    // convention. Keep shared vertex preparation and triangle traversal, but
+    // perform culling after projection so handedness matches this viewport.
+    visit_prepared_triangles(mesh, &prepared, false, |triangle| {
         if backface_cull {
-            let signed_area = (pb.0 - pa.0) * (pc.1 - pa.1) - (pb.1 - pa.1) * (pc.0 - pa.0);
+            let [a, b, c] = triangle.screen;
+            let signed_area = (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0);
             if signed_area >= 0 {
-                continue;
+                return;
             }
         }
 
-        let normal = Vec3::new(
-            (na.x + nb.x + nc.x) / 3.0,
-            (na.y + nb.y + nc.y) / 3.0,
-            (na.z + nb.z + nc.z) / 3.0,
-        )
-        .normalized();
-
-        fill_triangle(frame, pa, pb, pc, mesh_shade_char(normal));
-    }
+        let normal = Vec3::from_array(triangle.world_normal).normalized();
+        fill_triangle(
+            frame,
+            triangle.screen[0],
+            triangle.screen[1],
+            triangle.screen[2],
+            mesh_shade_char(normal),
+        );
+    });
 }
 
 fn draw_geojson_map_asset(
@@ -256,7 +249,11 @@ fn draw_geojson_map_asset(
     radius_scale: f32,
     world: Mat4,
 ) {
-    let center_z = world.transform_point(Vec3::new(0.0, 0.0, 0.0)).z;
+    let center_world = world.transform_point(Vec3::new(0.0, 0.0, 0.0));
+    let Some(center_depth) = screen_project(scene, viewport, center_world).map(|point| point.2)
+    else {
+        return;
+    };
 
     for line in &map.lines {
         draw_lon_lat_fill(
@@ -266,7 +263,7 @@ fn draw_geojson_map_asset(
             &line.points_lon_lat,
             radius_scale * 0.999,
             world,
-            center_z,
+            center_depth,
         );
     }
 
@@ -279,7 +276,7 @@ fn draw_geojson_map_asset(
             line.marker,
             radius_scale,
             world,
-            center_z,
+            center_depth,
         );
     }
 }
@@ -291,10 +288,10 @@ fn draw_lon_lat_fill(
     points_lon_lat: &[(f32, f32)],
     radius: f32,
     world: Mat4,
-    center_z: f32,
+    center_depth: f32,
 ) {
     let polygon =
-        projected_lon_lat_polygon(scene, viewport, points_lon_lat, radius, world, center_z);
+        projected_lon_lat_polygon(scene, viewport, points_lon_lat, radius, world, center_depth);
 
     if polygon.len() < 3 {
         return;
@@ -357,7 +354,7 @@ fn projected_lon_lat_polygon(
     points_lon_lat: &[(f32, f32)],
     radius: f32,
     world: Mat4,
-    center_z: f32,
+    center_depth: f32,
 ) -> Vec<(i32, i32, f32)> {
     let mut polygon = Vec::new();
 
@@ -378,11 +375,11 @@ fn projected_lon_lat_polygon(
             let local = lon_lat_to_sphere(lon, lat, radius);
             let world_point = world.transform_point(Vec3::new(local.x, local.y, local.z));
 
-            if world_point.z > center_z + 0.10 {
-                continue;
-            }
-
             if let Some(projected) = screen_project(scene, viewport, world_point) {
+                if projected.2 >= center_depth {
+                    continue;
+                }
+
                 if polygon
                     .last()
                     .map(|last: &(i32, i32, f32)| last.0 != projected.0 || last.1 != projected.1)
@@ -405,7 +402,7 @@ fn draw_lon_lat_line(
     marker: char,
     radius: f32,
     world: Mat4,
-    center_z: f32,
+    center_depth: f32,
 ) {
     if points_lon_lat.len() < 2 {
         return;
@@ -426,12 +423,12 @@ fn draw_lon_lat_line(
             let local = lon_lat_to_sphere(lon, lat, radius);
             let world_point = world.transform_point(Vec3::new(local.x, local.y, local.z));
 
-            if world_point.z > center_z + 0.10 {
-                previous = None;
-                continue;
-            }
-
             if let Some(current) = screen_project(scene, viewport, world_point) {
+                if current.2 >= center_depth {
+                    previous = None;
+                    continue;
+                }
+
                 if let Some(prev) = previous {
                     draw_line_overlay(frame, prev, current, marker);
                 }
@@ -521,7 +518,7 @@ fn draw_meshes_from_nodes(
     scene: &RenderScene,
     viewport: ViewerViewport,
     nodes: &[RenderNode],
-    meshes: &HashMap<String, MeshAsset>,
+    meshes: &HashMap<String, Arc<crate::mesh::Mesh>>,
     maps: &HashMap<String, GeoJsonMapAsset>,
     parent_world: Mat4,
 ) -> usize {
@@ -602,7 +599,7 @@ fn draw_meshes(
     frame: &mut Frame,
     scene: &RenderScene,
     viewport: ViewerViewport,
-    meshes: &HashMap<String, MeshAsset>,
+    meshes: &HashMap<String, Arc<crate::mesh::Mesh>>,
     maps: &HashMap<String, GeoJsonMapAsset>,
     state: &ViewerState,
 ) -> usize {
@@ -631,7 +628,7 @@ pub fn draw_render_scene(
     frame: &mut Frame,
     viewport: ViewerViewport,
     scene: &RenderScene,
-    meshes: &HashMap<String, MeshAsset>,
+    meshes: &HashMap<String, Arc<crate::mesh::Mesh>>,
     maps: &HashMap<String, GeoJsonMapAsset>,
     state: &ViewerState,
 ) {

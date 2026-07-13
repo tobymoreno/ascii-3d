@@ -18,11 +18,16 @@ pub use lines::draw_line_overlay;
 pub use math::{Mat4, Vec3};
 
 mod mesh;
+mod mesh_pipeline;
 mod sphere_guides;
 
 pub use mesh::{
     MeshAsset, MeshPrepareOptions, MeshTriangle, MeshVertex, load_obj_mesh, load_obj_mesh_from_str,
     load_obj_mesh_prepared, load_prepared_mesh,
+};
+pub use mesh_pipeline::{
+    PreparedFrameMesh, PreparedMeshTriangle, ProjectedMeshVertex, prepare_frame_mesh,
+    visit_prepared_triangles,
 };
 pub use sphere_guides::{
     GreatCircle, SphereGuidePoint, great_circle_points, latitude_circle_points,
