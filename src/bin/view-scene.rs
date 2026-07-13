@@ -1,23 +1,22 @@
 use ascii_3d::{
+    a3d::{AssetRef, BehaviorConfig, LoadedWorld, SceneObject, load_a3d_project},
     editor_ui::{
         EditorAction, EditorEvent, MenuBarState, ObjectHierarchyState, PropertiesState,
         draw_menu_bar, draw_object_hierarchy, draw_properties_panel,
     },
-    a3d::{AssetRef, LoadedWorld, SceneObject, load_a3d_project},
     render::{Frame, GeoJsonMapAsset, MeshAsset, RenderScene, apply_render_behaviors_to_scene},
     scene::{
-        DisplayDocument, GroupDocument, NodeDocument, ObjectDocument, ObjectKindDocument,
-        SceneDocument, TransformDocument, load_scene_document, save_scene_document,
-        scene_document_to_render_scene, set_scene_document_visibility,
+        AxisDocument, BehaviorDocument, DisplayDocument, GroupDocument, NodeDocument,
+        ObjectDocument, ObjectKindDocument, SceneDocument, TransformDocument, load_scene_document,
+        save_scene_document, scene_document_to_render_scene, set_scene_document_visibility,
     },
     viewer::{
-        CAMERA_HELPER_PATH, MIN_VIEW_SCENE_HEIGHT, MIN_VIEW_SCENE_WIDTH, SCENE_ORIGIN_HELPER_PATH,
-        FILE_MENU_ID, OBJECTS_MENU_ID, ViewerInput, ViewerInspectorState, ViewerState,
+        CAMERA_HELPER_PATH, FILE_MENU_ID, MIN_VIEW_SCENE_HEIGHT, MIN_VIEW_SCENE_WIDTH,
+        OBJECTS_MENU_ID, SCENE_ORIGIN_HELPER_PATH, ViewerInput, ViewerInspectorState, ViewerState,
         ViewerViewport, collect_scene_objects_with_helpers, draw_render_scene, editor_items,
         handle_camera_key, handle_scene_object_transform_key, handle_scene_origin_key,
-        load_scene_maps, load_scene_meshes,
-        property_rows, reset_scene_object_transform, toggle_scene_object_visibility,
-        viewer_menu_definitions,
+        load_scene_maps, load_scene_meshes, property_rows, reset_scene_object_transform,
+        toggle_scene_object_visibility, viewer_menu_definitions,
     },
 };
 use crossterm::{
@@ -345,10 +344,8 @@ fn run_viewer(
                                         &target.path,
                                         visible,
                                     );
-                                    object_entries = collect_scene_objects_with_helpers(
-                                        &scene,
-                                        state.show_axes,
-                                    );
+                                    object_entries =
+                                        collect_scene_objects_with_helpers(&scene, state.show_axes);
                                     hierarchy_items = editor_items(&object_entries);
                                     hierarchy.replace_items(&hierarchy_items);
                                     save_status = Some("Unsaved visibility change".to_string());
@@ -535,6 +532,38 @@ fn a3d_transform_document(object: &SceneObject) -> TransformDocument {
     }
 }
 
+fn a3d_behavior_documents(object: &SceneObject) -> Vec<BehaviorDocument> {
+    let mut documents = Vec::new();
+
+    for behavior in &object.behaviors {
+        let BehaviorConfig::Rotate {
+            axis,
+            degrees_per_second,
+        } = behavior
+        else {
+            continue;
+        };
+
+        for (component, render_axis) in [
+            (axis[0], AxisDocument::X),
+            (axis[1], AxisDocument::Y),
+            (axis[2], AxisDocument::Z),
+        ] {
+            if component.abs() <= f32::EPSILON {
+                continue;
+            }
+
+            documents.push(BehaviorDocument::Spin {
+                axis: render_axis,
+                degrees_per_second: degrees_per_second * component,
+                enabled: true,
+            });
+        }
+    }
+
+    documents
+}
+
 fn direct_parent_id(id: &str) -> Option<&str> {
     id.rsplit_once('/').map(|(parent, _)| parent)
 }
@@ -561,9 +590,10 @@ fn a3d_group_document(group: &SceneObject, world: &LoadedWorld) -> GroupDocument
                     .to_string(),
                 transform: a3d_transform_document(object),
                 visible: object.render.visible,
-                behaviors: Vec::new(),
+                behaviors: a3d_behavior_documents(object),
                 object: ObjectKindDocument::Mesh {
                     asset: path.clone(),
+                    backface_cull: object.render.backface_cull,
                 },
             })),
             AssetRef::GeoJsonMap { path, radius_scale } => {
@@ -582,7 +612,7 @@ fn a3d_group_document(group: &SceneObject, world: &LoadedWorld) -> GroupDocument
                         .to_string(),
                     transform: a3d_transform_document(object),
                     visible: object.render.visible,
-                    behaviors: Vec::new(),
+                    behaviors: a3d_behavior_documents(object),
                     object: ObjectKindDocument::GeoJsonMap {
                         asset: path.clone(),
                         radius_scale: *radius_scale,
@@ -609,7 +639,7 @@ fn a3d_group_document(group: &SceneObject, world: &LoadedWorld) -> GroupDocument
         transform: a3d_transform_document(group),
         visible: group.render.visible,
         editor_composite: group.editor_composite,
-        behaviors: Vec::new(),
+        behaviors: a3d_behavior_documents(group),
         children,
     }
 }
@@ -647,9 +677,10 @@ fn a3d_world_to_scene_document(world: &LoadedWorld) -> SceneDocument {
                 name: object.id.clone(),
                 transform: a3d_transform_document(object),
                 visible: object.render.visible,
-                behaviors: Vec::new(),
+                behaviors: a3d_behavior_documents(object),
                 object: ObjectKindDocument::Mesh {
                     asset: path.clone(),
+                    backface_cull: object.render.backface_cull,
                 },
             })],
         });

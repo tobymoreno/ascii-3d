@@ -213,6 +213,7 @@ fn draw_mesh_asset(
     viewport: ViewerViewport,
     mesh: &MeshAsset,
     world: Mat4,
+    backface_cull: bool,
 ) {
     for triangle in &mesh.triangles {
         let (a, na) = transform_mesh_vertex(triangle.a, world);
@@ -228,6 +229,13 @@ fn draw_mesh_asset(
         let Some(pc) = screen_project(scene, viewport, c) else {
             continue;
         };
+
+        if backface_cull {
+            let signed_area = (pb.0 - pa.0) * (pc.1 - pa.1) - (pb.1 - pa.1) * (pc.0 - pa.0);
+            if signed_area >= 0 {
+                continue;
+            }
+        }
 
         let normal = Vec3::new(
             (na.x + nb.x + nc.x) / 3.0,
@@ -248,6 +256,8 @@ fn draw_geojson_map_asset(
     radius_scale: f32,
     world: Mat4,
 ) {
+    let center_z = world.transform_point(Vec3::new(0.0, 0.0, 0.0)).z;
+
     for line in &map.lines {
         draw_lon_lat_fill(
             frame,
@@ -256,6 +266,7 @@ fn draw_geojson_map_asset(
             &line.points_lon_lat,
             radius_scale * 0.999,
             world,
+            center_z,
         );
     }
 
@@ -268,6 +279,7 @@ fn draw_geojson_map_asset(
             line.marker,
             radius_scale,
             world,
+            center_z,
         );
     }
 }
@@ -279,8 +291,10 @@ fn draw_lon_lat_fill(
     points_lon_lat: &[(f32, f32)],
     radius: f32,
     world: Mat4,
+    center_z: f32,
 ) {
-    let polygon = projected_lon_lat_polygon(scene, viewport, points_lon_lat, radius, world);
+    let polygon =
+        projected_lon_lat_polygon(scene, viewport, points_lon_lat, radius, world, center_z);
 
     if polygon.len() < 3 {
         return;
@@ -343,6 +357,7 @@ fn projected_lon_lat_polygon(
     points_lon_lat: &[(f32, f32)],
     radius: f32,
     world: Mat4,
+    center_z: f32,
 ) -> Vec<(i32, i32, f32)> {
     let mut polygon = Vec::new();
 
@@ -363,7 +378,7 @@ fn projected_lon_lat_polygon(
             let local = lon_lat_to_sphere(lon, lat, radius);
             let world_point = world.transform_point(Vec3::new(local.x, local.y, local.z));
 
-            if world_point.z > 0.10 {
+            if world_point.z > center_z + 0.10 {
                 continue;
             }
 
@@ -390,6 +405,7 @@ fn draw_lon_lat_line(
     marker: char,
     radius: f32,
     world: Mat4,
+    center_z: f32,
 ) {
     if points_lon_lat.len() < 2 {
         return;
@@ -410,7 +426,7 @@ fn draw_lon_lat_line(
             let local = lon_lat_to_sphere(lon, lat, radius);
             let world_point = world.transform_point(Vec3::new(local.x, local.y, local.z));
 
-            if world_point.z > 0.10 {
+            if world_point.z > center_z + 0.10 {
                 previous = None;
                 continue;
             }
@@ -542,7 +558,14 @@ fn draw_meshes_from_nodes(
 
                         let mesh_world =
                             object_world * render_transform_matrix(mesh_object.transform);
-                        draw_mesh_asset(frame, scene, viewport, mesh, mesh_world);
+                        draw_mesh_asset(
+                            frame,
+                            scene,
+                            viewport,
+                            mesh,
+                            mesh_world,
+                            mesh_object.backface_cull,
+                        );
                         count += 1;
                     }
                     RenderObject::GeoJsonMap(map_object) => {

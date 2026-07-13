@@ -226,6 +226,7 @@ impl RenderObjectNode {
 pub struct RenderMeshObject {
     pub mesh_asset: String,
     pub transform: RenderTransform,
+    pub backface_cull: bool,
 }
 
 #[derive(Clone, Debug)]

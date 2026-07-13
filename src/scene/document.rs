@@ -79,6 +79,8 @@ pub struct ObjectDocument {
 pub enum ObjectKindDocument {
     Mesh {
         asset: String,
+        #[serde(default)]
+        backface_cull: bool,
     },
     GeoJsonMap {
         asset: String,

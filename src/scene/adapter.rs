@@ -109,6 +109,7 @@ pub fn scene_document_to_render_scene(document: SceneDocument) -> RenderScene {
                 RenderObject::Mesh(RenderMeshObject {
                     mesh_asset: document.mesh_asset,
                     transform: RenderTransform::default(),
+                    backface_cull: false,
                 }),
             )));
 
@@ -171,9 +172,13 @@ fn node_document_to_render_node(document: NodeDocument) -> RenderNode {
 
 fn object_document_to_render_object_node(document: ObjectDocument) -> RenderObjectNode {
     let object = match document.object {
-        ObjectKindDocument::Mesh { asset } => RenderObject::Mesh(RenderMeshObject {
+        ObjectKindDocument::Mesh {
+            asset,
+            backface_cull,
+        } => RenderObject::Mesh(RenderMeshObject {
             mesh_asset: asset,
             transform: RenderTransform::default(),
+            backface_cull,
         }),
         ObjectKindDocument::GeoJsonMap {
             asset,
@@ -327,6 +332,7 @@ mod tests {
                 behaviors: Vec::new(),
                 object: ObjectKindDocument::Mesh {
                     asset: "sphere.obj".to_string(),
+                    backface_cull: false,
                 },
             })],
         });

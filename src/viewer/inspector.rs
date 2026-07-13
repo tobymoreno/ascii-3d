@@ -336,11 +336,7 @@ pub fn reset_scene_object_transform(scene: &mut RenderScene, path: &str) -> bool
     false
 }
 
-fn reset_group_transform(
-    group: &mut RenderGroup,
-    parent_path: &str,
-    requested_path: &str,
-) -> bool {
+fn reset_group_transform(group: &mut RenderGroup, parent_path: &str, requested_path: &str) -> bool {
     let path = join_path(parent_path, &group.id);
 
     if path == requested_path {
@@ -730,6 +726,7 @@ mod tests {
                 RenderObject::Mesh(RenderMeshObject {
                     mesh_asset: "earth.obj".to_string(),
                     transform: RenderTransform::default(),
+                    backface_cull: false,
                 }),
             )));
         root.children.push(RenderNode::Group(earth));
