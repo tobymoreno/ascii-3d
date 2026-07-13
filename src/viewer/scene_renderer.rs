@@ -657,7 +657,7 @@ pub fn draw_render_scene(
         frame.draw_text(
             2,
             viewport.height.saturating_sub(2),
-            "controls: a axes on | A axes off | arrows origin | PgUp/PgDn z | +/- zoom | x/y/z rotate | 0 origin | r reset | q quit",
+            "controls: a axes on | A axes off | arrows origin | PgUp/PgDn z | +/- scale object/origin | camera dolly | x/y/z rotate | 0 origin | r reset | q quit",
         );
         return;
     };
@@ -743,6 +743,6 @@ pub fn draw_render_scene(
     frame.draw_text(
         2,
         viewport.height.saturating_sub(2),
-        "controls: a axes on | A axes off | arrows origin | PgUp/PgDn z | +/- zoom | x/y/z rotate | 0 origin | r reset | q quit",
+        "controls: a axes on | A axes off | arrows origin | PgUp/PgDn z | +/- scale object/origin | camera dolly | x/y/z rotate | 0 origin | r reset | q quit",
     );
 }

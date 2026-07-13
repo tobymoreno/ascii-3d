@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Paragraph, Tabs},
 };
 
-use super::{EditorEvent, EventSource};
+use super::EditorEvent;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct MenuId(pub String);

@@ -327,6 +327,50 @@ pub fn scene_object_property_lines(
     None
 }
 
+pub fn reset_scene_object_transform(scene: &mut RenderScene, path: &str) -> bool {
+    for group in &mut scene.groups {
+        if reset_group_transform(group, "", path) {
+            return true;
+        }
+    }
+    false
+}
+
+fn reset_group_transform(
+    group: &mut RenderGroup,
+    parent_path: &str,
+    requested_path: &str,
+) -> bool {
+    let path = join_path(parent_path, &group.id);
+
+    if path == requested_path {
+        group.transform.position = [0.0, 0.0, 0.0];
+        group.transform.rotation_degrees = [0.0, 0.0, 0.0];
+        group.transform.scale = [1.0, 1.0, 1.0];
+        return true;
+    }
+
+    for node in &mut group.children {
+        match node {
+            RenderNode::Group(child_group) => {
+                if reset_group_transform(child_group, &path, requested_path) {
+                    return true;
+                }
+            }
+            RenderNode::Object(object_node) => {
+                if join_path(&path, &object_node.id) == requested_path {
+                    object_node.transform.position = [0.0, 0.0, 0.0];
+                    object_node.transform.rotation_degrees = [0.0, 0.0, 0.0];
+                    object_node.transform.scale = [1.0, 1.0, 1.0];
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
 pub fn handle_scene_object_transform_key(
     scene: &mut RenderScene,
     path: &str,
@@ -386,6 +430,21 @@ fn apply_transform_key(transform: &mut RenderTransform, code: KeyCode) {
         KeyCode::Char('Y') => transform.rotation_degrees[1] -= 2.0,
         KeyCode::Char('z') => transform.rotation_degrees[2] += 2.0,
         KeyCode::Char('Z') => transform.rotation_degrees[2] -= 2.0,
+        KeyCode::Char('+') | KeyCode::Char('=') => {
+            transform.scale[0] *= 1.1;
+            transform.scale[1] *= 1.1;
+            transform.scale[2] *= 1.1;
+        }
+        KeyCode::Char('-') | KeyCode::Char('_') => {
+            transform.scale[0] = (transform.scale[0] / 1.1).max(0.01);
+            transform.scale[1] = (transform.scale[1] / 1.1).max(0.01);
+            transform.scale[2] = (transform.scale[2] / 1.1).max(0.01);
+        }
+        KeyCode::Char('0') => {
+            transform.position = [0.0, 0.0, 0.0];
+            transform.rotation_degrees = [0.0, 0.0, 0.0];
+            transform.scale = [1.0, 1.0, 1.0];
+        }
         KeyCode::Char('0') => {
             transform.position = [0.0, 0.0, 0.0];
             transform.rotation_degrees = [0.0, 0.0, 0.0];
