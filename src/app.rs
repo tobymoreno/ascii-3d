@@ -1,7 +1,6 @@
 use std::{
-    collections::{HashMap, VecDeque, hash_map::DefaultHasher},
+    collections::{HashMap, VecDeque},
     fs,
-    hash::{Hash, Hasher},
     io::{self, Write, stdout},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
@@ -11,10 +10,13 @@ use std::{
 use ratatui::{Terminal, backend::CrosstermBackend, layout::Rect};
 
 use ascii_3d::{
-    editor_ui::{EditorAction, EditorEvent, ObjectHierarchyState, PropertiesState, draw_object_hierarchy, draw_properties_panel},
+    editor_ui::{
+        EditorAction, EditorEvent, ObjectHierarchyState, PropertiesState, draw_object_hierarchy,
+        draw_properties_panel,
+    },
     render::{
-        GeoJsonMapAsset, lerp_angle_degrees, load_geojson_map_asset, lon_lat_to_sphere,
-        rasterize_triangle_clipped, segment_steps,
+        GeoJsonMapAsset, MeshPrepareOptions, lerp_angle_degrees, load_geojson_map_asset,
+        load_prepared_mesh, lon_lat_to_sphere, rasterize_triangle_clipped, segment_steps,
     },
 };
 
@@ -60,9 +62,9 @@ use crate::{
     },
     tui::FilePickerView,
     workspace::{
-        LoadedA3dWorkspace, WorldEditorTarget, loaded_a3d_editor_items,
-        loaded_a3d_property_rows, loaded_a3d_world_target,
+        LoadedA3dWorkspace, WorldEditorTarget,
         gizmo::{LoadedA3dLight, loaded_a3d_lights, normalized_light_direction},
+        loaded_a3d_editor_items, loaded_a3d_property_rows, loaded_a3d_world_target,
     },
     xyz_control::{XyzControl, XyzControlEvent},
 };
@@ -2337,155 +2339,35 @@ fn loaded_a3d_object_edge_stride(_root: &Path, object: &crate::a3d::SceneObject)
     object.render.edge_stride.max(1)
 }
 
-#[derive(Debug, Clone, Copy)]
-struct LoadedA3dSimplifySettings {
-    grid_size: f32,
-    target_vertices: Option<usize>,
-    cache: bool,
-}
-
 fn loaded_a3d_object_ascii_simplify(
     _root: &Path,
     object: &crate::a3d::SceneObject,
-) -> Option<LoadedA3dSimplifySettings> {
+) -> MeshPrepareOptions {
     object
         .render
         .ascii_simplify
         .as_ref()
         .filter(|config| config.enabled)
-        .map(|config| LoadedA3dSimplifySettings {
-            grid_size: config.grid_size,
-            target_vertices: config.target_vertices,
+        .map(|config| MeshPrepareOptions {
+            normalize_to_size: Some(1.0),
+            grid_size: (config.grid_size.is_finite() && config.grid_size > 0.0)
+                .then_some(config.grid_size),
+            target_vertices: config.target_vertices.filter(|value| *value > 0),
             cache: config.cache,
         })
+        .unwrap_or(MeshPrepareOptions {
+            normalize_to_size: Some(1.0),
+            ..MeshPrepareOptions::default()
+        })
 }
-
-fn loaded_a3d_mesh_cache_dir() -> Option<PathBuf> {
-    if let Some(value) = std::env::var_os("ASCII_3D_CACHE_DIR") {
-        return Some(PathBuf::from(value).join("meshes"));
-    }
-
-    if cfg!(target_os = "macos") {
-        return std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .map(|home| home.join("Library/Caches/ascii-3d/meshes"));
-    }
-
-    if let Some(value) = std::env::var_os("XDG_CACHE_HOME") {
-        return Some(PathBuf::from(value).join("ascii-3d/meshes"));
-    }
-
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .map(|home| home.join(".cache/ascii-3d/meshes"))
-}
-
-fn loaded_a3d_mesh_disk_cache_path(
-    mesh_path: &str,
-    simplify: &LoadedA3dSimplifySettings,
-) -> io::Result<Option<PathBuf>> {
-    if !simplify.cache {
-        return Ok(None);
-    }
-
-    let source = fs::read(mesh_path)?;
-    let mut hasher = DefaultHasher::new();
-    source.hash(&mut hasher);
-    simplify.grid_size.to_bits().hash(&mut hasher);
-    simplify.target_vertices.hash(&mut hasher);
-    env!("CARGO_PKG_VERSION").hash(&mut hasher);
-    let digest = hasher.finish();
-
-    let Some(dir) = loaded_a3d_mesh_cache_dir() else {
-        return Ok(None);
-    };
-    fs::create_dir_all(&dir)?;
-
-    let stem = Path::new(mesh_path)
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .unwrap_or("mesh");
-
-    Ok(Some(dir.join(format!("{stem}-{digest:016x}.obj"))))
-}
-
-static LOADED_A3D_MESH_CACHE: OnceLock<Mutex<HashMap<String, Arc<Mesh>>>> = OnceLock::new();
-static LOADED_A3D_MAP_CACHE: OnceLock<Mutex<HashMap<String, Arc<GeoJsonMapAsset>>>> =
-    OnceLock::new();
 
 fn load_loaded_a3d_mesh(
     root: &Path,
     relative_path: &str,
     object: &crate::a3d::SceneObject,
-) -> io::Result<Arc<Mesh>> {
+) -> io::Result<Arc<ascii_3d::mesh::Mesh>> {
     let mesh_path = resolve_a3d_asset_path(root, relative_path)?;
-    let simplify = loaded_a3d_object_ascii_simplify(root, object);
-    let cache_key = format!("{mesh_path}|simplify={simplify:?}");
-
-    if let Some(mesh) = LOADED_A3D_MESH_CACHE
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .map_err(|_| io::Error::other("A3D mesh cache lock poisoned"))?
-        .get(&cache_key)
-        .cloned()
-    {
-        return Ok(mesh);
-    }
-
-    let disk_cache_path = simplify
-        .as_ref()
-        .map(|config| loaded_a3d_mesh_disk_cache_path(&mesh_path, config))
-        .transpose()?
-        .flatten();
-
-    let mut mesh = if let Some(cache_path) = disk_cache_path
-        .as_ref()
-        .filter(|path| path.is_file())
-    {
-        load_obj(cache_path).map_err(|error| {
-            io::Error::other(format!(
-                "failed to load cached A3D mesh {}: {}",
-                cache_path.display(),
-                error
-            ))
-        })?
-    } else {
-        let mut mesh = load_obj(Path::new(&mesh_path)).map_err(|error| {
-            io::Error::other(format!("failed to load A3D mesh {}: {}", mesh_path, error))
-        })?;
-
-        if !mesh.normalize_to_size(1.0) {
-            return Err(io::Error::other(format!(
-                "could not normalize A3D mesh {}",
-                mesh_path
-            )));
-        }
-
-        if let Some(config) = &simplify {
-            if let Some(target_vertices) = config.target_vertices.filter(|value| *value > 0) {
-                mesh = mesh.simplify_to_target_vertices(target_vertices);
-            } else if config.grid_size.is_finite() && config.grid_size > 0.0 {
-                mesh = mesh.simplify_by_vertex_grid(config.grid_size);
-            }
-        }
-
-        if let Some(cache_path) = &disk_cache_path {
-            let temp_path = cache_path.with_extension("obj.tmp");
-            mesh.write_obj(&temp_path)?;
-            fs::rename(&temp_path, cache_path)?;
-        }
-
-        mesh
-    };
-
-    let mesh = Arc::new(mesh);
-    LOADED_A3D_MESH_CACHE
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .map_err(|_| io::Error::other("A3D mesh cache lock poisoned"))?
-        .insert(cache_key, Arc::clone(&mesh));
-
-    Ok(mesh)
+    load_prepared_mesh(&mesh_path, loaded_a3d_object_ascii_simplify(root, object))
 }
 
 fn draw_loaded_a3d_mesh_object_in_ws(
@@ -2818,6 +2700,9 @@ fn load_loaded_a3d_map(root: &Path, relative_path: &str) -> io::Result<Arc<GeoJs
     Ok(map)
 }
 
+static LOADED_A3D_MAP_CACHE: OnceLock<Mutex<HashMap<String, Arc<GeoJsonMapAsset>>>> =
+    OnceLock::new();
+
 fn draw_loaded_a3d_geo_json_map_object(
     canvas: &mut Canvas,
     depth_buffer: &mut CameraViewportDepthBuffer,
@@ -2854,10 +2739,8 @@ fn draw_loaded_a3d_geo_json_map_object(
                 let point = lon_lat_to_sphere(lon, lat, *radius_scale);
                 let world = object_world.transform_point(Vec3::new(point.x, point.y, point.z));
 
-                let front_facing = match (
-                    object_center_camera,
-                    world_to_camera_space(state, world),
-                ) {
+                let front_facing = match (object_center_camera, world_to_camera_space(state, world))
+                {
                     (Some(center_camera), Some(point_camera)) => {
                         let outward = point_camera - center_camera;
                         let toward_camera = point_camera * -1.0;
@@ -3877,7 +3760,11 @@ fn render_scene(
         if state.loaded_a3d_hierarchy.is_open() {
             draw_object_hierarchy(
                 frame,
-                centered_editor_rect(64, (loaded_editor_items.len() as u16 + 4).clamp(7, 28), frame.area()),
+                centered_editor_rect(
+                    64,
+                    (loaded_editor_items.len() as u16 + 4).clamp(7, 28),
+                    frame.area(),
+                ),
                 &loaded_editor_items,
                 &state.loaded_a3d_hierarchy,
                 "A3D Objects",
@@ -3891,7 +3778,11 @@ fn render_scene(
                 .unwrap_or("A3D target");
             draw_properties_panel(
                 frame,
-                centered_editor_rect(76, (loaded_property_rows.len() as u16 + 4).clamp(8, 30), frame.area()),
+                centered_editor_rect(
+                    76,
+                    (loaded_property_rows.len() as u16 + 4).clamp(8, 30),
+                    frame.area(),
+                ),
                 object_name,
                 &loaded_property_rows,
                 &state.loaded_a3d_properties,

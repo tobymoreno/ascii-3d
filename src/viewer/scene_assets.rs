@@ -6,8 +6,8 @@ use std::{
 
 use crate::{
     render::{
-        GeoJsonMapAsset, MeshAsset, RenderNode, RenderObject, RenderScene, load_geojson_map_asset,
-        load_obj_mesh,
+        GeoJsonMapAsset, MeshAsset, MeshPrepareOptions, RenderNode, RenderObject, RenderScene,
+        load_geojson_map_asset, load_obj_mesh_prepared,
     },
     scene::{load_scene_document, scene_document_to_render_scene},
 };
@@ -83,28 +83,31 @@ pub fn read_scene(path: impl AsRef<Path>) -> io::Result<RenderScene> {
     Ok(scene)
 }
 
-fn collect_mesh_assets_from_nodes(nodes: &[RenderNode], assets: &mut Vec<String>) {
+fn collect_mesh_assets_from_nodes(
+    nodes: &[RenderNode],
+    assets: &mut Vec<(String, MeshPrepareOptions)>,
+) {
     for node in nodes {
         match node {
             RenderNode::Group(group) => collect_mesh_assets_from_nodes(&group.children, assets),
             RenderNode::Object(object_node) => {
                 if let RenderObject::Mesh(mesh_object) = &object_node.object {
-                    assets.push(mesh_object.mesh_asset.clone());
+                    assets.push((mesh_object.mesh_asset.clone(), mesh_object.prepare));
                 }
             }
         }
     }
 }
 
-fn collect_mesh_assets(scene: &RenderScene) -> Vec<String> {
+fn collect_mesh_assets(scene: &RenderScene) -> Vec<(String, MeshPrepareOptions)> {
     let mut assets = Vec::new();
 
     for group in &scene.groups {
         collect_mesh_assets_from_nodes(&group.children, &mut assets);
     }
 
-    assets.sort();
-    assets.dedup();
+    assets.sort_by(|left, right| left.0.cmp(&right.0));
+    assets.dedup_by(|left, right| left.0 == right.0 && left.1 == right.1);
     assets
 }
 
@@ -177,14 +180,14 @@ pub fn load_scene_meshes(
 ) -> io::Result<HashMap<String, MeshAsset>> {
     let mut meshes = HashMap::new();
 
-    for asset in collect_mesh_assets(scene) {
+    for (asset, prepare) in collect_mesh_assets(scene) {
         let path = resolve_scene_asset_path(scene_path, &asset);
 
         if !path.exists() {
             continue;
         }
 
-        meshes.insert(asset, load_obj_mesh(path)?);
+        meshes.insert(asset, load_obj_mesh_prepared(path, prepare)?);
     }
 
     Ok(meshes)

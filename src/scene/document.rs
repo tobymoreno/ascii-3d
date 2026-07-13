@@ -54,6 +54,18 @@ pub struct GroupDocument {
     pub children: Vec<NodeDocument>,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+pub struct MeshPrepareDocument {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub normalize_to_size: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grid_size: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_vertices: Option<usize>,
+    #[serde(default)]
+    pub cache: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "node", rename_all = "snake_case")]
 pub enum NodeDocument {
@@ -81,6 +93,8 @@ pub enum ObjectKindDocument {
         asset: String,
         #[serde(default)]
         backface_cull: bool,
+        #[serde(default)]
+        prepare: MeshPrepareDocument,
     },
     GeoJsonMap {
         asset: String,

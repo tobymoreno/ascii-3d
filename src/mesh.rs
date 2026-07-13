@@ -224,8 +224,6 @@ impl Mesh {
         Self::new(vertices, faces)
     }
 
-
-
     /// Simplifies toward a requested vertex budget by searching for a
     /// vertex-grid size that produces no more than the target.
     pub fn simplify_to_target_vertices(&self, target_vertices: usize) -> Self {
@@ -300,9 +298,7 @@ impl Mesh {
     /// Entries with two indexes represent explicit line segments.
     /// Entries with three or more indexes represent closed polygon faces.
     ///
-    /// An edge is stored in canonical order:
-    ///
-    ///     (min_index, max_index)
+    /// An edge is stored in canonical order as `(min_index, max_index)`.
     ///
     /// Therefore `(2, 5)` and `(5, 2)` are treated as the same edge.
     pub fn unique_edges(&self) -> Vec<Edge> {
@@ -355,7 +351,6 @@ mod tests {
         assert_eq!(mesh.unique_edges().len(), 12);
     }
 
-    #[test]
     #[test]
     fn simplify_by_vertex_grid_preserves_unit_box_with_tiny_grid() {
         let mesh = Mesh::unit_box();

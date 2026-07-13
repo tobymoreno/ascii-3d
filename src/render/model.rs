@@ -1,3 +1,4 @@
+use super::MeshPrepareOptions;
 use super::sphere_guides::GreatCircle;
 
 #[derive(Clone, Debug)]
@@ -227,6 +228,7 @@ pub struct RenderMeshObject {
     pub mesh_asset: String,
     pub transform: RenderTransform,
     pub backface_cull: bool,
+    pub prepare: MeshPrepareOptions,
 }
 
 #[derive(Clone, Debug)]

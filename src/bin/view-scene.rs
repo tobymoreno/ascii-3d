@@ -6,9 +6,10 @@ use ascii_3d::{
     },
     render::{Frame, GeoJsonMapAsset, MeshAsset, RenderScene, apply_render_behaviors_to_scene},
     scene::{
-        AxisDocument, BehaviorDocument, DisplayDocument, GroupDocument, NodeDocument,
-        ObjectDocument, ObjectKindDocument, SceneDocument, TransformDocument, load_scene_document,
-        save_scene_document, scene_document_to_render_scene, set_scene_document_visibility,
+        AxisDocument, BehaviorDocument, DisplayDocument, GroupDocument, MeshPrepareDocument,
+        NodeDocument, ObjectDocument, ObjectKindDocument, SceneDocument, TransformDocument,
+        load_scene_document, save_scene_document, scene_document_to_render_scene,
+        set_scene_document_visibility,
     },
     viewer::{
         CAMERA_HELPER_PATH, FILE_MENU_ID, MIN_VIEW_SCENE_HEIGHT, MIN_VIEW_SCENE_WIDTH,
@@ -568,6 +569,24 @@ fn direct_parent_id(id: &str) -> Option<&str> {
     id.rsplit_once('/').map(|(parent, _)| parent)
 }
 
+fn a3d_mesh_prepare_document(object: &SceneObject) -> MeshPrepareDocument {
+    let simplify = object
+        .render
+        .ascii_simplify
+        .as_ref()
+        .filter(|config| config.enabled);
+
+    MeshPrepareDocument {
+        normalize_to_size: Some(1.0),
+        grid_size: simplify.and_then(|config| {
+            (config.grid_size.is_finite() && config.grid_size > 0.0).then_some(config.grid_size)
+        }),
+        target_vertices: simplify
+            .and_then(|config| config.target_vertices.filter(|value| *value > 0)),
+        cache: simplify.is_some_and(|config| config.cache),
+    }
+}
+
 fn a3d_group_document(group: &SceneObject, world: &LoadedWorld) -> GroupDocument {
     let children = world
         .objects
@@ -594,6 +613,7 @@ fn a3d_group_document(group: &SceneObject, world: &LoadedWorld) -> GroupDocument
                 object: ObjectKindDocument::Mesh {
                     asset: path.clone(),
                     backface_cull: object.render.backface_cull,
+                    prepare: a3d_mesh_prepare_document(object),
                 },
             })),
             AssetRef::GeoJsonMap { path, radius_scale } => {
@@ -681,6 +701,7 @@ fn a3d_world_to_scene_document(world: &LoadedWorld) -> SceneDocument {
                 object: ObjectKindDocument::Mesh {
                     asset: path.clone(),
                     backface_cull: object.render.backface_cull,
+                    prepare: a3d_mesh_prepare_document(object),
                 },
             })],
         });

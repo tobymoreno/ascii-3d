@@ -712,7 +712,7 @@ fn object_visible(object: &RenderObject) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::render::{RenderDisplay, RenderMeshObject, RenderObjectNode};
+    use crate::render::{MeshPrepareOptions, RenderDisplay, RenderMeshObject, RenderObjectNode};
 
     fn test_scene() -> RenderScene {
         let mut scene = RenderScene::new("test", RenderDisplay { world_scale: 1.0 });
@@ -727,6 +727,7 @@ mod tests {
                     mesh_asset: "earth.obj".to_string(),
                     transform: RenderTransform::default(),
                     backface_cull: false,
+                    prepare: MeshPrepareOptions::default(),
                 }),
             )));
         root.children.push(RenderNode::Group(earth));
