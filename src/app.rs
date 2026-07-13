@@ -16,8 +16,8 @@ use ascii_3d::{
     },
     render::{
         GeoJsonMapAsset, MeshPrepareOptions, load_geojson_map_asset, load_prepared_mesh,
-        prepare_frame_mesh, rasterize_triangle_clipped, visit_geojson_segments,
-        visit_prepared_triangles,
+        prepare_frame_mesh, rasterize_triangle_clipped, shade_ascii_lambert,
+        surface_to_light_from_ray_direction, visit_geojson_segments, visit_prepared_triangles,
     },
 };
 
@@ -2538,15 +2538,6 @@ fn normalize_vec3(value: Vec3) -> Option<Vec3> {
     Some(value * (1.0 / length))
 }
 
-fn shade_character_for_brightness(brightness: f32) -> char {
-    const RAMP: &[u8] = b" .,-~:;=!*#$@";
-
-    let brightness = brightness.clamp(0.0, 1.0);
-    let index = (brightness * (RAMP.len().saturating_sub(1)) as f32).round() as usize;
-
-    RAMP[index.min(RAMP.len().saturating_sub(1))] as char
-}
-
 fn edge_function(a: Point2, b: Point2, point: Point2) -> f32 {
     ((point.x - a.x) as f32 * (b.y - a.y) as f32) - ((point.y - a.y) as f32 * (b.x - a.x) as f32)
 }
@@ -2565,13 +2556,14 @@ fn draw_loaded_a3d_mesh_object_raster(
 
     let mesh = load_loaded_a3d_mesh(root, &path, object)?;
     let object_world = object.world_matrix();
-    let light_direction = state
+    let light_ray_direction = state
         .loaded_a3d_lights
         .iter()
         .find(|light| light.intensity > 0.0)
         .and_then(|light| normalized_light_direction(light.direction))
-        .unwrap_or_else(|| Vec3::new(-1.0, -1.0, -1.0));
-    let light_to_surface = light_direction * -1.0;
+        .map(|direction| [direction.x, direction.y, direction.z])
+        .unwrap_or(ascii_3d::render::DEFAULT_LIGHT_RAY_DIRECTION);
+    let surface_to_light = surface_to_light_from_ray_direction(light_ray_direction);
 
     let prepared = prepare_frame_mesh(
         &mesh,
@@ -2601,9 +2593,8 @@ fn draw_loaded_a3d_mesh_object_raster(
             triangle.world_normal[1],
             triangle.world_normal[2],
         );
-        let diffuse = dot_vec3(normal, light_to_surface).max(0.0);
-        let brightness = (0.18 + diffuse * 0.82).clamp(0.0, 1.0);
-        let character = shade_character_for_brightness(brightness);
+        let render_normal = ascii_3d::render::Vec3::new(normal.x, normal.y, normal.z);
+        let character = shade_ascii_lambert(render_normal, surface_to_light, 0.18, 0.82);
 
         rasterize_triangle_clipped(
             inner.width,

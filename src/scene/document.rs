@@ -26,6 +26,7 @@ pub struct DisplayDocument {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct LightingDocument {
+    /// Direction traveled by the light rays.
     pub primary_light_direction: [f32; 3],
 }
 

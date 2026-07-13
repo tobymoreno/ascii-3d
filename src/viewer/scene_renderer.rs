@@ -1,10 +1,11 @@
 use crate::{
     render::{
-        Frame, GeoJsonMapAsset, Mat4, Projection, RenderNode, RenderObject, RenderQuad,
-        RenderQuadGroup, RenderScene, RenderSphereGuideKind, RenderTransform, SphereGuidePoint,
-        Vec3, draw_line, draw_line_overlay, fill_triangle, great_circle_points, land_fill_char,
-        latitude_circle_points, point_in_polygon, prepare_frame_mesh, visit_geojson_segments,
-        visit_lon_lat_samples, visit_prepared_triangles,
+        DEFAULT_LIGHT_RAY_DIRECTION, Frame, GeoJsonMapAsset, Mat4, Projection, RenderNode,
+        RenderObject, RenderQuad, RenderQuadGroup, RenderScene, RenderSphereGuideKind,
+        RenderTransform, SphereGuidePoint, Vec3, draw_line, draw_line_overlay, fill_triangle,
+        great_circle_points, land_fill_char, latitude_circle_points, point_in_polygon,
+        prepare_frame_mesh, shade_ascii_lambert, surface_to_light_from_ray_direction,
+        visit_geojson_segments, visit_lon_lat_samples, visit_prepared_triangles,
     },
     viewer::ViewerState,
 };
@@ -191,13 +192,15 @@ fn viewer_world_matrix(scene: &RenderScene, state: &ViewerState) -> Mat4 {
         )
 }
 
-fn mesh_shade_char(normal: Vec3) -> char {
-    let light = Vec3::new(-0.45, 0.7, -0.55).normalized();
-    let brightness = (0.15_f32 + normal.dot(light).max(0.0_f32) * 0.75_f32).clamp(0.0_f32, 1.0_f32);
-    let ramp = b" .:-=+*#%@";
-    let index = (brightness * (ramp.len() - 1) as f32).round() as usize;
+fn mesh_shade_char(scene: &RenderScene, normal: Vec3) -> char {
+    let light_ray_direction = scene
+        .lighting
+        .as_ref()
+        .map(|lighting| lighting.primary_light_direction)
+        .unwrap_or(DEFAULT_LIGHT_RAY_DIRECTION);
+    let surface_to_light = surface_to_light_from_ray_direction(light_ray_direction);
 
-    ramp[index.min(ramp.len() - 1)] as char
+    shade_ascii_lambert(normal, surface_to_light, 0.18, 0.82)
 }
 
 fn draw_mesh_asset(
@@ -236,7 +239,7 @@ fn draw_mesh_asset(
             triangle.screen[0],
             triangle.screen[1],
             triangle.screen[2],
-            mesh_shade_char(normal),
+            mesh_shade_char(scene, normal),
         );
     });
 }
