@@ -13,7 +13,8 @@ use ratatui::{Terminal, backend::CrosstermBackend, layout::Rect};
 use ascii_3d::{
     editor_ui::{EditorAction, EditorEvent, ObjectHierarchyState, PropertiesState, draw_object_hierarchy, draw_properties_panel},
     render::{
-        GeoJsonMapAsset, lerp_angle_degrees, load_geojson_map_asset, lon_lat_to_sphere, segment_steps,
+        GeoJsonMapAsset, lerp_angle_degrees, load_geojson_map_asset, lon_lat_to_sphere,
+        rasterize_triangle_clipped, segment_steps,
     },
 };
 
@@ -2714,9 +2715,6 @@ fn draw_loaded_a3d_mesh_object_raster(
         })
         .collect::<Vec<_>>();
 
-    let viewport_max_x = inner.width.saturating_sub(1) as i32;
-    let viewport_max_y = inner.height.saturating_sub(1) as i32;
-
     for primitive in &mesh.faces {
         if primitive.len() < 3 {
             continue;
@@ -2777,47 +2775,20 @@ fn draw_loaded_a3d_mesh_object_raster(
                 continue;
             };
 
-            let unclamped_min_x = p0.x.min(p1.x).min(p2.x);
-            let unclamped_max_x = p0.x.max(p1.x).max(p2.x);
-            let unclamped_min_y = p0.y.min(p1.y).min(p2.y);
-            let unclamped_max_y = p0.y.max(p1.y).max(p2.y);
-
-            if unclamped_max_x < 0
-                || unclamped_min_x > viewport_max_x
-                || unclamped_max_y < 0
-                || unclamped_min_y > viewport_max_y
-            {
-                continue;
-            }
-
-            let min_x = unclamped_min_x.clamp(0, viewport_max_x);
-            let max_x = unclamped_max_x.clamp(0, viewport_max_x);
-            let min_y = unclamped_min_y.clamp(0, viewport_max_y);
-            let max_y = unclamped_max_y.clamp(0, viewport_max_y);
-
-            let area = edge_function(p0, p1, p2);
-            if area.abs() <= f32::EPSILON {
-                continue;
-            }
-
-            for y in min_y..=max_y {
-                for x in min_x..=max_x {
+            rasterize_triangle_clipped(
+                inner.width,
+                inner.height,
+                (p0.x, p0.y, z0),
+                (p1.x, p1.y, z1),
+                (p2.x, p2.y, z2),
+                |x, y, depth| {
                     let point = Point2::new(x, y);
-                    let w0 = edge_function(p1, p2, point) / area;
-                    let w1 = edge_function(p2, p0, point) / area;
-                    let w2 = edge_function(p0, p1, point) / area;
-
-                    if w0 < -0.001 || w1 < -0.001 || w2 < -0.001 {
-                        continue;
-                    }
-
-                    let depth = z0 * w0 + z1 * w1 + z2 * w2;
 
                     if depth_buffer.try_update(point, depth) {
                         canvas.set(point, character);
                     }
-                }
-            }
+                },
+            );
         }
     }
 

@@ -10,7 +10,7 @@ mod projection;
 mod raster;
 
 pub use projection::Projection;
-pub use raster::{draw_line, fill_triangle};
+pub use raster::{draw_line, fill_triangle, rasterize_triangle_clipped};
 mod lines;
 mod math;
 
