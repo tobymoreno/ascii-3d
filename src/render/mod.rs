@@ -10,9 +10,14 @@ pub use geojson_map::{
 pub use geojson_pipeline::{visit_geojson_segments, visit_lon_lat_samples};
 mod projection;
 mod raster;
+mod shading;
 
 pub use projection::Projection;
 pub use raster::{draw_line, fill_triangle, rasterize_triangle_clipped};
+pub use shading::{
+    DEFAULT_ASCII_SHADE_RAMP, DEFAULT_LIGHT_RAY_DIRECTION, lambert_brightness,
+    shade_ascii_brightness, shade_ascii_lambert, surface_to_light_from_ray_direction,
+};
 mod lines;
 mod math;
 

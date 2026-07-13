@@ -57,6 +57,8 @@ pub struct RenderProjectionConfig {
 
 #[derive(Clone, Copy, Debug)]
 pub struct RenderLighting {
+    /// Direction traveled by the light rays. Shaders invert this to obtain
+    /// the surface-to-light vector used for Lambert shading.
     pub primary_light_direction: [f32; 3],
 }
 
