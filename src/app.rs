@@ -11,8 +11,8 @@ use ratatui::{Terminal, backend::CrosstermBackend, layout::Rect};
 
 use ascii_3d::{
     editor_ui::{
-        EditorAction, EditorEvent, ObjectHierarchyState, PropertiesState, draw_object_hierarchy,
-        draw_properties_panel,
+        EditorAction, EditorEvent, EditorKeyRepeatGate, ObjectHierarchyState, PropertiesState,
+        WorkspaceKeymap, WorkspaceMenu, draw_object_hierarchy, draw_properties_panel,
     },
     render::{
         GeoJsonMapAsset, MeshPrepareOptions, load_geojson_map_asset, load_prepared_mesh,
@@ -284,25 +284,21 @@ enum ControlMode {
 
 fn next_menu_kind(kind: crate::menu::MenuKind) -> crate::menu::MenuKind {
     match kind {
-        crate::menu::MenuKind::File => crate::menu::MenuKind::Scenes,
-        crate::menu::MenuKind::Scenes => crate::menu::MenuKind::Control,
-        crate::menu::MenuKind::Control => crate::menu::MenuKind::Glyphs,
-        crate::menu::MenuKind::Glyphs => crate::menu::MenuKind::Physics,
-        crate::menu::MenuKind::Physics => crate::menu::MenuKind::Debug,
-        crate::menu::MenuKind::Debug => crate::menu::MenuKind::Help,
+        crate::menu::MenuKind::File => crate::menu::MenuKind::Objects,
+        crate::menu::MenuKind::Objects => crate::menu::MenuKind::View,
+        crate::menu::MenuKind::View => crate::menu::MenuKind::Help,
         crate::menu::MenuKind::Help => crate::menu::MenuKind::File,
+        _ => crate::menu::MenuKind::File,
     }
 }
 
 fn previous_menu_kind(kind: crate::menu::MenuKind) -> crate::menu::MenuKind {
     match kind {
         crate::menu::MenuKind::File => crate::menu::MenuKind::Help,
-        crate::menu::MenuKind::Scenes => crate::menu::MenuKind::File,
-        crate::menu::MenuKind::Control => crate::menu::MenuKind::Scenes,
-        crate::menu::MenuKind::Glyphs => crate::menu::MenuKind::Control,
-        crate::menu::MenuKind::Physics => crate::menu::MenuKind::Glyphs,
-        crate::menu::MenuKind::Debug => crate::menu::MenuKind::Physics,
-        crate::menu::MenuKind::Help => crate::menu::MenuKind::Debug,
+        crate::menu::MenuKind::Objects => crate::menu::MenuKind::File,
+        crate::menu::MenuKind::View => crate::menu::MenuKind::Objects,
+        crate::menu::MenuKind::Help => crate::menu::MenuKind::View,
+        _ => crate::menu::MenuKind::File,
     }
 }
 
@@ -4187,17 +4183,19 @@ fn handle_key_press(state: &mut AppState, key: KeyEvent) -> KeyHandling {
         }
     }
 
+    if let Some(menu) = WorkspaceKeymap::default().menu_for_event(key) {
+        match menu {
+            WorkspaceMenu::File => state.open_menu(crate::menu::MenuKind::File),
+            WorkspaceMenu::Objects => {
+                return apply_app_command(state, AppCommand::OpenWorldObjects);
+            }
+            WorkspaceMenu::View => state.open_menu(crate::menu::MenuKind::View),
+            WorkspaceMenu::Help => state.open_menu(crate::menu::MenuKind::Help),
+        }
+        return KeyHandling::Handled;
+    }
+
     if key.modifiers.contains(KeyModifiers::ALT) {
-        if state.active_menu.is_some() {
-            state.toggle_menu_bar();
-            return KeyHandling::Handled;
-        }
-
-        if state.open_menu_for_hotkey(key_code) {
-            return KeyHandling::Handled;
-        }
-
-        state.open_menu(crate::menu::MenuKind::File);
         return KeyHandling::Handled;
     }
 
@@ -4530,6 +4528,7 @@ pub fn run() -> io::Result<()> {
     let mut previous_time = Instant::now();
     let mut previous_frame: Option<String> = None;
     let mut continuous_input = ContinuousInputSampler::default();
+    let mut editor_key_repeat = EditorKeyRepeatGate::default();
 
     let timings = render_scene(&mut terminal, &state, &assets, &mut previous_frame)?;
     state.record_render_timings(timings);
@@ -4547,12 +4546,28 @@ pub fn run() -> io::Result<()> {
 
         while event::poll(Duration::ZERO)? {
             match event::read()? {
-                Event::Key(key)
-                    if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
-                {
+                Event::Key(key) => {
+                    let editor_owns_input = state.confirm_exit
+                        || state.active_menu.is_some()
+                        || state.scene_browser_open
+                        || state.a3d_file_picker.is_some()
+                        || state.loaded_a3d_hierarchy.is_open()
+                        || state.loaded_a3d_properties.is_open();
+
+                    if editor_owns_input {
+                        if !editor_key_repeat.accept(key, Instant::now()) {
+                            continue;
+                        }
+                    } else {
+                        editor_key_repeat.reset();
+                        if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+                            continue;
+                        }
+                    }
+
                     if is_continuous_control_key(&state, key) {
                         continuous_input.observe(key, Instant::now());
-                    } else if key.kind == KeyEventKind::Press {
+                    } else if editor_owns_input || key.kind == KeyEventKind::Press {
                         continuous_input.clear();
                         match handle_key_press(&mut state, key) {
                             KeyHandling::Quit => {

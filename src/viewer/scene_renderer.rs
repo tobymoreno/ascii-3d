@@ -192,6 +192,14 @@ fn viewer_world_matrix(scene: &RenderScene, state: &ViewerState) -> Mat4 {
         )
 }
 
+fn screen_signed_area(a: (i32, i32, f32), b: (i32, i32, f32), c: (i32, i32, f32)) -> i128 {
+    let abx = i128::from(b.0) - i128::from(a.0);
+    let aby = i128::from(b.1) - i128::from(a.1);
+    let acx = i128::from(c.0) - i128::from(a.0);
+    let acy = i128::from(c.1) - i128::from(a.1);
+    abx * acy - aby * acx
+}
+
 fn mesh_shade_char(scene: &RenderScene, normal: Vec3) -> char {
     let light_ray_direction = scene
         .lighting
@@ -227,8 +235,7 @@ fn draw_mesh_asset(
     visit_prepared_triangles(mesh, &prepared, false, |triangle| {
         if backface_cull {
             let [a, b, c] = triangle.screen;
-            let signed_area = (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0);
-            if signed_area >= 0 {
+            if screen_signed_area(a, b, c) >= 0 {
                 return;
             }
         }
@@ -756,4 +763,20 @@ pub fn draw_render_scene(
         viewport.height.saturating_sub(2),
         "controls: a axes on | A axes off | arrows origin | PgUp/PgDn z | +/- scale object/origin | camera dolly | x/y/z rotate | 0 origin | r reset | q quit",
     );
+}
+
+#[cfg(test)]
+mod overflow_tests {
+    use super::screen_signed_area;
+
+    #[test]
+    fn screen_signed_area_handles_extreme_i32_coordinates() {
+        let area = screen_signed_area(
+            (i32::MIN, i32::MIN, 0.0),
+            (i32::MAX, i32::MIN, 0.0),
+            (i32::MIN, i32::MAX, 0.0),
+        );
+
+        assert!(area > 0);
+    }
 }

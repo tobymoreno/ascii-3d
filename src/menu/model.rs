@@ -7,6 +7,8 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuKind {
     File,
+    Objects,
+    View,
     Scenes,
     Control,
     Glyphs,
@@ -19,6 +21,8 @@ impl MenuKind {
     pub const fn title(self) -> &'static str {
         match self {
             Self::File => "File",
+            Self::Objects => "Objects",
+            Self::View => "View",
             Self::Scenes => "Scenes",
             Self::Control => "Control",
             Self::Glyphs => "Glyphs",
@@ -31,6 +35,8 @@ impl MenuKind {
     pub const fn hotkey(self) -> &'static str {
         match self {
             Self::File => "f",
+            Self::Objects => "o",
+            Self::View => "v",
             Self::Scenes => "m",
             Self::Control => "c",
             Self::Glyphs => "g",
@@ -43,6 +49,8 @@ impl MenuKind {
     pub fn items(self) -> &'static [MenuItem] {
         match self {
             Self::File => FILE_ITEMS,
+            Self::Objects => OBJECT_ITEMS,
+            Self::View => VIEW_ITEMS,
             Self::Scenes => SCENE_ITEMS,
             Self::Control => CONTROL_ITEMS,
             Self::Glyphs => GLYPH_ITEMS,
@@ -149,7 +157,53 @@ impl MenuState {
 const FILE_ITEMS: &[MenuItem] = &[
     MenuItem::real("Load .a3d...", AppCommand::OpenA3dFilePicker),
     MenuItem::real("Reload current .a3d", AppCommand::ReloadA3d),
+    MenuItem::real("Browse scenes...", AppCommand::OpenSceneBrowser),
     MenuItem::real("Exit", AppCommand::Quit),
+];
+
+const OBJECT_ITEMS: &[MenuItem] = &[
+    MenuItem::real("Select object...", AppCommand::OpenWorldObjects),
+    MenuItem::real("World control", AppCommand::SetControlModeScene),
+    MenuItem::real("Camera control", AppCommand::SetControlModeCamera),
+    MenuItem::real("Light control", AppCommand::SetControlModeLight),
+    MenuItem::real("Rotate world +X  [x]", AppCommand::RotateWorldPositiveX),
+    MenuItem::real("Rotate world -X  [X]", AppCommand::RotateWorldNegativeX),
+    MenuItem::real("Rotate world +Y  [y]", AppCommand::RotateWorldPositiveY),
+    MenuItem::real("Rotate world -Y  [Y]", AppCommand::RotateWorldNegativeY),
+    MenuItem::real("Rotate world +Z  [z]", AppCommand::RotateWorldPositiveZ),
+    MenuItem::real("Rotate world -Z  [Z]", AppCommand::RotateWorldNegativeZ),
+    MenuItem::real(
+        "Move origin -X  [Ctrl/Shift+Left]",
+        AppCommand::MoveWorldOriginLeft,
+    ),
+    MenuItem::real(
+        "Move origin +X  [Ctrl/Shift+Right]",
+        AppCommand::MoveWorldOriginRight,
+    ),
+    MenuItem::real(
+        "Move origin +Y  [Ctrl/Shift+Up]",
+        AppCommand::MoveWorldOriginUp,
+    ),
+    MenuItem::real(
+        "Move origin -Y  [Ctrl/Shift+Down]",
+        AppCommand::MoveWorldOriginDown,
+    ),
+    MenuItem::real("Reset world axes/origin", AppCommand::ResetWorldAxes),
+    MenuItem::real("Next glyph stroke", AppCommand::NextGlyphStroke),
+    MenuItem::real("Previous glyph stroke", AppCommand::PreviousGlyphStroke),
+];
+
+const VIEW_ITEMS: &[MenuItem] = &[
+    MenuItem::real("Toggle debug console", AppCommand::ToggleDebugConsole),
+    MenuItem::real("Toggle frame timing", AppCommand::ToggleFrameTiming),
+    MenuItem::real("Toggle world axes", AppCommand::ToggleWorldAxes),
+    MenuItem::real("Toggle world grid", AppCommand::ToggleWorldGrid),
+    MenuItem::real(
+        "Show OS graphics overlay",
+        AppCommand::ShowOsGraphicsOverlay,
+    ),
+    MenuItem::placeholder("Toggle depth view", AppCommand::ToggleDepthView),
+    MenuItem::placeholder("Toggle projection debug", AppCommand::ToggleProjectionDebug),
 ];
 
 const SCENE_ITEMS: &[MenuItem] = &[MenuItem::real(
@@ -216,7 +270,10 @@ const HELP_ITEMS: &[MenuItem] = &[
         "World axes: x/X y/Y z/Z rotate; Ctrl+arrows move origin",
         AppCommand::CloseMenu,
     ),
-    MenuItem::placeholder("Camera: arrows move; +/- dolly; x/y/z rotate", AppCommand::CloseMenu),
+    MenuItem::placeholder(
+        "Camera: arrows move; +/- dolly; x/y/z rotate",
+        AppCommand::CloseMenu,
+    ),
     MenuItem::placeholder("Light mode: WASD/QE move light", AppCommand::CloseMenu),
     MenuItem::placeholder("Menus: j/k or arrows, Enter, Esc", AppCommand::CloseMenu),
 ];

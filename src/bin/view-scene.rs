@@ -1,8 +1,9 @@
 use ascii_3d::{
     a3d::{AssetRef, BehaviorConfig, LoadedWorld, SceneObject, load_a3d_project},
     editor_ui::{
-        EditorAction, EditorEvent, MenuBarState, ObjectHierarchyState, PropertiesState,
-        draw_menu_bar, draw_object_hierarchy, draw_properties_panel,
+        EditorAction, EditorEvent, EditorKeyRepeatGate, MenuBarState, ObjectHierarchyState,
+        PropertiesState, WorkspaceKeymap, WorkspaceMenu, draw_menu_bar, draw_object_hierarchy,
+        draw_properties_panel,
     },
     render::{Frame, GeoJsonMapAsset, RenderScene, apply_render_behaviors_to_scene},
     scene::{
@@ -22,7 +23,7 @@ use ascii_3d::{
 };
 use crossterm::{
     cursor,
-    event::{self, Event, KeyCode},
+    event::{self, Event, KeyCode, KeyEventKind},
     execute,
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -81,6 +82,8 @@ fn run_viewer(
     let mut hierarchy_items = editor_items(&object_entries);
     let menu_definitions = viewer_menu_definitions();
     let mut menu_bar = MenuBarState::default();
+    let keymap = WorkspaceKeymap::default();
+    let mut editor_key_repeat = EditorKeyRepeatGate::default();
     let mut hierarchy = ObjectHierarchyState::default();
     let mut properties = PropertiesState::default();
     let mut save_status: Option<String> = None;
@@ -223,6 +226,22 @@ fn run_viewer(
                 continue;
             };
 
+            let editor_owns_input = inspector.save_as_open
+                || inspector.file_open
+                || properties.is_open()
+                || hierarchy.is_open()
+                || menu_bar.focused();
+            if editor_owns_input {
+                if !editor_key_repeat.accept(key, Instant::now()) {
+                    continue;
+                }
+            } else {
+                editor_key_repeat.reset();
+                if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+                    continue;
+                }
+            }
+
             if inspector.save_as_open {
                 match key.code {
                     KeyCode::Esc => inspector.close_save_as(),
@@ -306,6 +325,29 @@ fn run_viewer(
                 }
 
                 continue;
+            }
+
+            if key.kind == KeyEventKind::Press {
+                if let Some(menu) = keymap.menu_for_event(key) {
+                    match menu {
+                        WorkspaceMenu::File => {
+                            menu_bar.focus_menu(FILE_MENU_ID, &menu_definitions);
+                            inspector.file_open = true;
+                            inspector.selected_file_item = 0;
+                        }
+                        WorkspaceMenu::Objects => {
+                            menu_bar.focus_menu(OBJECTS_MENU_ID, &menu_definitions);
+                            hierarchy.open(&hierarchy_items);
+                        }
+                        WorkspaceMenu::View => {
+                            menu_bar.focus_menu("view", &menu_definitions);
+                        }
+                        WorkspaceMenu::Help => {
+                            menu_bar.focus_menu("help", &menu_definitions);
+                        }
+                    }
+                    continue;
+                }
             }
 
             if properties.is_open() {

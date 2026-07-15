@@ -55,6 +55,18 @@ impl MenuBarState {
         self.focused = true;
     }
 
+    pub fn focus_menu(&mut self, id: &str, definitions: &[MenuDefinition]) -> bool {
+        let Some(index) = definitions
+            .iter()
+            .position(|definition| definition.id.0 == id)
+        else {
+            return false;
+        };
+        self.selected_menu = index;
+        self.focus();
+        true
+    }
+
     pub fn blur(&mut self) {
         self.focused = false;
     }
