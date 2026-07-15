@@ -412,6 +412,18 @@ fn handle_group_transform_key(
     false
 }
 
+const MIN_OBJECT_SCALE: f32 = 0.01;
+const MAX_OBJECT_SCALE: f32 = 100.0;
+const OBJECT_SCALE_FACTOR: f32 = 1.1;
+
+fn scaled_component(value: f32, factor: f32) -> f32 {
+    if !value.is_finite() {
+        return 1.0;
+    }
+
+    (value * factor).clamp(MIN_OBJECT_SCALE, MAX_OBJECT_SCALE)
+}
+
 fn apply_transform_key(transform: &mut RenderTransform, code: KeyCode) {
     match code {
         KeyCode::Left => transform.position[0] -= 0.5,
@@ -427,14 +439,14 @@ fn apply_transform_key(transform: &mut RenderTransform, code: KeyCode) {
         KeyCode::Char('z') => transform.rotation_degrees[2] += 2.0,
         KeyCode::Char('Z') => transform.rotation_degrees[2] -= 2.0,
         KeyCode::Char('+') | KeyCode::Char('=') => {
-            transform.scale[0] *= 1.1;
-            transform.scale[1] *= 1.1;
-            transform.scale[2] *= 1.1;
+            for component in &mut transform.scale {
+                *component = scaled_component(*component, OBJECT_SCALE_FACTOR);
+            }
         }
         KeyCode::Char('-') | KeyCode::Char('_') => {
-            transform.scale[0] = (transform.scale[0] / 1.1).max(0.01);
-            transform.scale[1] = (transform.scale[1] / 1.1).max(0.01);
-            transform.scale[2] = (transform.scale[2] / 1.1).max(0.01);
+            for component in &mut transform.scale {
+                *component = scaled_component(*component, 1.0 / OBJECT_SCALE_FACTOR);
+            }
         }
         KeyCode::Char('0') => {
             transform.position = [0.0, 0.0, 0.0];
@@ -825,5 +837,39 @@ mod tests {
         assert!(lines.iter().any(|line| line == "mesh asset: earth.obj"));
         assert!(lines.iter().any(|line| line.starts_with("node position:")));
         assert!(lines.iter().any(|line| line == "visible: true"));
+    }
+
+    #[test]
+    fn repeated_scale_up_stops_at_maximum() {
+        let mut transform = RenderTransform::default();
+
+        for _ in 0..1_000 {
+            apply_transform_key(&mut transform, KeyCode::Char('+'));
+        }
+
+        assert_eq!(transform.scale, [MAX_OBJECT_SCALE; 3]);
+    }
+
+    #[test]
+    fn repeated_scale_down_stops_at_minimum() {
+        let mut transform = RenderTransform::default();
+
+        for _ in 0..1_000 {
+            apply_transform_key(&mut transform, KeyCode::Char('-'));
+        }
+
+        assert_eq!(transform.scale, [MIN_OBJECT_SCALE; 3]);
+    }
+
+    #[test]
+    fn non_finite_scale_recovers_to_default() {
+        let mut transform = RenderTransform {
+            scale: [f32::INFINITY, f32::NAN, f32::NEG_INFINITY],
+            ..RenderTransform::default()
+        };
+
+        apply_transform_key(&mut transform, KeyCode::Char('+'));
+
+        assert_eq!(transform.scale, [1.0; 3]);
     }
 }

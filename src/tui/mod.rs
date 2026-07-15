@@ -21,11 +21,8 @@ pub struct FilePickerView<'a> {
 
 const MENU_KINDS: &[MenuKind] = &[
     MenuKind::File,
-    MenuKind::Scenes,
-    MenuKind::Control,
-    MenuKind::Glyphs,
-    MenuKind::Physics,
-    MenuKind::Debug,
+    MenuKind::Objects,
+    MenuKind::View,
     MenuKind::Help,
 ];
 

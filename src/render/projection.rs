@@ -74,7 +74,17 @@ impl Projection {
             return None;
         }
 
-        Some((screen_x.round() as i32, screen_y.round() as i32, depth))
+        let rounded_x = screen_x.round() as f64;
+        let rounded_y = screen_y.round() as f64;
+        if rounded_x < i32::MIN as f64
+            || rounded_x > i32::MAX as f64
+            || rounded_y < i32::MIN as f64
+            || rounded_y > i32::MAX as f64
+        {
+            return None;
+        }
+
+        Some((rounded_x as i32, rounded_y as i32, depth))
     }
 }
 
@@ -128,5 +138,13 @@ mod tests {
             invalid.project_xyz(10.0, 0.0, 0.0),
             fallback.project_xyz(10.0, 0.0, 0.0)
         );
+    }
+
+    #[test]
+    fn projection_rejects_coordinates_outside_i32_range() {
+        let projection = Projection::with_camera(100, 50, 20.0, 0.1, 0.5, 0.5);
+
+        assert_eq!(projection.project_xyz(f32::MAX, 0.0, 0.0), None);
+        assert_eq!(projection.project_xyz(0.0, f32::MAX, 0.0), None);
     }
 }
