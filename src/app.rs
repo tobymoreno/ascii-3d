@@ -540,6 +540,8 @@ struct AppState {
     world_camera_yaw_degrees: f32,
     world_camera_pitch_degrees: f32,
     world_origin: Vec3,
+    world_origin_rotation_degrees: Vec3,
+    world_origin_scale: f32,
     loaded_a3d_world: Option<LoadedWorld>,
     loaded_a3d_root: Option<PathBuf>,
     loaded_a3d_manifest_path: Option<PathBuf>,
@@ -584,6 +586,8 @@ impl AppState {
             world_camera_yaw_degrees,
             world_camera_pitch_degrees,
             world_origin: Vec3::zero(),
+            world_origin_rotation_degrees: Vec3::zero(),
+            world_origin_scale: 1.0,
             loaded_a3d_world: None,
             loaded_a3d_root: None,
             loaded_a3d_manifest_path: None,
@@ -979,11 +983,49 @@ impl AppState {
         ));
     }
 
+    fn loaded_a3d_scene_origin_matrix(&self) -> Mat4 {
+        Mat4::translation(
+            self.world_origin.x,
+            self.world_origin.y,
+            self.world_origin.z,
+        ) * Mat4::rotation_x(self.world_origin_rotation_degrees.x.to_radians())
+            * Mat4::rotation_y(self.world_origin_rotation_degrees.y.to_radians())
+            * Mat4::rotation_z(self.world_origin_rotation_degrees.z.to_radians())
+            * Mat4::uniform_scale(self.world_origin_scale)
+    }
+
+    fn rotate_loaded_a3d_scene_origin(&mut self, delta: Vec3) -> bool {
+        self.world_origin_rotation_degrees = Vec3::new(
+            self.world_origin_rotation_degrees.x + delta.x,
+            self.world_origin_rotation_degrees.y + delta.y,
+            self.world_origin_rotation_degrees.z + delta.z,
+        );
+        self.push_debug_console_line(format!(
+            "scene origin rotation: [{:.1}, {:.1}, {:.1}]",
+            self.world_origin_rotation_degrees.x,
+            self.world_origin_rotation_degrees.y,
+            self.world_origin_rotation_degrees.z,
+        ));
+        true
+    }
+
+    fn scale_loaded_a3d_scene_origin(&mut self, factor: f32) -> bool {
+        self.world_origin_scale = (self.world_origin_scale * factor).clamp(0.01, 1000.0);
+        self.push_debug_console_line(format!(
+            "scene origin scale: {:.4}",
+            self.world_origin_scale
+        ));
+        true
+    }
+
     fn reset_world_axes(&mut self) -> bool {
         self.world_origin = Vec3::zero();
-        let rotated = self.reset_loaded_a3d_world_object();
-        self.push_debug_console_line("world axes: reset origin and rotation".to_string());
-        rotated
+        self.world_origin_rotation_degrees = Vec3::zero();
+        self.world_origin_scale = 1.0;
+        self.push_debug_console_line(
+            "scene origin: reset position, rotation, and scale".to_string(),
+        );
+        true
     }
 
     fn rotate_world_camera(&mut self, yaw_delta_degrees: f32, pitch_delta_degrees: f32) {
@@ -1009,7 +1051,7 @@ impl AppState {
             ControlMode::Scene => match event {
                 XyzControlEvent::Rotate { axis, direction } => {
                     let delta = self.xyz_control.rotation_delta(axis, direction);
-                    let handled = self.rotate_loaded_a3d_world_object(delta);
+                    let handled = self.rotate_loaded_a3d_scene_origin(delta);
                     self.push_debug_console_line(format!(
                         "xyzcontrol/world: {} handled={handled}",
                         event.label()
@@ -1238,38 +1280,12 @@ impl AppState {
         self.move_loaded_a3d_light(Vec3::new(0.0, amount, 0.0))
     }
 
-    fn edit_first_loaded_a3d_object_rotation<F>(&mut self, edit: F) -> bool
-    where
-        F: FnOnce([f32; 3]) -> [f32; 3],
-    {
-        let Some(world) = self.loaded_a3d_world.as_mut() else {
-            return false;
-        };
-        let Some(object) = world
-            .objects
-            .iter_mut()
-            .find(|object| !object.editor_hidden)
-        else {
-            return false;
-        };
-
-        object.transform.rotation_degrees = edit(object.transform.rotation_degrees);
-        world.rebuild_parent_matrices();
-        true
-    }
-
     fn rotate_loaded_a3d_world_object(&mut self, delta: Vec3) -> bool {
-        self.edit_first_loaded_a3d_object_rotation(|current| {
-            [
-                current[0] + delta.x,
-                current[1] + delta.y,
-                current[2] + delta.z,
-            ]
-        })
+        self.rotate_loaded_a3d_scene_origin(delta)
     }
 
     fn reset_loaded_a3d_world_object(&mut self) -> bool {
-        self.edit_first_loaded_a3d_object_rotation(|_| [0.0, 0.0, 0.0])
+        self.reset_world_axes()
     }
 
     fn toggle_frame_timing(&mut self) {
@@ -1369,6 +1385,9 @@ impl AppState {
                 .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
         }) {
             Ok((world, camera)) => {
+                self.world_origin = Vec3::zero();
+                self.world_origin_rotation_degrees = Vec3::zero();
+                self.world_origin_scale = 1.0;
                 self.loaded_a3d_workspace.sync_objects(
                     world
                         .objects
@@ -1446,23 +1465,24 @@ impl AppState {
     }
 
     fn scale_active_loaded_a3d_object(&mut self, factor: f32) -> bool {
-        let WorldEditorTarget::Object(target_id) =
-            self.loaded_a3d_workspace.active_xyz_target().clone()
-        else {
-            return false;
-        };
+        match self.loaded_a3d_workspace.active_xyz_target().clone() {
+            WorldEditorTarget::SceneOrigin => self.scale_loaded_a3d_scene_origin(factor),
+            WorldEditorTarget::Camera => false,
+            WorldEditorTarget::Object(target_id) => {
+                let Some(world) = self.loaded_a3d_world.as_mut() else {
+                    return false;
+                };
 
-        let Some(world) = self.loaded_a3d_world.as_mut() else {
-            return false;
-        };
+                if !world.scale_object_uniform(&target_id, factor) {
+                    return false;
+                }
 
-        if !world.scale_object_uniform(&target_id, factor) {
-            return false;
+                self.push_debug_console_line(format!(
+                    "world editor: scaled {target_id} by {factor:.4}"
+                ));
+                true
+            }
         }
-
-        self.push_debug_console_line(format!("world editor: scaled {target_id} by {factor:.4}"));
-
-        true
     }
 
     fn loaded_a3d_editor_items(&self) -> Vec<ascii_3d::editor_ui::EditorItem> {
@@ -2385,6 +2405,7 @@ fn load_loaded_a3d_mesh(
 fn draw_loaded_a3d_mesh_object_in_ws(
     canvas: &mut Canvas,
     projector: &ObliqueProjector,
+    state: &AppState,
     root: &Path,
     object: &crate::a3d::SceneObject,
 ) -> io::Result<()> {
@@ -2397,7 +2418,7 @@ fn draw_loaded_a3d_mesh_object_in_ws(
     };
 
     let mesh = load_loaded_a3d_mesh(root, path, object)?;
-    let object_world = object.world_matrix();
+    let object_world = state.loaded_a3d_scene_origin_matrix() * object.world_matrix();
 
     for (from_index, to_index) in mesh.unique_edges() {
         let from_world = object_world.transform_point(mesh.vertices[from_index]);
@@ -2425,13 +2446,15 @@ fn draw_loaded_a3d_light_gizmos(
             continue;
         }
 
-        let source = light.position;
+        let scene_origin = state.loaded_a3d_scene_origin_matrix();
+        let source = scene_origin.transform_point(light.position);
 
         let Some(gizmo_direction) = normalized_light_direction(light.direction) else {
             continue;
         };
 
-        let tip = source + gizmo_direction * light.gizmo.length;
+        let tip =
+            scene_origin.transform_point(light.position + gizmo_direction * light.gizmo.length);
 
         draw_camera_viewport_depth_line(
             canvas,
@@ -2481,7 +2504,8 @@ fn draw_loaded_a3d_light_gizmos_in_ws(
         // Keep the worldspace light gizmo fixed in screen-cell length, but aim
         // it using the actual A3D light direction so XyzControl light rotation
         // is visible immediately.
-        let source = light.position;
+        let scene_origin = state.loaded_a3d_scene_origin_matrix();
+        let source = scene_origin.transform_point(light.position);
         let source_screen = projector.project(source);
 
         let Some(gizmo_direction) = normalized_light_direction(light.direction) else {
@@ -2489,7 +2513,8 @@ fn draw_loaded_a3d_light_gizmos_in_ws(
             continue;
         };
 
-        let direction_tip_screen = projector.project(source + gizmo_direction);
+        let direction_tip_screen =
+            projector.project(scene_origin.transform_point(light.position + gizmo_direction));
         let dx = (direction_tip_screen.x - source_screen.x) as f32;
         let dy = (direction_tip_screen.y - source_screen.y) as f32;
         let distance = (dx * dx + dy * dy).sqrt();
@@ -2566,7 +2591,7 @@ fn draw_loaded_a3d_mesh_object_raster(
     };
 
     let mesh = load_loaded_a3d_mesh(root, &path, object)?;
-    let object_world = object.world_matrix();
+    let object_world = state.loaded_a3d_scene_origin_matrix() * object.world_matrix();
     let light_ray_direction = state
         .loaded_a3d_lights
         .iter()
@@ -2668,7 +2693,7 @@ fn draw_loaded_a3d_geo_json_map_object(
     };
 
     let map = load_loaded_a3d_map(root, path)?;
-    let object_world = object.world_matrix();
+    let object_world = state.loaded_a3d_scene_origin_matrix() * object.world_matrix();
     let object_center_world = object_world.transform_point(Vec3::new(0.0, 0.0, 0.0));
     let object_center_camera = world_to_camera_space(state, object_center_world);
     let character = object.render.stroke_character.unwrap_or('*');
@@ -2710,6 +2735,7 @@ fn draw_loaded_a3d_geo_json_map_object(
 fn draw_loaded_a3d_geo_json_map_object_in_ws(
     canvas: &mut Canvas,
     projector: &ObliqueProjector,
+    state: &AppState,
     root: &Path,
     object: &crate::a3d::SceneObject,
 ) -> io::Result<()> {
@@ -2722,7 +2748,7 @@ fn draw_loaded_a3d_geo_json_map_object_in_ws(
     };
 
     let map = load_loaded_a3d_map(root, path)?;
-    let object_world = object.world_matrix();
+    let object_world = state.loaded_a3d_scene_origin_matrix() * object.world_matrix();
     let character = object.render.stroke_character.unwrap_or('*');
 
     visit_geojson_segments(
@@ -2773,7 +2799,7 @@ fn draw_loaded_a3d_mesh_object(
     };
 
     let mesh = load_loaded_a3d_mesh(root, path, object)?;
-    let object_world = object.world_matrix();
+    let object_world = state.loaded_a3d_scene_origin_matrix() * object.world_matrix();
     let character = object.render.stroke_character.unwrap_or('#');
     let edge_stride = loaded_a3d_object_edge_stride(root, object);
 
@@ -2817,7 +2843,7 @@ fn draw_loaded_a3d_word_object(
 
     let word_path = resolve_a3d_asset_path(root, path)?;
     let word: WordAsset = read_json(&word_path)?;
-    let object_world = object.world_matrix();
+    let object_world = state.loaded_a3d_scene_origin_matrix() * object.world_matrix();
     let stroke_character = object
         .render
         .stroke_character
@@ -2998,7 +3024,7 @@ fn draw_loaded_a3d_word_object_in_ws(
 
     let word_path = resolve_a3d_asset_path(root, path)?;
     let word: WordAsset = read_json(&word_path)?;
-    let object_world = object.world_matrix();
+    let object_world = state.loaded_a3d_scene_origin_matrix() * object.world_matrix();
     let stroke_character = object
         .render
         .stroke_character
@@ -3080,8 +3106,8 @@ fn draw_loaded_a3d_objects_in_ws(
             continue;
         }
         draw_loaded_a3d_word_object_in_ws(canvas, projector, state, root, object)?;
-        draw_loaded_a3d_mesh_object_in_ws(canvas, projector, root, object)?;
-        draw_loaded_a3d_geo_json_map_object_in_ws(canvas, projector, root, object)?;
+        draw_loaded_a3d_mesh_object_in_ws(canvas, projector, state, root, object)?;
+        draw_loaded_a3d_geo_json_map_object_in_ws(canvas, projector, state, root, object)?;
     }
 
     draw_loaded_a3d_light_gizmos_in_ws(canvas, projector, state)?;
@@ -3161,10 +3187,11 @@ fn render_loaded_a3d_ws_camera_workspace(
     state: &AppState,
     projector: &ObliqueProjector,
 ) {
-    let origin = state.world_origin;
-    let positive_x = Vec3::new(origin.x + 4.0, origin.y, origin.z);
-    let positive_y = Vec3::new(origin.x, origin.y + 3.0, origin.z);
-    let negative_z = Vec3::new(origin.x, origin.y, origin.z - 4.0);
+    let scene_origin = state.loaded_a3d_scene_origin_matrix();
+    let origin = scene_origin.transform_point(Vec3::zero());
+    let positive_x = scene_origin.transform_point(Vec3::new(4.0, 0.0, 0.0));
+    let positive_y = scene_origin.transform_point(Vec3::new(0.0, 3.0, 0.0));
+    let negative_z = scene_origin.transform_point(Vec3::new(0.0, 0.0, -4.0));
 
     canvas.draw_line(
         projector.project(origin),
@@ -4657,7 +4684,7 @@ pub fn run() -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AppState, asset_path, default_a3d_root_path, load_mesh_asset};
+    use super::{AppState, Vec3, asset_path, default_a3d_root_path, dot_vec3, load_mesh_asset};
     use crate::scenes::Scene;
     use std::path::Path;
 
@@ -4809,6 +4836,26 @@ mod tests {
             ),
             (60, 17)
         );
+    }
+
+    #[test]
+    fn loaded_a3d_scene_origin_matrix_transforms_origin_and_axes_together() {
+        let mut state = AppState::new();
+        state.world_origin = Vec3::new(2.0, 3.0, 4.0);
+        state.world_origin_rotation_degrees = Vec3::new(0.0, 90.0, 0.0);
+        state.world_origin_scale = 2.0;
+
+        let matrix = state.loaded_a3d_scene_origin_matrix();
+        let origin = matrix.transform_point(Vec3::zero());
+        let x_axis = matrix.transform_point(Vec3::new(1.0, 0.0, 0.0));
+
+        assert!((origin.x - 2.0).abs() < 0.001);
+        assert!((origin.y - 3.0).abs() < 0.001);
+        assert!((origin.z - 4.0).abs() < 0.001);
+        let axis_delta = x_axis - origin;
+        assert!((dot_vec3(axis_delta, axis_delta).sqrt() - 2.0).abs() < 0.001);
+        assert!((x_axis.y - origin.y).abs() < 0.001);
+        assert!((x_axis.x - 4.0).abs() > 0.001);
     }
 
     #[test]
