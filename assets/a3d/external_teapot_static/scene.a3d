@@ -102,8 +102,9 @@
   "version": 1,
   "viewport": {
     "camera_view": {
-      "cell_aspect_ratio": 0.6,
-      "perspective_scale": 22.0
+      "cell_aspect_ratio": 2.0,
+      "perspective_scale": 22.0,
+      "aspect_ratio": "16:9"
     },
     "show_camera3d": true,
     "show_world_debug": true

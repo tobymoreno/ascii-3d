@@ -151,15 +151,7 @@ fn find_quad_group(scene: &RenderScene) -> Option<&RenderQuadGroup> {
 }
 
 fn quad_matrix(scene: &RenderScene, quad: &RenderQuad, state: &ViewerState) -> Mat4 {
-    let root = Mat4::translation(Vec3::new(state.origin_x, state.origin_y, state.origin_z))
-        * Mat4::rotation_x(state.rotation_x_degrees.to_radians())
-        * Mat4::rotation_y(state.rotation_y_degrees.to_radians())
-        * Mat4::rotation_z(state.rotation_z_degrees.to_radians())
-        * Mat4::scale(
-            scene.display.world_scale * state.zoom,
-            scene.display.world_scale * state.zoom,
-            scene.display.world_scale * state.zoom,
-        );
+    let root = viewer_world_matrix(scene, state);
 
     root * Mat4::translation(Vec3::new(
         quad.position[0],
@@ -180,7 +172,7 @@ fn render_transform_matrix(transform: RenderTransform) -> Mat4 {
         * Mat4::scale(transform.scale[0], transform.scale[1], transform.scale[2])
 }
 
-fn viewer_world_matrix(scene: &RenderScene, state: &ViewerState) -> Mat4 {
+fn scene_origin_matrix(scene: &RenderScene, state: &ViewerState) -> Mat4 {
     Mat4::translation(Vec3::new(state.origin_x, state.origin_y, state.origin_z))
         * Mat4::rotation_x(state.rotation_x_degrees.to_radians())
         * Mat4::rotation_y(state.rotation_y_degrees.to_radians())
@@ -190,6 +182,37 @@ fn viewer_world_matrix(scene: &RenderScene, state: &ViewerState) -> Mat4 {
             scene.display.world_scale * state.zoom,
             scene.display.world_scale * state.zoom,
         )
+}
+
+fn camera_view_matrix(scene: &RenderScene, state: &ViewerState) -> Mat4 {
+    let camera_distance = scene
+        .active_camera()
+        .map(|camera| camera.projection.camera_distance)
+        .unwrap_or(0.0);
+    let projection_camera_position = Vec3::new(0.0, 0.0, -camera_distance);
+    let viewer_camera_position = Vec3::new(
+        state.camera_target_x,
+        state.camera_target_y,
+        -camera_distance + state.camera_target_z + state.camera_dolly,
+    );
+
+    // Projection historically assumes a camera at (0, 0, -camera_distance).
+    // Rotate around the actual viewer-camera position, then return to that
+    // implicit projection camera. This changes the view without changing the
+    // scene-origin transform or pivoting around the world origin.
+    Mat4::translation(projection_camera_position)
+        * Mat4::rotation_z(-state.camera_roll_degrees.to_radians())
+        * Mat4::rotation_x(-state.camera_pitch_degrees.to_radians())
+        * Mat4::rotation_y(-state.camera_yaw_degrees.to_radians())
+        * Mat4::translation(Vec3::new(
+            -viewer_camera_position.x,
+            -viewer_camera_position.y,
+            -viewer_camera_position.z,
+        ))
+}
+
+fn viewer_world_matrix(scene: &RenderScene, state: &ViewerState) -> Mat4 {
+    camera_view_matrix(scene, state) * scene_origin_matrix(scene, state)
 }
 
 fn screen_signed_area(a: (i32, i32, f32), b: (i32, i32, f32), c: (i32, i32, f32)) -> i128 {
@@ -249,6 +272,29 @@ fn draw_mesh_asset(
             mesh_shade_char(scene, normal),
         );
     });
+
+    // Explicit two-point primitives are used by generated glyph and word
+    // stroke meshes. They are not triangles, so draw them as projected lines.
+    for primitive in &mesh.faces {
+        let [a_index, b_index] = primitive.as_slice() else {
+            continue;
+        };
+        let Some(a) = prepared
+            .vertices
+            .get(*a_index)
+            .and_then(|vertex| vertex.screen)
+        else {
+            continue;
+        };
+        let Some(b) = prepared
+            .vertices
+            .get(*b_index)
+            .and_then(|vertex| vertex.screen)
+        else {
+            continue;
+        };
+        draw_line_overlay(frame, a, b, '*');
+    }
 }
 
 fn draw_geojson_map_asset(
@@ -652,7 +698,7 @@ pub fn draw_render_scene(
             2,
             2,
             &format!(
-                "rot x/y/z = {:+.1}/{:+.1}/{:+.1} | zoom {:.2}",
+                "scene rot x/y/z = {:+.1}/{:+.1}/{:+.1} | scale {:.2}",
                 state.rotation_x_degrees,
                 state.rotation_y_degrees,
                 state.rotation_z_degrees,
@@ -662,6 +708,20 @@ pub fn draw_render_scene(
         frame.draw_text(
             2,
             3,
+            &format!(
+                "camera yaw/pitch/roll = {:+.1}/{:+.1}/{:+.1} | target {:+.1}/{:+.1}/{:+.1} | dolly {:+.1}",
+                state.camera_yaw_degrees,
+                state.camera_pitch_degrees,
+                state.camera_roll_degrees,
+                state.camera_target_x,
+                state.camera_target_y,
+                state.camera_target_z,
+                state.camera_dolly,
+            ),
+        );
+        frame.draw_text(
+            2,
+            4,
             &format!(
                 "origin x/y/z = {:+.1}/{:+.1}/{:+.1} | axes {} | fps {:>5.1} | frame {:>5.2} ms",
                 state.origin_x,
@@ -675,20 +735,12 @@ pub fn draw_render_scene(
         frame.draw_text(
             2,
             viewport.height.saturating_sub(2),
-            "controls: a axes on | A axes off | arrows origin | PgUp/PgDn z | +/- scale object/origin | camera dolly | x/y/z rotate | 0 origin | r reset | q quit",
+            "controls depend on target: Camera arrows target, PgUp/PgDn or +/- dolly, x/y/z orbit | Scene Origin arrows/PgUp/PgDn move, +/- scale, x/y/z rotate | r reset target | q quit",
         );
         return;
     };
 
-    let root = Mat4::translation(Vec3::new(state.origin_x, state.origin_y, state.origin_z))
-        * Mat4::rotation_x(state.rotation_x_degrees.to_radians())
-        * Mat4::rotation_y(state.rotation_y_degrees.to_radians())
-        * Mat4::rotation_z(state.rotation_z_degrees.to_radians())
-        * Mat4::scale(
-            scene.display.world_scale * state.zoom,
-            scene.display.world_scale * state.zoom,
-            scene.display.world_scale * state.zoom,
-        );
+    let root = viewer_world_matrix(scene, state);
 
     let local_corners = [
         Vec3::new(-0.5, -0.5, 0.0),
@@ -738,7 +790,7 @@ pub fn draw_render_scene(
         2,
         2,
         &format!(
-            "rot x/y/z = {:+.1}/{:+.1}/{:+.1} | zoom {:.2}",
+            "scene rot x/y/z = {:+.1}/{:+.1}/{:+.1} | scale {:.2}",
             state.rotation_x_degrees,
             state.rotation_y_degrees,
             state.rotation_z_degrees,
@@ -748,6 +800,20 @@ pub fn draw_render_scene(
     frame.draw_text(
         2,
         3,
+        &format!(
+            "camera yaw/pitch/roll = {:+.1}/{:+.1}/{:+.1} | target {:+.1}/{:+.1}/{:+.1} | dolly {:+.1}",
+            state.camera_yaw_degrees,
+            state.camera_pitch_degrees,
+            state.camera_roll_degrees,
+            state.camera_target_x,
+            state.camera_target_y,
+            state.camera_target_z,
+            state.camera_dolly,
+        ),
+    );
+    frame.draw_text(
+        2,
+        4,
         &format!(
             "origin x/y/z = {:+.1}/{:+.1}/{:+.1} | axes {} | fps {:>5.1} | frame {:>5.2} ms",
             state.origin_x,
@@ -761,8 +827,65 @@ pub fn draw_render_scene(
     frame.draw_text(
         2,
         viewport.height.saturating_sub(2),
-        "controls: a axes on | A axes off | arrows origin | PgUp/PgDn z | +/- scale object/origin | camera dolly | x/y/z rotate | 0 origin | r reset | q quit",
+        "controls depend on target: Camera arrows target, PgUp/PgDn or +/- dolly, x/y/z orbit | Scene Origin arrows/PgUp/PgDn move, +/- scale, x/y/z rotate | r reset target | q quit",
     );
+}
+
+#[cfg(test)]
+mod camera_view_tests {
+    use super::{camera_view_matrix, scene_origin_matrix};
+    use crate::{
+        render::{
+            RenderCamera, RenderDisplay, RenderProjectionConfig, RenderScene, RenderTransform, Vec3,
+        },
+        viewer::ViewerState,
+    };
+
+    fn scene_with_camera(distance: f32) -> RenderScene {
+        let mut scene = RenderScene::new("test", RenderDisplay { world_scale: 1.0 });
+        scene.cameras.push(RenderCamera {
+            id: "camera".to_string(),
+            transform: RenderTransform::default(),
+            projection: RenderProjectionConfig {
+                camera_distance: distance,
+                near_clip: 0.1,
+                vertical_center_ratio: 0.5,
+            },
+        });
+        scene.active_camera_id = Some("camera".to_string());
+        scene
+    }
+
+    #[test]
+    fn camera_yaw_changes_view_without_changing_scene_origin_matrix() {
+        let scene = scene_with_camera(20.0);
+        let base = ViewerState::default();
+        let mut yawed = base;
+        yawed.camera_yaw_degrees = 30.0;
+
+        assert_eq!(
+            scene_origin_matrix(&scene, &base),
+            scene_origin_matrix(&scene, &yawed)
+        );
+        assert_ne!(
+            camera_view_matrix(&scene, &base).transform_point(Vec3::new(1.0, 0.0, 0.0)),
+            camera_view_matrix(&scene, &yawed).transform_point(Vec3::new(1.0, 0.0, 0.0)),
+        );
+    }
+
+    #[test]
+    fn camera_rotation_keeps_camera_position_fixed() {
+        let scene = scene_with_camera(20.0);
+        let mut state = ViewerState::default();
+        state.camera_yaw_degrees = 45.0;
+        state.camera_pitch_degrees = 20.0;
+
+        let camera_position = Vec3::new(0.0, 0.0, -20.0);
+        assert_eq!(
+            camera_view_matrix(&scene, &state).transform_point(camera_position),
+            camera_position,
+        );
+    }
 }
 
 #[cfg(test)]

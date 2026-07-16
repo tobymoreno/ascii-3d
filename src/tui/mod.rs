@@ -3,12 +3,14 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Tabs, Widget},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Widget},
 };
+
+use ascii_3d::editor_ui::{MenuBarState, draw_menu_bar, draw_menu_popup};
 
 use crate::{
     canvas::Canvas,
-    menu::{MenuKind, MenuState},
+    menu::{MenuState, VISIBLE_MENU_KINDS, visible_menu_definitions},
 };
 
 pub struct FilePickerView<'a> {
@@ -19,18 +21,12 @@ pub struct FilePickerView<'a> {
     pub error: Option<&'a str>,
 }
 
-const MENU_KINDS: &[MenuKind] = &[
-    MenuKind::File,
-    MenuKind::Objects,
-    MenuKind::View,
-    MenuKind::Help,
-];
-
 pub fn draw(
     frame: &mut Frame<'_>,
     scene_canvas: &Canvas,
     camera_viewport_canvas: Option<&Canvas>,
     active_menu: Option<&MenuState>,
+    header_status: &str,
     debug_popup_lines: Option<&[String]>,
     frame_timing_lines: Option<&[String]>,
     file_picker_view: Option<FilePickerView<'_>>,
@@ -42,7 +38,22 @@ pub fn draw(
         .constraints([Constraint::Length(1), Constraint::Min(1)])
         .split(area);
 
-    draw_menu_bar(frame, shell[0], active_menu.map(MenuState::kind));
+    let menu_definitions = visible_menu_definitions();
+    let selected_menu = active_menu
+        .and_then(|menu| {
+            VISIBLE_MENU_KINDS
+                .iter()
+                .position(|kind| *kind == menu.kind())
+        })
+        .unwrap_or(0);
+    let menu_bar_state = MenuBarState::with_selected(active_menu.is_some(), selected_menu);
+    draw_menu_bar(
+        frame,
+        shell[0],
+        &menu_definitions,
+        &menu_bar_state,
+        header_status,
+    );
 
     if let Some(camera_viewport_canvas) = camera_viewport_canvas {
         let max_camera_panel_height = shell[1].height.saturating_sub(1).max(1);
@@ -87,42 +98,15 @@ pub fn draw(
     }
 
     if let Some(menu) = active_menu {
+        let definition = menu.kind().definition();
         draw_menu_popup(
             frame,
-            menu,
-            centered_rect(54, menu.kind().items().len() as u16 + 4, area),
+            centered_rect(56, definition.entries.len() as u16 + 4, area),
+            &definition,
+            menu.selected_index(),
+            None,
         );
     }
-}
-
-fn draw_menu_bar(frame: &mut Frame<'_>, area: Rect, active_menu_kind: Option<MenuKind>) {
-    let titles = MENU_KINDS
-        .iter()
-        .map(|menu| {
-            let label = if Some(*menu) == active_menu_kind {
-                format!(" ▶ {}:{} ◀ ", menu.title(), menu.hotkey())
-            } else {
-                format!(" {}:{} ", menu.title(), menu.hotkey())
-            };
-
-            Line::from(vec![Span::raw(label)])
-        })
-        .collect::<Vec<_>>();
-
-    let selected = active_menu_kind
-        .and_then(|active| MENU_KINDS.iter().position(|menu| *menu == active))
-        .unwrap_or(0);
-
-    let tabs = Tabs::new(titles)
-        .divider(" ")
-        .select(selected)
-        .highlight_style(
-            Style::default()
-                .add_modifier(Modifier::REVERSED)
-                .add_modifier(Modifier::BOLD),
-        );
-
-    frame.render_widget(tabs, area);
 }
 
 fn draw_scene(frame: &mut Frame<'_>, scene_canvas: &Canvas, area: Rect) {
@@ -247,47 +231,6 @@ fn draw_file_picker(frame: &mut Frame<'_>, view: FilePickerView<'_>, area: Rect)
         height: 1,
     };
     frame.render_widget(Paragraph::new(help), help_area);
-}
-
-fn draw_menu_popup(frame: &mut Frame<'_>, menu: &MenuState, area: Rect) {
-    let items = menu
-        .kind()
-        .items()
-        .iter()
-        .enumerate()
-        .map(|(index, item)| {
-            let selector = if index == menu.selected_index() {
-                ">"
-            } else {
-                " "
-            };
-            let placeholder = if item.placeholder {
-                " (placeholder)"
-            } else {
-                ""
-            };
-
-            ListItem::new(Line::from(format!(
-                "{selector} {}{placeholder}",
-                item.label
-            )))
-        })
-        .collect::<Vec<_>>();
-
-    let list = List::new(items).block(
-        Block::default()
-            .title(Line::from(vec![
-                Span::styled(
-                    menu.kind().title(),
-                    Style::default().add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(format!(" menu [{}]", menu.kind().hotkey())),
-            ]))
-            .borders(Borders::ALL),
-    );
-
-    frame.render_widget(Clear, area);
-    frame.render_widget(list, area);
 }
 
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {

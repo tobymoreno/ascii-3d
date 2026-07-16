@@ -1,7 +1,7 @@
 use crate::{
     editor_ui::{
-        EditorAction, EditorCapabilities, EditorItem, EditorTarget, EditorTargetKind, MenuDefinition,
-        MenuEntry, MenuId, PropertyRow,
+        EditorAction, EditorCapabilities, EditorItem, EditorTarget, EditorTargetKind,
+        MenuCapabilities, MenuDefinition, PropertyRow, shared_menu_definitions,
     },
     render::RenderScene,
 };
@@ -10,49 +10,50 @@ use super::{
     SceneObjectEntry, SceneObjectKind, scene_helper_property_lines, scene_object_property_lines,
 };
 
-pub const FILE_MENU_ID: &str = "file";
-pub const OBJECTS_MENU_ID: &str = "objects";
+pub use crate::editor_ui::{DEBUG_MENU_ID, FILE_MENU_ID, OBJECTS_MENU_ID};
 
-pub fn viewer_menu_definitions() -> Vec<MenuDefinition> {
-    vec![
-        MenuDefinition {
-            id: MenuId::new(FILE_MENU_ID),
-            label: "File".to_string(),
-            hotkey: Some('f'),
-            entries: vec![
-                MenuEntry::Action {
-                    id: "save".to_string(),
-                    label: "Save".to_string(),
-                    enabled: true,
-                    shortcut: None,
-                },
-                MenuEntry::Action {
-                    id: "save-as".to_string(),
-                    label: "Save As...".to_string(),
-                    enabled: true,
-                    shortcut: None,
-                },
-            ],
-        },
-        MenuDefinition {
-            id: MenuId::new(OBJECTS_MENU_ID),
-            label: "Objects".to_string(),
-            hotkey: Some('o'),
-            entries: Vec::new(),
-        },
-        MenuDefinition {
-            id: MenuId::new("view"),
-            label: "View".to_string(),
-            hotkey: Some('v'),
-            entries: Vec::new(),
-        },
-        MenuDefinition {
-            id: MenuId::new("help"),
-            label: "Help".to_string(),
-            hotkey: Some('h'),
-            entries: Vec::new(),
-        },
-    ]
+pub fn viewer_menu_definitions(_save_enabled: bool) -> Vec<MenuDefinition> {
+    let mut definitions = shared_menu_definitions(MenuCapabilities {
+        can_open: true,
+        can_reload: true,
+        can_save: false,
+        can_save_as: false,
+        can_browse_scenes: true,
+        can_exit: true,
+        can_toggle_log: false,
+        can_open_raylib_gui: false,
+    });
+
+    if let Some(file) = definitions
+        .iter_mut()
+        .find(|definition| definition.id.0 == crate::editor_ui::FILE_MENU_ID)
+    {
+        file.entries.retain(|entry| {
+            !matches!(
+                entry,
+                crate::editor_ui::MenuEntry::Action { id, .. }
+                    if id == crate::editor_ui::FILE_SAVE_ID
+                        || id == crate::editor_ui::FILE_SAVE_AS_ID
+            )
+        });
+
+        let mut compact = Vec::with_capacity(file.entries.len());
+        for entry in file.entries.drain(..) {
+            if matches!(entry, crate::editor_ui::MenuEntry::Separator)
+                && (compact.is_empty()
+                    || matches!(compact.last(), Some(crate::editor_ui::MenuEntry::Separator)))
+            {
+                continue;
+            }
+            compact.push(entry);
+        }
+        while matches!(compact.last(), Some(crate::editor_ui::MenuEntry::Separator)) {
+            compact.pop();
+        }
+        file.entries = compact;
+    }
+
+    definitions
 }
 
 pub fn editor_items(entries: &[SceneObjectEntry]) -> Vec<EditorItem> {
@@ -87,8 +88,11 @@ fn editor_item(entry: &SceneObjectEntry) -> EditorItem {
         ),
         label: entry.name.clone(),
         depth: entry.depth,
-        visible: (!matches!(kind, EditorTargetKind::Camera | EditorTargetKind::SceneOrigin))
-            .then_some(entry.visible),
+        visible: (!matches!(
+            kind,
+            EditorTargetKind::Camera | EditorTargetKind::SceneOrigin
+        ))
+        .then_some(entry.visible),
         has_children: matches!(kind, EditorTargetKind::Group),
         capabilities,
     }
@@ -121,7 +125,6 @@ pub fn property_rows(
             action: EditorAction::ToggleVisibility,
         });
     }
-
 
     rows.push(PropertyRow::Action {
         id: "reset-transform".to_string(),

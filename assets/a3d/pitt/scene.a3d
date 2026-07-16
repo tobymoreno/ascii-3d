@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "title": "pitt_axes_scene",
+  "world": {
+    "physics": {
+      "gravity": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "damping": 0.01,
+      "bounds_min": [
+        -20.0,
+        -20.0,
+        -20.0
+      ],
+      "bounds_max": [
+        20.0,
+        20.0,
+        20.0
+      ]
+    }
+  },
+  "camera": {
+    "position": [
+      2.5,
+      1.5,
+      6.0
+    ],
+    "target": [
+      2.5,
+      1.0,
+      0.0
+    ],
+    "near": 0.1,
+    "far": 100.0,
+    "fov_degrees": 60.0
+  },
+  "viewport": {
+    "show_world_debug": true,
+    "show_camera3d": true,
+    "camera_view": {
+      "aspect_ratio": "16:9",
+      "cell_aspect_ratio": 2.0,
+      "perspective_scale": 34.0
+    }
+  },
+  "objects": [
+    {
+      "id": "word_pitt",
+      "asset": {
+        "type": "word",
+        "path": "../../words/pitt.word.json"
+      },
+      "transform": {
+        "position": [
+          0.25,
+          0.35,
+          0.0
+        ],
+        "rotation_degrees": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          0.85,
+          0.85,
+          0.85
+        ]
+      },
+      "render": {
+        "visible": true
+      },
+      "behaviors": [
+        {
+          "type": "static"
+        }
+      ]
+    }
+  ]
+}
