@@ -36,6 +36,7 @@ impl WorldEditorTarget {
 pub struct WorldEditorEntry {
     pub target: WorldEditorTarget,
     pub visible: Option<bool>,
+    pub gizmo_visible: bool,
 }
 
 impl WorldEditorEntry {
@@ -43,6 +44,7 @@ impl WorldEditorEntry {
         Self {
             target: WorldEditorTarget::Camera,
             visible: None,
+            gizmo_visible: true,
         }
     }
 
@@ -50,6 +52,7 @@ impl WorldEditorEntry {
         Self {
             target: WorldEditorTarget::SceneOrigin,
             visible: None,
+            gizmo_visible: true,
         }
     }
 
@@ -57,6 +60,7 @@ impl WorldEditorEntry {
         Self {
             target: WorldEditorTarget::Object(id.into()),
             visible: Some(visible),
+            gizmo_visible: true,
         }
     }
 }
@@ -183,6 +187,11 @@ impl LoadedA3dWorkspace {
     {
         let previous_inspected = self.inspected_target.clone();
         let previous_active = self.active_xyz_target.clone();
+        let previous_gizmos = self
+            .entries
+            .iter()
+            .map(|entry| (entry.target.clone(), entry.gizmo_visible))
+            .collect::<Vec<_>>();
 
         self.entries.clear();
         self.entries.push(WorldEditorEntry::camera());
@@ -192,6 +201,15 @@ impl LoadedA3dWorkspace {
                 .into_iter()
                 .map(|(id, visible)| WorldEditorEntry::object(id, visible)),
         );
+
+        for entry in &mut self.entries {
+            if let Some((_, visible)) = previous_gizmos
+                .iter()
+                .find(|(target, _)| target == &entry.target)
+            {
+                entry.gizmo_visible = *visible;
+            }
+        }
 
         self.selected_entry = self
             .selected_entry
@@ -208,6 +226,23 @@ impl LoadedA3dWorkspace {
 
     pub fn is_xyz_active(&self, target: &WorldEditorTarget) -> bool {
         &self.active_xyz_target == target
+    }
+
+    pub fn gizmo_visible(&self, target: &WorldEditorTarget) -> bool {
+        self.entries
+            .iter()
+            .find(|entry| &entry.target == target)
+            .map(|entry| entry.gizmo_visible)
+            .unwrap_or(false)
+    }
+
+    pub fn toggle_gizmo(&mut self, target: &WorldEditorTarget) -> Option<bool> {
+        let entry = self
+            .entries
+            .iter_mut()
+            .find(|entry| &entry.target == target)?;
+        entry.gizmo_visible = !entry.gizmo_visible;
+        Some(entry.gizmo_visible)
     }
 
     fn contains_target(&self, target: &WorldEditorTarget) -> bool {

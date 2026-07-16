@@ -668,6 +668,60 @@ fn draw_meshes(
         .sum()
 }
 
+fn join_scene_path(parent: &str, id: &str) -> String {
+    if parent.is_empty() {
+        id.to_string()
+    } else {
+        format!("{parent}/{id}")
+    }
+}
+
+fn target_matrix_in_group(
+    group: &crate::render::RenderGroup,
+    parent_path: &str,
+    parent_world: Mat4,
+    requested_path: &str,
+) -> Option<Mat4> {
+    let path = join_scene_path(parent_path, &group.id);
+    let world = parent_world * render_transform_matrix(group.transform);
+    if path == requested_path {
+        return Some(world);
+    }
+    for node in &group.children {
+        match node {
+            RenderNode::Group(child) => {
+                if let Some(found) = target_matrix_in_group(child, &path, world, requested_path) {
+                    return Some(found);
+                }
+            }
+            RenderNode::Object(object) => {
+                if join_scene_path(&path, &object.id) == requested_path {
+                    return Some(world * render_transform_matrix(object.transform));
+                }
+            }
+        }
+    }
+    None
+}
+
+fn active_transform_gizmo_matrix(
+    scene: &RenderScene,
+    state: &ViewerState,
+    path: &str,
+) -> Option<Mat4> {
+    if path == crate::viewer::SCENE_ORIGIN_HELPER_PATH {
+        return Some(viewer_world_matrix(scene, state));
+    }
+    if path == crate::viewer::CAMERA_HELPER_PATH {
+        return None;
+    }
+    let root = viewer_world_matrix(scene, state);
+    scene
+        .groups
+        .iter()
+        .find_map(|group| target_matrix_in_group(group, "", root, path))
+}
+
 pub fn draw_render_scene(
     frame: &mut Frame,
     viewport: ViewerViewport,
@@ -675,6 +729,7 @@ pub fn draw_render_scene(
     meshes: &HashMap<String, Arc<crate::mesh::Mesh>>,
     maps: &HashMap<String, GeoJsonMapAsset>,
     state: &ViewerState,
+    active_gizmo_path: Option<&str>,
 ) {
     let viewport = viewport.clamped();
 
@@ -732,6 +787,11 @@ pub fn draw_render_scene(
                 state.frame_time_ms
             ),
         );
+        if let Some(matrix) =
+            active_gizmo_path.and_then(|path| active_transform_gizmo_matrix(scene, state, path))
+        {
+            draw_axes(frame, scene, viewport, matrix);
+        }
         frame.draw_text(
             2,
             viewport.height.saturating_sub(2),
@@ -772,6 +832,11 @@ pub fn draw_render_scene(
 
     if state.show_axes {
         draw_axes(frame, scene, viewport, root);
+    }
+    if let Some(matrix) =
+        active_gizmo_path.and_then(|path| active_transform_gizmo_matrix(scene, state, path))
+    {
+        draw_axes(frame, scene, viewport, matrix);
     }
 
     frame.draw_text(

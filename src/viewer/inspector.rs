@@ -3,6 +3,7 @@ use crate::render::{
     RenderSphereGuideKind, RenderTransform,
 };
 use crossterm::event::KeyCode;
+use std::collections::HashSet;
 
 pub const VIEWER_MENU_TITLES: &[&str] = &["File", "Objects", "View", "Help"];
 pub const FILE_MENU_INDEX: usize = 0;
@@ -80,6 +81,7 @@ pub struct ViewerInspectorState {
     pub active_object_path: Option<String>,
     pub active_xyz_target_path: String,
     pub selected_property_item: usize,
+    gizmo_hidden_paths: HashSet<String>,
 }
 
 impl ViewerInspectorState {
@@ -217,6 +219,19 @@ impl ViewerInspectorState {
             self.selected_property_item = 0;
         } else {
             self.selected_property_item = (self.selected_property_item + 1) % item_count;
+        }
+    }
+
+    pub fn transform_gizmo_visible(&self, path: &str) -> bool {
+        !self.gizmo_hidden_paths.contains(path)
+    }
+
+    pub fn toggle_transform_gizmo(&mut self, path: &str) -> bool {
+        if !self.gizmo_hidden_paths.insert(path.to_string()) {
+            self.gizmo_hidden_paths.remove(path);
+            true
+        } else {
+            false
         }
     }
 

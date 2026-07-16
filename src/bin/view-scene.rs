@@ -276,7 +276,18 @@ fn run_viewer(
             }
 
             let viewport = ViewerViewport::terminal(render_width, render_height);
-            draw_render_scene(&mut frame, viewport, &scene, &meshes, &maps, &state);
+            let active_gizmo_path = inspector
+                .transform_gizmo_visible(&inspector.active_xyz_target_path)
+                .then_some(inspector.active_xyz_target_path.as_str());
+            draw_render_scene(
+                &mut frame,
+                viewport,
+                &scene,
+                &meshes,
+                &maps,
+                &state,
+                active_gizmo_path,
+            );
 
             let rendered = frame.render().replace('\r', "");
             let active_object = object_entries
@@ -360,6 +371,7 @@ fn run_viewer(
                             target,
                             state.show_axes,
                             Some(inspector.active_xyz_target_path.as_str()),
+                            inspector.transform_gizmo_visible(&target.path),
                         )
                     })
                     .unwrap_or_else(|| vec![]);
@@ -654,6 +666,7 @@ fn run_viewer(
                             target,
                             state.show_axes,
                             Some(inspector.active_xyz_target_path.as_str()),
+                            inspector.transform_gizmo_visible(&target.path),
                         )
                     })
                     .unwrap_or_default();
@@ -689,6 +702,14 @@ fn run_viewer(
                                     hierarchy.replace_items(&hierarchy_items);
                                     save_status = Some("Unsaved visibility change".to_string());
                                 }
+                            }
+                            EditorAction::ToggleTransformGizmo => {
+                                let visible = inspector.toggle_transform_gizmo(&target.path);
+                                save_status = Some(format!(
+                                    "Transform gizmo {}: {}",
+                                    if visible { "shown" } else { "hidden" },
+                                    target.id
+                                ));
                             }
                             EditorAction::ResetTransform => {
                                 let reset = if target.path == CAMERA_HELPER_PATH {

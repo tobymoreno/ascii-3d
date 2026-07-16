@@ -26,6 +26,7 @@ pub enum TransformSpace {
 pub enum EditorAction {
     ActivateControlTarget,
     ToggleVisibility,
+    ToggleTransformGizmo,
     SetVisibility(bool),
     Translate {
         axis: TransformAxis,

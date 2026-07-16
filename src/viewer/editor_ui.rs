@@ -103,6 +103,7 @@ pub fn property_rows(
     target: &EditorTarget,
     world_axes_visible: bool,
     active_path: Option<&str>,
+    gizmo_visible: bool,
 ) -> Vec<PropertyRow> {
     let mut rows = vec![PropertyRow::Action {
         id: "activate-control-target".to_string(),
@@ -125,6 +126,17 @@ pub fn property_rows(
             action: EditorAction::ToggleVisibility,
         });
     }
+
+    rows.push(PropertyRow::Action {
+        id: "toggle-transform-gizmo".to_string(),
+        label: format!(
+            "Transform gizmo: {}",
+            if gizmo_visible { "On" } else { "Off" }
+        ),
+        hint: Some("Enter/Space".to_string()),
+        enabled: true,
+        action: EditorAction::ToggleTransformGizmo,
+    });
 
     rows.push(PropertyRow::Action {
         id: "reset-transform".to_string(),

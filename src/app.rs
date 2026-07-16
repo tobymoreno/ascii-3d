@@ -3088,6 +3088,41 @@ fn draw_loaded_a3d_word_object_in_ws(
     Ok(())
 }
 
+fn draw_loaded_a3d_transform_gizmo_in_ws(
+    canvas: &mut Canvas,
+    projector: &ObliqueProjector,
+    state: &AppState,
+) {
+    let target = state.loaded_a3d_workspace.active_xyz_target();
+    if !state.loaded_a3d_workspace.gizmo_visible(target) {
+        return;
+    }
+
+    let matrix = match target {
+        WorldEditorTarget::Camera => return,
+        WorldEditorTarget::SceneOrigin => state.loaded_a3d_scene_origin_matrix(),
+        WorldEditorTarget::Object(id) => {
+            let Some(world) = state.loaded_a3d_world.as_ref() else {
+                return;
+            };
+            let Some(object) = world.object(id) else {
+                return;
+            };
+            state.loaded_a3d_scene_origin_matrix() * object.world_matrix()
+        }
+    };
+
+    let origin = matrix.transform_point(Vec3::zero());
+    let x = matrix.transform_point(Vec3::new(1.5, 0.0, 0.0));
+    let y = matrix.transform_point(Vec3::new(0.0, 1.5, 0.0));
+    let z = matrix.transform_point(Vec3::new(0.0, 0.0, 1.5));
+    let origin_screen = projector.project(origin);
+    canvas.draw_line(origin_screen, projector.project(x), 'x');
+    canvas.draw_line(origin_screen, projector.project(y), 'y');
+    canvas.draw_line(origin_screen, projector.project(z), 'z');
+    canvas.set(origin_screen, 'O');
+}
+
 fn draw_loaded_a3d_objects_in_ws(
     canvas: &mut Canvas,
     state: &AppState,
@@ -3111,6 +3146,7 @@ fn draw_loaded_a3d_objects_in_ws(
     }
 
     draw_loaded_a3d_light_gizmos_in_ws(canvas, projector, state)?;
+    draw_loaded_a3d_transform_gizmo_in_ws(canvas, projector, state);
 
     Ok(())
 }
@@ -3680,6 +3716,9 @@ fn render_scene(
                 target,
                 state.loaded_a3d_world.as_ref(),
                 state.loaded_a3d_workspace.active_xyz_target(),
+                state
+                    .loaded_a3d_workspace
+                    .gizmo_visible(&loaded_a3d_world_target(target)),
             )
         })
         .unwrap_or_default();
@@ -4275,6 +4314,9 @@ fn handle_key_press(state: &mut AppState, key: KeyEvent) -> KeyHandling {
                     target,
                     state.loaded_a3d_world.as_ref(),
                     state.loaded_a3d_workspace.active_xyz_target(),
+                    state
+                        .loaded_a3d_workspace
+                        .gizmo_visible(&loaded_a3d_world_target(target)),
                 )
             })
             .unwrap_or_default();
@@ -4292,6 +4334,9 @@ fn handle_key_press(state: &mut AppState, key: KeyEvent) -> KeyHandling {
                         }
                         EditorAction::ToggleVisibility => {
                             state.toggle_loaded_a3d_visibility(&target.path);
+                        }
+                        EditorAction::ToggleTransformGizmo => {
+                            state.loaded_a3d_workspace.toggle_gizmo(&world_target);
                         }
                         EditorAction::ResetTransform => {
                             state.reset_loaded_a3d_editor_target(&world_target);
