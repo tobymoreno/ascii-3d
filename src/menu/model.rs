@@ -1,3 +1,8 @@
+use ascii_3d::editor_ui::{
+    DEBUG_MENU_ID, FILE_MENU_ID, HELP_MENU_ID, MenuCapabilities, MenuDefinition, MenuEntry, MenuId,
+    OBJECTS_MENU_ID, VIEW_MENU_ID, shared_menu_definitions,
+};
+
 use crate::{
     canvas::Canvas,
     geometry2d::Point2,
@@ -18,6 +23,54 @@ pub enum MenuKind {
 }
 
 impl MenuKind {
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::File => FILE_MENU_ID,
+            Self::Objects => OBJECTS_MENU_ID,
+            Self::View => VIEW_MENU_ID,
+            Self::Debug => DEBUG_MENU_ID,
+            Self::Help => HELP_MENU_ID,
+            Self::Scenes => "scenes",
+            Self::Control => "control",
+            Self::Glyphs => "glyphs",
+            Self::Physics => "physics",
+        }
+    }
+
+    pub fn definition(self) -> MenuDefinition {
+        if matches!(self, Self::File | Self::Debug) {
+            return shared_menu_definitions(MenuCapabilities {
+                can_open: true,
+                can_reload: true,
+                can_save: false,
+                can_save_as: false,
+                can_browse_scenes: true,
+                can_exit: true,
+                can_toggle_log: true,
+                can_open_raylib_gui: true,
+            })
+            .into_iter()
+            .find(|definition| definition.id.0 == self.id())
+            .expect("shared menu definition must exist");
+        }
+
+        MenuDefinition {
+            id: MenuId::new(self.id()),
+            label: self.title().to_string(),
+            hotkey: self.hotkey().chars().next(),
+            entries: self
+                .items()
+                .iter()
+                .map(|item| MenuEntry::Action {
+                    id: item.label.to_string(),
+                    label: item.label.to_string(),
+                    enabled: !item.placeholder,
+                    shortcut: None,
+                })
+                .collect(),
+        }
+    }
+
     pub const fn title(self) -> &'static str {
         match self {
             Self::File => "File",
@@ -59,6 +112,22 @@ impl MenuKind {
             Self::Help => HELP_ITEMS,
         }
     }
+}
+
+pub const VISIBLE_MENU_KINDS: &[MenuKind] = &[
+    MenuKind::File,
+    MenuKind::Objects,
+    MenuKind::View,
+    MenuKind::Debug,
+    MenuKind::Help,
+];
+
+pub fn visible_menu_definitions() -> Vec<MenuDefinition> {
+    VISIBLE_MENU_KINDS
+        .iter()
+        .copied()
+        .map(MenuKind::definition)
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,9 +224,11 @@ impl MenuState {
 }
 
 const FILE_ITEMS: &[MenuItem] = &[
-    MenuItem::real("Load .a3d...", AppCommand::OpenA3dFilePicker),
-    MenuItem::real("Reload current .a3d", AppCommand::ReloadA3d),
-    MenuItem::real("Browse scenes...", AppCommand::OpenSceneBrowser),
+    MenuItem::real("Open...", AppCommand::OpenA3dFilePicker),
+    MenuItem::real("Reload", AppCommand::ReloadA3d),
+    MenuItem::placeholder("Save", AppCommand::CloseMenu),
+    MenuItem::placeholder("Save As...", AppCommand::CloseMenu),
+    MenuItem::real("Browse built-in scenes...", AppCommand::OpenSceneBrowser),
     MenuItem::real("Exit", AppCommand::Quit),
 ];
 
@@ -194,14 +265,9 @@ const OBJECT_ITEMS: &[MenuItem] = &[
 ];
 
 const VIEW_ITEMS: &[MenuItem] = &[
-    MenuItem::real("Toggle debug console", AppCommand::ToggleDebugConsole),
     MenuItem::real("Toggle frame timing", AppCommand::ToggleFrameTiming),
     MenuItem::real("Toggle world axes", AppCommand::ToggleWorldAxes),
     MenuItem::real("Toggle world grid", AppCommand::ToggleWorldGrid),
-    MenuItem::real(
-        "Show OS graphics overlay",
-        AppCommand::ShowOsGraphicsOverlay,
-    ),
     MenuItem::placeholder("Toggle depth view", AppCommand::ToggleDepthView),
     MenuItem::placeholder("Toggle projection debug", AppCommand::ToggleProjectionDebug),
 ];
@@ -255,14 +321,8 @@ const PHYSICS_ITEMS: &[MenuItem] = &[
 ];
 
 const DEBUG_ITEMS: &[MenuItem] = &[
-    MenuItem::real("Toggle debug console", AppCommand::ToggleDebugConsole),
-    MenuItem::placeholder("Toggle depth view", AppCommand::ToggleDepthView),
-    MenuItem::placeholder("Toggle projection debug", AppCommand::ToggleProjectionDebug),
-    MenuItem::real("Toggle frame timing", AppCommand::ToggleFrameTiming),
-    MenuItem::real(
-        "Show OS graphics overlay",
-        AppCommand::ShowOsGraphicsOverlay,
-    ),
+    MenuItem::real("Toggle log", AppCommand::ToggleDebugConsole),
+    MenuItem::real("Open Raylib GUI", AppCommand::ShowOsGraphicsOverlay),
 ];
 
 const HELP_ITEMS: &[MenuItem] = &[

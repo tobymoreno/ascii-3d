@@ -5,6 +5,7 @@ pub enum WorkspaceMenu {
     File,
     Objects,
     View,
+    Debug,
     Help,
 }
 
@@ -13,6 +14,7 @@ pub struct WorkspaceKeymap {
     pub file_menu: char,
     pub objects_menu: char,
     pub view_menu: char,
+    pub debug_menu: char,
     pub help_menu: char,
 }
 
@@ -22,6 +24,7 @@ impl Default for WorkspaceKeymap {
             file_menu: 'f',
             objects_menu: 'o',
             view_menu: 'v',
+            debug_menu: 'd',
             help_menu: 'h',
         }
     }
@@ -42,6 +45,8 @@ impl WorkspaceKeymap {
             Some(WorkspaceMenu::Objects)
         } else if character == self.view_menu {
             Some(WorkspaceMenu::View)
+        } else if character == self.debug_menu {
+            Some(WorkspaceMenu::Debug)
         } else if character == self.help_menu {
             Some(WorkspaceMenu::Help)
         } else {
@@ -61,6 +66,15 @@ mod tests {
         assert_eq!(
             WorkspaceKeymap::default().menu_for_event(key),
             Some(WorkspaceMenu::Objects)
+        );
+    }
+
+    #[test]
+    fn alt_d_opens_debug() {
+        let key = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::ALT);
+        assert_eq!(
+            WorkspaceKeymap::default().menu_for_event(key),
+            Some(WorkspaceMenu::Debug)
         );
     }
 

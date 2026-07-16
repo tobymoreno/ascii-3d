@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, VecDeque},
-    fs,
+    env, fs,
     io::{self, Write, stdout},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
@@ -119,6 +119,15 @@ const GLYPH_STROKE_CHARACTERS: &[char] = &[
 const DEFAULT_GLYPH_STROKE_INDEX: usize = 0;
 
 const STANDARD_BOX_ASSET: &str = "models/cube.obj";
+
+fn unsupported_terminal_reason() -> Option<&'static str> {
+    let term_program = env::var("TERM_PROGRAM").unwrap_or_default();
+    if term_program.eq_ignore_ascii_case("mintty") {
+        return Some("mintty does not reliably restore this full-screen TUI");
+    }
+
+    None
+}
 
 struct TerminalGuard;
 
@@ -286,7 +295,8 @@ fn next_menu_kind(kind: crate::menu::MenuKind) -> crate::menu::MenuKind {
     match kind {
         crate::menu::MenuKind::File => crate::menu::MenuKind::Objects,
         crate::menu::MenuKind::Objects => crate::menu::MenuKind::View,
-        crate::menu::MenuKind::View => crate::menu::MenuKind::Help,
+        crate::menu::MenuKind::View => crate::menu::MenuKind::Debug,
+        crate::menu::MenuKind::Debug => crate::menu::MenuKind::Help,
         crate::menu::MenuKind::Help => crate::menu::MenuKind::File,
         _ => crate::menu::MenuKind::File,
     }
@@ -297,7 +307,8 @@ fn previous_menu_kind(kind: crate::menu::MenuKind) -> crate::menu::MenuKind {
         crate::menu::MenuKind::File => crate::menu::MenuKind::Help,
         crate::menu::MenuKind::Objects => crate::menu::MenuKind::File,
         crate::menu::MenuKind::View => crate::menu::MenuKind::Objects,
-        crate::menu::MenuKind::Help => crate::menu::MenuKind::View,
+        crate::menu::MenuKind::Debug => crate::menu::MenuKind::View,
+        crate::menu::MenuKind::Help => crate::menu::MenuKind::Debug,
         _ => crate::menu::MenuKind::File,
     }
 }
@@ -1272,6 +1283,10 @@ impl AppState {
 
     fn frame_timing_lines(&self) -> Option<Vec<String>> {
         self.show_frame_timing.then(|| self.frame_timings.lines())
+    }
+
+    fn header_status(&self) -> String {
+        format!("fps {:>5.1}", self.frame_timings.fps)
     }
 
     fn open_a3d_file_picker(&mut self) {
@@ -3623,6 +3638,7 @@ fn render_scene(
         .or_else(|| scene_browser_popup_lines(state))
         .or_else(|| debug_console_popup_lines(state));
     let frame_timing_lines = state.frame_timing_lines();
+    let header_status = state.header_status();
     let file_picker_labels = state.a3d_file_picker.as_ref().map(|picker| picker.labels());
     let file_picker_current_dir = state
         .a3d_file_picker
@@ -3663,6 +3679,7 @@ fn render_scene(
             &scene_canvas,
             camera_viewport_canvas.as_ref(),
             state.active_menu.as_ref(),
+            &header_status,
             debug_popup_lines.as_deref(),
             frame_timing_lines.as_deref(),
             file_picker_view,
@@ -4190,6 +4207,7 @@ fn handle_key_press(state: &mut AppState, key: KeyEvent) -> KeyHandling {
                 return apply_app_command(state, AppCommand::OpenWorldObjects);
             }
             WorkspaceMenu::View => state.open_menu(crate::menu::MenuKind::View),
+            WorkspaceMenu::Debug => state.open_menu(crate::menu::MenuKind::Debug),
             WorkspaceMenu::Help => state.open_menu(crate::menu::MenuKind::Help),
         }
         return KeyHandling::Handled;
@@ -4518,6 +4536,12 @@ fn is_continuous_control_key(state: &AppState, key: KeyEvent) -> bool {
 }
 
 pub fn run() -> io::Result<()> {
+    if let Some(reason) = unsupported_terminal_reason() {
+        eprintln!("ascii-3d cannot start in this terminal: {reason}.");
+        eprintln!("Use Windows Terminal, Command Prompt, or PowerShell instead.");
+        return Ok(());
+    }
+
     let assets = load_scene_assets()?;
     let _terminal_guard = TerminalGuard::enter()?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;

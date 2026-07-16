@@ -1,9 +1,9 @@
 use crossterm::event::KeyCode;
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Tabs},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Tabs},
 };
 
 use super::EditorEvent;
@@ -53,6 +53,13 @@ impl MenuBarState {
 
     pub fn focus(&mut self) {
         self.focused = true;
+    }
+
+    pub fn with_selected(focused: bool, selected_menu: usize) -> Self {
+        Self {
+            focused,
+            selected_menu,
+        }
     }
 
     pub fn focus_menu(&mut self, id: &str, definitions: &[MenuDefinition]) -> bool {
@@ -132,13 +139,78 @@ pub fn draw_menu_bar(
             Style::default()
         });
 
+    let status_width = header_status_width(area.width, status);
     let header = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(34), Constraint::Min(1)])
+        .constraints([Constraint::Min(0), Constraint::Length(status_width)])
         .split(area);
 
     frame.render_widget(tabs, header[0]);
-    frame.render_widget(Paragraph::new(status), header[1]);
+    frame.render_widget(
+        Paragraph::new(status).alignment(Alignment::Right),
+        header[1],
+    );
+}
+
+pub fn menu_action_count(definition: &MenuDefinition) -> usize {
+    definition
+        .entries
+        .iter()
+        .filter(|entry| matches!(entry, MenuEntry::Action { .. }))
+        .count()
+}
+
+pub fn draw_menu_popup(
+    frame: &mut ratatui::Frame<'_>,
+    area: Rect,
+    definition: &MenuDefinition,
+    selected_action: usize,
+    detail: Option<&str>,
+) {
+    let mut action_index = 0usize;
+    let mut items = definition
+        .entries
+        .iter()
+        .map(|entry| match entry {
+            MenuEntry::Separator => ListItem::new(Line::from("  -------------------------")),
+            MenuEntry::Action { label, enabled, .. } => {
+                let current = action_index;
+                action_index += 1;
+                let selector = if current == selected_action { ">" } else { " " };
+                let suffix = if *enabled { "" } else { " (disabled)" };
+                let item = ListItem::new(Line::from(format!("{selector} {label}{suffix}")));
+                if current == selected_action {
+                    item.style(
+                        Style::default()
+                            .add_modifier(Modifier::REVERSED)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                } else {
+                    item
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if let Some(detail) = detail {
+        items.push(ListItem::new(Line::from(format!("  {detail}"))));
+    }
+
+    let popup = List::new(items).block(
+        Block::default()
+            .title(format!(
+                " {}  Up/Down select  Enter open  Esc close ",
+                definition.label
+            ))
+            .borders(Borders::ALL),
+    );
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(popup, area);
+}
+
+fn header_status_width(area_width: u16, status: &str) -> u16 {
+    status.chars().count().min(usize::from(area_width)) as u16
 }
 
 #[cfg(test)]
@@ -160,6 +232,37 @@ mod tests {
                 entries: vec![],
             },
         ]
+    }
+
+    #[test]
+    fn status_width_uses_text_width_without_exceeding_header() {
+        assert_eq!(header_status_width(80, "fps 30.1"), 8);
+        assert_eq!(header_status_width(4, "fps 30.1"), 4);
+    }
+
+    #[test]
+    fn popup_action_count_ignores_separators() {
+        let definition = MenuDefinition {
+            id: MenuId::new("file"),
+            label: "File".to_string(),
+            hotkey: Some('f'),
+            entries: vec![
+                MenuEntry::Action {
+                    id: "open".to_string(),
+                    label: "Open".to_string(),
+                    enabled: true,
+                    shortcut: None,
+                },
+                MenuEntry::Separator,
+                MenuEntry::Action {
+                    id: "exit".to_string(),
+                    label: "Exit".to_string(),
+                    enabled: true,
+                    shortcut: None,
+                },
+            ],
+        };
+        assert_eq!(menu_action_count(&definition), 2);
     }
 
     #[test]

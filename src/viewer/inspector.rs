@@ -69,7 +69,10 @@ pub struct ViewerInspectorState {
     pub selected_menu: usize,
     pub file_open: bool,
     pub selected_file_item: usize,
+    pub debug_open: bool,
+    pub selected_debug_item: usize,
     pub save_as_open: bool,
+    pub confirm_exit: bool,
     pub save_as_path: String,
     pub objects_open: bool,
     pub properties_open: bool,
@@ -86,7 +89,9 @@ impl ViewerInspectorState {
 
     pub fn close_popup(&mut self) {
         self.file_open = false;
+        self.debug_open = false;
         self.save_as_open = false;
+        self.confirm_exit = false;
         self.objects_open = false;
         self.properties_open = false;
         self.menu_focused = false;
@@ -96,6 +101,15 @@ impl ViewerInspectorState {
         self.properties_open = false;
         self.objects_open = true;
         self.menu_focused = true;
+    }
+
+    pub fn open_exit_confirm(&mut self) {
+        self.close_popup();
+        self.confirm_exit = true;
+    }
+
+    pub fn close_exit_confirm(&mut self) {
+        self.confirm_exit = false;
     }
 
     pub fn move_menu_left(&mut self) {
@@ -125,12 +139,24 @@ impl ViewerInspectorState {
         }
     }
 
-    pub fn move_file_up(&mut self) {
-        self.selected_file_item = if self.selected_file_item == 0 { 1 } else { 0 };
+    pub fn move_file_up(&mut self, item_count: usize) {
+        if item_count == 0 {
+            self.selected_file_item = 0;
+            return;
+        }
+        self.selected_file_item = if self.selected_file_item == 0 {
+            item_count - 1
+        } else {
+            self.selected_file_item - 1
+        };
     }
 
-    pub fn move_file_down(&mut self) {
-        self.selected_file_item = (self.selected_file_item + 1) % 2;
+    pub fn move_file_down(&mut self, item_count: usize) {
+        if item_count == 0 {
+            self.selected_file_item = 0;
+            return;
+        }
+        self.selected_file_item = (self.selected_file_item + 1) % item_count;
     }
 
     pub fn open_save_as(&mut self, path: impl Into<String>) {
