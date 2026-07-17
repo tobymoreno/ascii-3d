@@ -415,9 +415,12 @@ mod tests {
             registry[0].a3d_root.as_deref(),
             Some(std::path::Path::new("assets/a3d/glyph_ab"))
         );
+        let last = registry.last().expect("scene index should not be empty");
+        assert_eq!(last.id, "axes");
+        assert_eq!(last.scene, Scene::LoadedA3d);
         assert_eq!(
-            registry.last().map(|descriptor| descriptor.scene),
-            Some(Scene::Axes)
+            last.a3d_root.as_deref(),
+            Some(std::path::Path::new("assets/a3d/axes"))
         );
     }
 

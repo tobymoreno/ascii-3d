@@ -36,7 +36,7 @@ fn editor_item(entry: &WorldEditorEntry, world: Option<&LoadedWorld>) -> EditorI
         ),
         WorldEditorTarget::Object(id) => {
             let kind = world
-                .and_then(|world| world.object(id))
+                .and_then(|world| world.object(&id))
                 .map(|object| match object.asset {
                     AssetRef::Group { .. } => EditorTargetKind::Group,
                     AssetRef::Mesh { .. } | AssetRef::Glyph { .. } | AssetRef::Word { .. } => {
@@ -171,14 +171,20 @@ mod tests {
 
     #[test]
     fn camera_is_not_hideable_but_is_resettable() {
-        let item = editor_item(&WorldEditorEntry::camera(), None);
+        let item = editor_item(
+            &WorldEditorEntry::new(WorldEditorTarget::Camera, None),
+            None,
+        );
         assert!(!item.capabilities.contains(EditorCapabilities::VISIBILITY));
         assert!(item.capabilities.contains(EditorCapabilities::RESET));
     }
 
     #[test]
     fn object_is_hideable_and_scalable() {
-        let item = editor_item(&WorldEditorEntry::object("earth", true), None);
+        let item = editor_item(
+            &WorldEditorEntry::new(WorldEditorTarget::Object("earth".to_string()), Some(true)),
+            None,
+        );
         assert!(item.capabilities.contains(EditorCapabilities::VISIBILITY));
         assert!(item.capabilities.contains(EditorCapabilities::SCALE));
     }

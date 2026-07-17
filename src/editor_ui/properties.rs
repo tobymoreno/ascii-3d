@@ -163,7 +163,12 @@ mod tests {
 
     #[test]
     fn action_event_contains_target_and_action() {
-        let target = EditorTarget::new("camera", "camera", "@scene/camera", EditorTargetKind::Camera);
+        let target = EditorTarget::new(
+            "camera",
+            "camera",
+            "@scene/camera",
+            EditorTargetKind::Camera,
+        );
         let rows = vec![PropertyRow::Action {
             id: "activate".to_string(),
             label: "Activate camera".to_string(),

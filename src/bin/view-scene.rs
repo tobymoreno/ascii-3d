@@ -859,12 +859,9 @@ fn is_supported_scene_path(path: &Path) -> bool {
 }
 
 fn is_canonical_built_in_scene_path(path: &Path) -> bool {
-    let name = path
-        .file_name()
+    path.file_name()
         .and_then(|name| name.to_str())
-        .unwrap_or_default();
-
-    name.eq_ignore_ascii_case("scene.a3d") || name.to_ascii_lowercase().ends_with(".scene.json")
+        .is_some_and(|name| name.eq_ignore_ascii_case("scene.a3d"))
 }
 
 fn collect_built_in_scenes() -> Vec<ScenePickerEntry> {

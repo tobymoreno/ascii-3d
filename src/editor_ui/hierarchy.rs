@@ -42,11 +42,7 @@ impl ObjectHierarchyState {
         self.reconcile(items);
     }
 
-    pub fn handle_key(
-        &mut self,
-        code: KeyCode,
-        items: &[EditorItem],
-    ) -> Option<EditorEvent> {
+    pub fn handle_key(&mut self, code: KeyCode, items: &[EditorItem]) -> Option<EditorEvent> {
         match code {
             KeyCode::Esc => {
                 self.close();
@@ -60,10 +56,12 @@ impl ObjectHierarchyState {
                 self.move_down(items);
                 self.selection_event(items)
             }
-            KeyCode::Enter => self.selected_item(items).map(|item| EditorEvent::InspectRequested {
-                target: item.target.clone(),
-                source: EventSource::ObjectHierarchy,
-            }),
+            KeyCode::Enter => self
+                .selected_item(items)
+                .map(|item| EditorEvent::InspectRequested {
+                    target: item.target.clone(),
+                    source: EventSource::ObjectHierarchy,
+                }),
             _ => None,
         }
     }
@@ -110,10 +108,11 @@ impl ObjectHierarchyState {
     }
 
     fn selection_event(&self, items: &[EditorItem]) -> Option<EditorEvent> {
-        self.selected_item(items).map(|item| EditorEvent::SelectionChanged {
-            target: item.target.clone(),
-            source: EventSource::ObjectHierarchy,
-        })
+        self.selected_item(items)
+            .map(|item| EditorEvent::SelectionChanged {
+                target: item.target.clone(),
+                source: EventSource::ObjectHierarchy,
+            })
     }
 }
 
@@ -128,7 +127,11 @@ pub fn draw_object_hierarchy(
         .iter()
         .enumerate()
         .map(|(index, item)| {
-            let selector = if index == state.selected_index() { ">" } else { " " };
+            let selector = if index == state.selected_index() {
+                ">"
+            } else {
+                " "
+            };
             let row = ListItem::new(Line::from(format!("{selector} {}", item.display_label())));
             if index == state.selected_index() {
                 row.style(Style::default().add_modifier(Modifier::REVERSED))

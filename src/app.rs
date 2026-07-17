@@ -10,6 +10,7 @@ use std::{
 use ratatui::{Terminal, backend::CrosstermBackend, layout::Rect};
 
 use ascii_3d::{
+    editor_core::EditorTransformCommand,
     editor_ui::{
         EditorAction, EditorEvent, EditorKeyRepeatGate, ObjectHierarchyState, PropertiesState,
         WorkspaceKeymap, WorkspaceMenu, draw_object_hierarchy, draw_properties_panel,
@@ -1038,13 +1039,24 @@ impl AppState {
 
     fn apply_xyz_control_event(&mut self, event: XyzControlEvent) -> bool {
         if self.current_scene() == Scene::LoadedA3d {
-            match self.loaded_a3d_workspace.active_xyz_target().clone() {
-                WorldEditorTarget::Object(id) => {
-                    return self.apply_loaded_a3d_object_xyz_event(&id, event);
+            let command = match event {
+                XyzControlEvent::Rotate { axis, direction } => {
+                    let delta = self.xyz_control.rotation_delta(axis, direction);
+                    self.loaded_a3d_workspace
+                        .request_active_rotate([delta.x, delta.y, delta.z])
                 }
-                WorldEditorTarget::Camera => self.control_mode = ControlMode::Camera,
-                WorldEditorTarget::SceneOrigin => self.control_mode = ControlMode::Scene,
-            }
+                XyzControlEvent::MoveOrigin { axis, direction } => {
+                    let delta = self.xyz_control.origin_delta(axis, direction);
+                    self.loaded_a3d_workspace
+                        .request_active_translate([delta.x, delta.y, delta.z])
+                }
+                XyzControlEvent::Reset => {
+                    let target = self.loaded_a3d_workspace.active_xyz_target().clone();
+                    self.loaded_a3d_workspace.request_reset(&target)
+                }
+            };
+
+            return command.is_some_and(|command| self.apply_loaded_a3d_transform_command(command));
         }
 
         match self.control_mode {
@@ -1465,24 +1477,9 @@ impl AppState {
     }
 
     fn scale_active_loaded_a3d_object(&mut self, factor: f32) -> bool {
-        match self.loaded_a3d_workspace.active_xyz_target().clone() {
-            WorldEditorTarget::SceneOrigin => self.scale_loaded_a3d_scene_origin(factor),
-            WorldEditorTarget::Camera => false,
-            WorldEditorTarget::Object(target_id) => {
-                let Some(world) = self.loaded_a3d_world.as_mut() else {
-                    return false;
-                };
-
-                if !world.scale_object_uniform(&target_id, factor) {
-                    return false;
-                }
-
-                self.push_debug_console_line(format!(
-                    "world editor: scaled {target_id} by {factor:.4}"
-                ));
-                true
-            }
-        }
+        self.loaded_a3d_workspace
+            .request_active_scale(factor)
+            .is_some_and(|command| self.apply_loaded_a3d_transform_command(command))
     }
 
     fn loaded_a3d_editor_items(&self) -> Vec<ascii_3d::editor_ui::EditorItem> {
@@ -1508,48 +1505,115 @@ impl AppState {
     }
 
     fn toggle_loaded_a3d_visibility(&mut self, target_id: &str) -> bool {
-        let Some(world) = self.loaded_a3d_world.as_mut() else {
+        let target = WorldEditorTarget::Object(target_id.to_string());
+        let Some(visible) = self.loaded_a3d_workspace.toggle_visibility(&target) else {
             return false;
         };
-        if world.toggle_object_visibility(target_id).is_none() {
+
+        let Some(world) = self.loaded_a3d_world.as_mut() else {
+            self.loaded_a3d_workspace.set_visibility(&target, !visible);
             return false;
-        }
-        self.sync_loaded_a3d_editor_objects();
+        };
+        let Some(world_visible) = world.toggle_object_visibility(target_id) else {
+            self.loaded_a3d_workspace.set_visibility(&target, !visible);
+            return false;
+        };
+
+        debug_assert_eq!(world_visible, visible);
         true
     }
 
     fn reset_loaded_a3d_editor_target(&mut self, target: &WorldEditorTarget) -> bool {
-        match target {
-            WorldEditorTarget::Camera => {
-                self.reset_world_camera();
-                true
-            }
-            WorldEditorTarget::SceneOrigin => self.reset_world_axes(),
-            WorldEditorTarget::Object(id) => self
-                .loaded_a3d_world
-                .as_mut()
-                .is_some_and(|world| world.reset_object_transform(id)),
-        }
+        self.loaded_a3d_workspace
+            .request_reset(target)
+            .is_some_and(|command| self.apply_loaded_a3d_transform_command(command))
     }
 
-    fn apply_loaded_a3d_object_xyz_event(
+    fn apply_loaded_a3d_transform_command(
         &mut self,
-        target_id: &str,
-        event: XyzControlEvent,
+        command: EditorTransformCommand<WorldEditorTarget>,
     ) -> bool {
-        let Some(world) = self.loaded_a3d_world.as_mut() else {
-            return false;
-        };
-        match event {
-            XyzControlEvent::Rotate { axis, direction } => {
-                let delta = self.xyz_control.rotation_delta(axis, direction);
-                world.rotate_object(target_id, [delta.x, delta.y, delta.z])
+        match command {
+            EditorTransformCommand::Translate { target, delta } => {
+                let delta = Vec3::new(delta[0], delta[1], delta[2]);
+                match target {
+                    WorldEditorTarget::Camera => {
+                        if delta.x != 0.0 {
+                            self.move_world_camera_right(delta.x);
+                        }
+                        if delta.y != 0.0 {
+                            self.move_world_camera_up(delta.y);
+                        }
+                        if delta.z != 0.0 {
+                            self.move_world_camera_forward(-delta.z);
+                        }
+                        true
+                    }
+                    WorldEditorTarget::SceneOrigin => {
+                        self.move_world_origin(delta);
+                        true
+                    }
+                    WorldEditorTarget::Object(id) => {
+                        self.loaded_a3d_world.as_mut().is_some_and(|world| {
+                            world.translate_object(&id, [delta.x, delta.y, delta.z])
+                        })
+                    }
+                }
             }
-            XyzControlEvent::MoveOrigin { axis, direction } => {
-                let delta = self.xyz_control.origin_delta(axis, direction);
-                world.translate_object(target_id, [delta.x, delta.y, delta.z])
+            EditorTransformCommand::Rotate {
+                target,
+                delta_degrees,
+            } => {
+                let delta = Vec3::new(delta_degrees[0], delta_degrees[1], delta_degrees[2]);
+                match target {
+                    WorldEditorTarget::Camera => {
+                        if delta.y != 0.0 {
+                            self.rotate_world_camera(delta.y, 0.0);
+                        }
+                        if delta.x != 0.0 {
+                            self.rotate_world_camera(0.0, delta.x);
+                        }
+                        if delta.z != 0.0 {
+                            self.push_debug_console_line(
+                                "xyzcontrol/camera: roll pending".to_string(),
+                            );
+                        }
+                        true
+                    }
+                    WorldEditorTarget::SceneOrigin => self.rotate_loaded_a3d_scene_origin(delta),
+                    WorldEditorTarget::Object(id) => self
+                        .loaded_a3d_world
+                        .as_mut()
+                        .is_some_and(|world| world.rotate_object(&id, [delta.x, delta.y, delta.z])),
+                }
             }
-            XyzControlEvent::Reset => world.reset_object_transform(target_id),
+            EditorTransformCommand::ScaleUniform { target, factor } => match target {
+                WorldEditorTarget::Camera => false,
+                WorldEditorTarget::SceneOrigin => self.scale_loaded_a3d_scene_origin(factor),
+                WorldEditorTarget::Object(id) => {
+                    let handled = self
+                        .loaded_a3d_world
+                        .as_mut()
+                        .is_some_and(|world| world.scale_object_uniform(&id, factor));
+                    if handled {
+                        self.push_debug_console_line(format!(
+                            "world editor: scaled {id} by {factor:.4}"
+                        ));
+                    }
+                    handled
+                }
+            },
+            EditorTransformCommand::Reset { target } => match target {
+                WorldEditorTarget::Camera => {
+                    self.reset_world_camera();
+                    true
+                }
+                WorldEditorTarget::SceneOrigin => self.reset_world_axes(),
+                WorldEditorTarget::Object(id) => self
+                    .loaded_a3d_world
+                    .as_mut()
+                    .is_some_and(|world| world.reset_object_transform(&id)),
+            },
         }
     }
 
@@ -4331,6 +4395,7 @@ fn handle_key_press(state: &mut AppState, key: KeyEvent) -> KeyHandling {
                     match action {
                         EditorAction::ActivateControlTarget => {
                             state.loaded_a3d_workspace.activate_target(world_target);
+                            state.loaded_a3d_properties.close();
                         }
                         EditorAction::ToggleVisibility => {
                             state.toggle_loaded_a3d_visibility(&target.path);

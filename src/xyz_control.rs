@@ -157,7 +157,6 @@ impl XyzControl {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

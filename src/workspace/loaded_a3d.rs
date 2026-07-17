@@ -1,4 +1,5 @@
 use super::{SceneWorkspace, WorkspaceEvent, WorkspaceResponse};
+use ascii_3d::editor_core::{EditorCommand, EditorEntry, EditorSession, EditorTransformCommand};
 
 pub const CAMERA_TARGET_ID: &str = "@camera";
 pub const SCENE_ORIGIN_TARGET_ID: &str = "@scene-origin";
@@ -32,51 +33,28 @@ impl WorldEditorTarget {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WorldEditorEntry {
-    pub target: WorldEditorTarget,
-    pub visible: Option<bool>,
-    pub gizmo_visible: bool,
+pub type WorldEditorEntry = EditorEntry<WorldEditorTarget>;
+
+fn camera_entry() -> WorldEditorEntry {
+    EditorEntry::new(WorldEditorTarget::Camera, None)
 }
 
-impl WorldEditorEntry {
-    pub fn camera() -> Self {
-        Self {
-            target: WorldEditorTarget::Camera,
-            visible: None,
-            gizmo_visible: true,
-        }
-    }
-
-    pub fn scene_origin() -> Self {
-        Self {
-            target: WorldEditorTarget::SceneOrigin,
-            visible: None,
-            gizmo_visible: true,
-        }
-    }
-
-    pub fn object(id: impl Into<String>, visible: bool) -> Self {
-        Self {
-            target: WorldEditorTarget::Object(id.into()),
-            visible: Some(visible),
-            gizmo_visible: true,
-        }
-    }
+fn scene_origin_entry() -> WorldEditorEntry {
+    EditorEntry::new(WorldEditorTarget::SceneOrigin, None)
 }
 
-/// Scene-local state for the LoadedA3d world-space editor.
+fn object_entry(id: impl Into<String>, visible: bool) -> WorldEditorEntry {
+    EditorEntry::new(WorldEditorTarget::Object(id.into()), Some(visible))
+}
+
+/// Scene-local adapter for the LoadedA3d world-space editor.
 ///
-/// This model intentionally separates the object being inspected from the
-/// target receiving XYZ input. Camera is the default XYZ target. No transform
-/// or visibility mutation is performed here yet.
+/// Selection, activation, panel state, and per-target gizmo state live in the
+/// renderer-independent `EditorSession`. This workspace keeps the existing
+/// A3DWS API while translating UI actions into shared editor commands.
 #[derive(Debug, Clone)]
 pub struct LoadedA3dWorkspace {
-    entries: Vec<WorldEditorEntry>,
-    inspected_target: Option<WorldEditorTarget>,
-    active_xyz_target: WorldEditorTarget,
-    selected_entry: usize,
-    objects_panel_open: bool,
+    session: EditorSession<WorldEditorTarget>,
 }
 
 impl Default for LoadedA3dWorkspace {
@@ -88,96 +66,68 @@ impl Default for LoadedA3dWorkspace {
 impl LoadedA3dWorkspace {
     pub fn new() -> Self {
         Self {
-            entries: vec![WorldEditorEntry::camera(), WorldEditorEntry::scene_origin()],
-            inspected_target: None,
-            active_xyz_target: WorldEditorTarget::Camera,
-            selected_entry: 0,
-            objects_panel_open: false,
+            session: EditorSession::new(
+                vec![camera_entry(), scene_origin_entry()],
+                WorldEditorTarget::Camera,
+            ),
         }
     }
 
     pub fn entries(&self) -> &[WorldEditorEntry] {
-        &self.entries
+        self.session.entries()
     }
 
     pub fn inspected_target(&self) -> Option<&WorldEditorTarget> {
-        self.inspected_target.as_ref()
+        self.session.inspected_target()
     }
 
     pub fn active_xyz_target(&self) -> &WorldEditorTarget {
-        &self.active_xyz_target
+        self.session.active_target()
     }
 
     pub const fn selected_entry(&self) -> usize {
-        self.selected_entry
+        self.session.selected_entry()
     }
 
     pub const fn objects_panel_open(&self) -> bool {
-        self.objects_panel_open
+        self.session.objects_panel_open()
     }
 
     pub fn open_objects_panel(&mut self) {
-        self.objects_panel_open = true;
+        self.session.apply(EditorCommand::OpenObjectsPanel);
     }
 
     pub fn close_objects_panel(&mut self) {
-        self.objects_panel_open = false;
+        self.session.apply(EditorCommand::CloseObjectsPanel);
     }
 
     pub fn set_selected_entry(&mut self, index: usize) {
-        self.selected_entry = index.min(self.entries.len().saturating_sub(1));
+        self.session.apply(EditorCommand::SelectIndex(index));
     }
 
     pub fn move_selection_up(&mut self) {
-        if self.entries.is_empty() {
-            self.selected_entry = 0;
-        } else if self.selected_entry == 0 {
-            self.selected_entry = self.entries.len() - 1;
-        } else {
-            self.selected_entry -= 1;
-        }
+        self.session.apply(EditorCommand::MoveSelectionUp);
     }
 
     pub fn move_selection_down(&mut self) {
-        if self.entries.is_empty() {
-            self.selected_entry = 0;
-        } else {
-            self.selected_entry = (self.selected_entry + 1) % self.entries.len();
-        }
+        self.session.apply(EditorCommand::MoveSelectionDown);
     }
 
     pub fn inspect_selected(&mut self) -> Option<&WorldEditorTarget> {
-        self.inspected_target = self
-            .entries
-            .get(self.selected_entry)
-            .map(|entry| entry.target.clone());
-        self.inspected_target.as_ref()
+        self.session.apply(EditorCommand::InspectSelected);
+        self.session.inspected_target()
     }
 
     pub fn inspect_target(&mut self, target: WorldEditorTarget) -> bool {
-        if !self.contains_target(&target) {
-            return false;
-        }
-        self.inspected_target = Some(target);
-        true
+        self.session.apply(EditorCommand::Inspect(target))
     }
 
     pub fn activate_target(&mut self, target: WorldEditorTarget) -> bool {
-        if !self.contains_target(&target) {
-            return false;
-        }
-        self.inspected_target = Some(target.clone());
-        self.active_xyz_target = target;
-        true
+        self.session.apply(EditorCommand::Activate(target))
     }
 
     pub fn activate_inspected_xyz_target(&mut self) -> bool {
-        let Some(target) = self.inspected_target.clone() else {
-            return false;
-        };
-
-        self.active_xyz_target = target;
-        true
+        self.session.apply(EditorCommand::ActivateInspected)
     }
 
     pub fn sync_objects<I, S>(&mut self, objects: I)
@@ -185,68 +135,99 @@ impl LoadedA3dWorkspace {
         I: IntoIterator<Item = (S, bool)>,
         S: Into<String>,
     {
-        let previous_inspected = self.inspected_target.clone();
-        let previous_active = self.active_xyz_target.clone();
-        let previous_gizmos = self
-            .entries
-            .iter()
-            .map(|entry| (entry.target.clone(), entry.gizmo_visible))
-            .collect::<Vec<_>>();
-
-        self.entries.clear();
-        self.entries.push(WorldEditorEntry::camera());
-        self.entries.push(WorldEditorEntry::scene_origin());
-        self.entries.extend(
+        let mut entries = vec![camera_entry(), scene_origin_entry()];
+        entries.extend(
             objects
                 .into_iter()
-                .map(|(id, visible)| WorldEditorEntry::object(id, visible)),
+                .map(|(id, visible)| object_entry(id, visible)),
         );
-
-        for entry in &mut self.entries {
-            if let Some((_, visible)) = previous_gizmos
-                .iter()
-                .find(|(target, _)| target == &entry.target)
-            {
-                entry.gizmo_visible = *visible;
-            }
-        }
-
-        self.selected_entry = self
-            .selected_entry
-            .min(self.entries.len().saturating_sub(1));
-
-        self.inspected_target = previous_inspected.filter(|target| self.contains_target(target));
-
-        self.active_xyz_target = if self.contains_target(&previous_active) {
-            previous_active
-        } else {
-            WorldEditorTarget::Camera
-        };
+        self.session
+            .replace_entries(entries, WorldEditorTarget::Camera);
     }
 
     pub fn is_xyz_active(&self, target: &WorldEditorTarget) -> bool {
-        &self.active_xyz_target == target
+        self.session.is_active(target)
+    }
+
+    pub fn visibility(&self, target: &WorldEditorTarget) -> Option<bool> {
+        self.session.visibility(target)
+    }
+
+    pub fn set_visibility(&mut self, target: &WorldEditorTarget, visible: bool) -> bool {
+        self.session.apply(EditorCommand::SetVisibility {
+            target: target.clone(),
+            visible,
+        })
+    }
+
+    pub fn toggle_visibility(&mut self, target: &WorldEditorTarget) -> Option<bool> {
+        if !self
+            .session
+            .apply(EditorCommand::ToggleVisibility(target.clone()))
+        {
+            return None;
+        }
+        self.session.visibility(target)
     }
 
     pub fn gizmo_visible(&self, target: &WorldEditorTarget) -> bool {
-        self.entries
-            .iter()
-            .find(|entry| &entry.target == target)
-            .map(|entry| entry.gizmo_visible)
-            .unwrap_or(false)
+        self.session.gizmo_visible(target)
     }
 
     pub fn toggle_gizmo(&mut self, target: &WorldEditorTarget) -> Option<bool> {
-        let entry = self
-            .entries
-            .iter_mut()
-            .find(|entry| &entry.target == target)?;
-        entry.gizmo_visible = !entry.gizmo_visible;
-        Some(entry.gizmo_visible)
+        if !self
+            .session
+            .apply(EditorCommand::ToggleGizmo(target.clone()))
+        {
+            return None;
+        }
+        Some(self.session.gizmo_visible(target))
     }
 
-    fn contains_target(&self, target: &WorldEditorTarget) -> bool {
-        self.entries.iter().any(|entry| &entry.target == target)
+    pub fn request_transform(
+        &self,
+        command: EditorTransformCommand<WorldEditorTarget>,
+    ) -> Option<EditorTransformCommand<WorldEditorTarget>> {
+        self.session.request_transform(command)
+    }
+
+    pub fn request_active_translate(
+        &self,
+        delta: [f32; 3],
+    ) -> Option<EditorTransformCommand<WorldEditorTarget>> {
+        self.request_transform(EditorTransformCommand::Translate {
+            target: self.active_xyz_target().clone(),
+            delta,
+        })
+    }
+
+    pub fn request_active_rotate(
+        &self,
+        delta_degrees: [f32; 3],
+    ) -> Option<EditorTransformCommand<WorldEditorTarget>> {
+        self.request_transform(EditorTransformCommand::Rotate {
+            target: self.active_xyz_target().clone(),
+            delta_degrees,
+        })
+    }
+
+    pub fn request_active_scale(
+        &self,
+        factor: f32,
+    ) -> Option<EditorTransformCommand<WorldEditorTarget>> {
+        self.request_transform(EditorTransformCommand::ScaleUniform {
+            target: self.active_xyz_target().clone(),
+            factor,
+        })
+    }
+
+    pub fn request_reset(
+        &self,
+        target: &WorldEditorTarget,
+    ) -> Option<EditorTransformCommand<WorldEditorTarget>> {
+        self.request_transform(EditorTransformCommand::Reset {
+            target: target.clone(),
+        })
     }
 }
 
@@ -348,5 +329,37 @@ mod tests {
             workspace.handle_workspace_event(WorkspaceEvent::Command(AppCommand::ReloadA3d)),
             WorkspaceResponse::Ignored
         );
+    }
+    #[test]
+    fn object_visibility_is_updated_through_editor_commands() {
+        let mut workspace = LoadedA3dWorkspace::new();
+        let earth = WorldEditorTarget::Object("earth".to_string());
+        workspace.sync_objects([("earth", true)]);
+
+        assert_eq!(workspace.toggle_visibility(&earth), Some(false));
+        assert_eq!(workspace.visibility(&earth), Some(false));
+
+        assert!(workspace.set_visibility(&earth, true));
+        assert_eq!(workspace.visibility(&earth), Some(true));
+        assert_eq!(
+            workspace.toggle_visibility(&WorldEditorTarget::Camera),
+            None
+        );
+    }
+
+    #[test]
+    fn transform_requests_are_shared_and_target_aware() {
+        let mut workspace = LoadedA3dWorkspace::new();
+        workspace.sync_objects([("earth", true)]);
+        assert!(workspace.activate_target(WorldEditorTarget::Object("earth".to_string())));
+
+        assert_eq!(
+            workspace.request_active_translate([1.0, 0.0, 0.0]),
+            Some(EditorTransformCommand::Translate {
+                target: WorldEditorTarget::Object("earth".to_string()),
+                delta: [1.0, 0.0, 0.0],
+            })
+        );
+        assert!(workspace.request_active_scale(0.0).is_none());
     }
 }

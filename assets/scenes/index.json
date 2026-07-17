@@ -9,55 +9,99 @@
       "a3d_root": "assets/a3d/glyph_ab"
     },
     {
-      "id": "logo_quads"
+      "id": "logo_quads",
+      "scene": "loaded_a3d",
+      "title": "KM Logo",
+      "a3d_root": "assets/a3d/km_logo"
     },
     {
-      "id": "loaded_a3d"
+      "id": "loaded_a3d",
+      "title": "P Depth Demo",
+      "a3d_root": "assets/a3d/p_depth_demo"
     },
     {
       "id": "world_camera_spaces"
     },
     {
-      "id": "pitt_crew"
+      "id": "pitt_crew",
+      "scene": "loaded_a3d",
+      "title": "PITT CREW",
+      "a3d_root": "assets/a3d/pitt_crew"
     },
     {
-      "id": "crew"
+      "id": "crew",
+      "scene": "loaded_a3d",
+      "title": "CREW",
+      "a3d_root": "assets/a3d/crew"
     },
     {
-      "id": "pitt"
+      "id": "pitt",
+      "scene": "loaded_a3d",
+      "title": "PITT",
+      "a3d_root": "assets/a3d/pitt"
     },
     {
-      "id": "single_e"
+      "id": "single_e",
+      "scene": "loaded_a3d",
+      "title": "Single E",
+      "a3d_root": "assets/a3d/single_e"
     },
     {
-      "id": "single_w"
+      "id": "single_w",
+      "scene": "loaded_a3d",
+      "title": "Single W",
+      "a3d_root": "assets/a3d/single_w"
     },
     {
-      "id": "single_c"
+      "id": "single_c",
+      "scene": "loaded_a3d",
+      "title": "Single C",
+      "a3d_root": "assets/a3d/single_c"
     },
     {
-      "id": "single_r"
+      "id": "single_r",
+      "scene": "loaded_a3d",
+      "title": "Single R",
+      "a3d_root": "assets/a3d/single_r"
     },
     {
-      "id": "single_t"
+      "id": "single_t",
+      "scene": "loaded_a3d",
+      "title": "Single T",
+      "a3d_root": "assets/a3d/single_t"
     },
     {
-      "id": "single_i"
+      "id": "single_i",
+      "scene": "loaded_a3d",
+      "title": "Single I",
+      "a3d_root": "assets/a3d/single_i"
     },
     {
-      "id": "single_p"
+      "id": "single_p",
+      "scene": "loaded_a3d",
+      "title": "Single P",
+      "a3d_root": "assets/a3d/single_p"
     },
     {
       "id": "bezier_axes"
     },
     {
-      "id": "asset_axes_rotate_x"
+      "id": "asset_axes_rotate_x",
+      "scene": "loaded_a3d",
+      "title": "Asset Axes Rotate X",
+      "a3d_root": "assets/a3d/asset_axes_rotate_x"
     },
     {
-      "id": "asset_axes_rotate_y"
+      "id": "asset_axes_rotate_y",
+      "scene": "loaded_a3d",
+      "title": "Asset Axes Rotate Y",
+      "a3d_root": "assets/a3d/asset_axes_rotate_y"
     },
     {
-      "id": "asset_axes_rotate_z"
+      "id": "asset_axes_rotate_z",
+      "scene": "loaded_a3d",
+      "title": "Asset Axes Rotate Z",
+      "a3d_root": "assets/a3d/asset_axes_rotate_z"
     },
     {
       "id": "quad4"
@@ -72,16 +116,28 @@
       "id": "camera_look_at"
     },
     {
-      "id": "obj_box"
+      "id": "obj_box",
+      "scene": "loaded_a3d",
+      "title": "OBJ Box",
+      "a3d_root": "assets/a3d/obj_box"
     },
     {
-      "id": "rotate_axes_z"
+      "id": "rotate_axes_z",
+      "scene": "loaded_a3d",
+      "title": "Rotate Axes Z",
+      "a3d_root": "assets/a3d/rotate_axes_z"
     },
     {
-      "id": "rotate_axes_y"
+      "id": "rotate_axes_y",
+      "scene": "loaded_a3d",
+      "title": "Rotate Axes Y",
+      "a3d_root": "assets/a3d/rotate_axes_y"
     },
     {
-      "id": "rotate_axes_x"
+      "id": "rotate_axes_x",
+      "scene": "loaded_a3d",
+      "title": "Rotate Axes X",
+      "a3d_root": "assets/a3d/rotate_axes_x"
     },
     {
       "id": "cross_negative_z"
@@ -93,7 +149,10 @@
       "id": "arbitrary_vector"
     },
     {
-      "id": "axes"
+      "id": "axes",
+      "scene": "loaded_a3d",
+      "title": "Cartesian Axes",
+      "a3d_root": "assets/a3d/axes"
     }
   ]
 }

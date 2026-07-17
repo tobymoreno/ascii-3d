@@ -169,17 +169,10 @@ mod tests {
 
     #[test]
     fn clipped_triangle_never_visits_outside_viewport() {
-        rasterize_triangle_clipped(
-            8,
-            6,
-            (-4, 1, 1.0),
-            (5, 1, 1.0),
-            (1, 8, 1.0),
-            |x, y, _| {
-                assert!((0..8).contains(&x));
-                assert!((0..6).contains(&y));
-            },
-        );
+        rasterize_triangle_clipped(8, 6, (-4, 1, 1.0), (5, 1, 1.0), (1, 8, 1.0), |x, y, _| {
+            assert!((0..8).contains(&x));
+            assert!((0..6).contains(&y));
+        });
     }
 
     #[test]
