@@ -5,25 +5,31 @@ struct VertexInput {
     @location(0) position: vec4<f32>,
     @location(1) color: vec4<f32>,
     @location(2) light: f32,
+    @location(3) bands: vec3<f32>,
+    @location(4) thresholds: vec2<f32>,
 };
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec4<f32>,
     @location(1) light: f32,
+    @location(2) bands: vec3<f32>,
+    @location(3) thresholds: vec2<f32>,
 };
 @vertex fn vs_main(input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
     output.position = input.position;
     output.color = input.color;
     output.light = input.light;
+    output.bands = input.bands;
+    output.thresholds = input.thresholds;
     return output;
 }
 @fragment fn fs_fill(input: VertexOutput) -> @location(0) vec4<f32> {
-    var band = 1.0;
-    if (input.light < 0.32) {
-        band = 0.46;
-    } else if (input.light < 0.68) {
-        band = 0.72;
+    var band = input.bands.z;
+    if (input.light < input.thresholds.x) {
+        band = input.bands.x;
+    } else if (input.light < input.thresholds.y) {
+        band = input.bands.y;
     }
     return vec4<f32>(input.color.rgb * band, input.color.a);
 }
@@ -38,13 +44,23 @@ pub(crate) struct GpuVertex {
     pub(crate) position: [f32; 4],
     pub(crate) color: [f32; 4],
     pub(crate) light: f32,
+    pub(crate) bands: [f32; 3],
+    pub(crate) thresholds: [f32; 2],
 }
 impl GpuVertex {
-    pub(crate) fn new(position: [f32; 4], color: [f32; 4], light: f32) -> Self {
+    pub(crate) fn new(
+        position: [f32; 4],
+        color: [f32; 4],
+        light: f32,
+        bands: [f32; 3],
+        thresholds: [f32; 2],
+    ) -> Self {
         Self {
             position,
             color,
             light,
+            bands,
+            thresholds,
         }
     }
     fn layout() -> wgpu::VertexBufferLayout<'static> {
@@ -66,6 +82,16 @@ impl GpuVertex {
                     format: wgpu::VertexFormat::Float32,
                     offset: std::mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
                     shader_location: 2,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x3,
+                    offset: std::mem::size_of::<[f32; 9]>() as wgpu::BufferAddress,
+                    shader_location: 3,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x2,
+                    offset: std::mem::size_of::<[f32; 12]>() as wgpu::BufferAddress,
+                    shader_location: 4,
                 },
             ],
         }
@@ -102,7 +128,13 @@ struct DynamicVertices {
 impl DynamicVertices {
     fn new(device: &wgpu::Device, label: &str, vertices: &[GpuVertex]) -> Self {
         let initial = if vertices.is_empty() {
-            vec![GpuVertex::new([0.0; 4], [0.0; 4], 1.0)]
+            vec![GpuVertex::new(
+                [0.0; 4],
+                [0.0; 4],
+                1.0,
+                [1.0; 3],
+                [0.0, 1.0],
+            )]
         } else {
             vertices.to_vec()
         };
@@ -255,8 +287,8 @@ impl GpuViewportResources {
                 &layout,
                 &shader,
                 format,
-                "ascii-3d toon line pipeline",
-                wgpu::PrimitiveTopology::LineList,
+                "ascii-3d toon stroke pipeline",
+                wgpu::PrimitiveTopology::TriangleList,
                 "fs_line",
                 None,
                 false,
@@ -265,7 +297,7 @@ impl GpuViewportResources {
             ),
             hulls: DynamicVertices::new(device, "ascii-3d toon hull vertices", hulls),
             fills: DynamicVertices::new(device, "ascii-3d toon fill vertices", fills),
-            lines: DynamicVertices::new(device, "ascii-3d toon line vertices", lines),
+            lines: DynamicVertices::new(device, "ascii-3d toon stroke vertices", lines),
         }
     }
 }
@@ -304,7 +336,7 @@ impl egui_wgpu::CallbackTrait for GpuViewportCallback {
             r.lines.update(
                 device,
                 queue,
-                "ascii-3d toon line vertices",
+                "ascii-3d toon stroke vertices",
                 &self.line_vertices,
             );
         }

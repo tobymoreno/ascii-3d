@@ -35,7 +35,30 @@
       "render": {
         "mode": "ascii_raster",
         "stroke_character": "#",
-        "visible": true
+        "visible": true,
+        "toon": {
+          "base_color": [
+            0.18,
+            0.48,
+            0.92
+          ],
+          "shade_bands": [
+            0.46,
+            0.72,
+            1.0
+          ],
+          "band_thresholds": [
+            0.32,
+            0.68
+          ],
+          "outline_color": [
+            0.08,
+            0.09,
+            0.11
+          ],
+          "outline_width": 1.8,
+          "smooth_shading": true
+        }
       },
       "transform": {
         "position": [

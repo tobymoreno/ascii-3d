@@ -17,7 +17,30 @@
           "target_vertices": 160,
           "cache": true
         },
-        "backface_cull": true
+        "backface_cull": true,
+        "toon": {
+          "base_color": [
+            0.18,
+            0.48,
+            0.92
+          ],
+          "shade_bands": [
+            0.46,
+            0.72,
+            1.0
+          ],
+          "band_thresholds": [
+            0.32,
+            0.68
+          ],
+          "outline_color": [
+            0.08,
+            0.09,
+            0.11
+          ],
+          "outline_width": 1.8,
+          "smooth_shading": true
+        }
       },
       "behaviors": [
         {
@@ -47,7 +70,31 @@
       },
       "render": {
         "visible": true,
-        "stroke_character": "*"
+        "stroke_character": "*",
+        "toon": {
+          "base_color": [
+            0.3,
+            0.82,
+            0.42
+          ],
+          "shade_bands": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "band_thresholds": [
+            0.32,
+            0.68
+          ],
+          "outline_color": [
+            0.18,
+            0.75,
+            0.35
+          ],
+          "outline_width": 1.2,
+          "smooth_shading": true,
+          "line_only": true
+        }
       },
       "behaviors": [
         {

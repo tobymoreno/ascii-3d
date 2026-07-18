@@ -150,6 +150,70 @@ impl AsciiSimplifyConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ToonMaterialConfig {
+    #[serde(default = "ToonMaterialConfig::default_base_color")]
+    pub base_color: [f32; 3],
+
+    #[serde(default = "ToonMaterialConfig::default_shade_bands")]
+    pub shade_bands: [f32; 3],
+
+    #[serde(default = "ToonMaterialConfig::default_band_thresholds")]
+    pub band_thresholds: [f32; 2],
+
+    #[serde(default = "ToonMaterialConfig::default_outline_color")]
+    pub outline_color: [f32; 3],
+
+    #[serde(default = "ToonMaterialConfig::default_outline_width")]
+    pub outline_width: f32,
+
+    #[serde(default = "ToonMaterialConfig::default_smooth_shading")]
+    pub smooth_shading: bool,
+
+    #[serde(default)]
+    pub line_only: bool,
+}
+
+impl Default for ToonMaterialConfig {
+    fn default() -> Self {
+        Self {
+            base_color: Self::default_base_color(),
+            shade_bands: Self::default_shade_bands(),
+            band_thresholds: Self::default_band_thresholds(),
+            outline_color: Self::default_outline_color(),
+            outline_width: Self::default_outline_width(),
+            smooth_shading: Self::default_smooth_shading(),
+            line_only: false,
+        }
+    }
+}
+
+impl ToonMaterialConfig {
+    pub const fn default_base_color() -> [f32; 3] {
+        [0.30, 0.72, 0.52]
+    }
+
+    pub const fn default_shade_bands() -> [f32; 3] {
+        [0.46, 0.72, 1.0]
+    }
+
+    pub const fn default_band_thresholds() -> [f32; 2] {
+        [0.32, 0.68]
+    }
+
+    pub const fn default_outline_color() -> [f32; 3] {
+        [0.08, 0.09, 0.11]
+    }
+
+    pub const fn default_outline_width() -> f32 {
+        1.8
+    }
+
+    pub const fn default_smooth_shading() -> bool {
+        true
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RenderConfig {
     #[serde(default = "RenderConfig::default_visible")]
@@ -169,6 +233,9 @@ pub struct RenderConfig {
 
     #[serde(default)]
     pub backface_cull: bool,
+
+    #[serde(default)]
+    pub toon: Option<ToonMaterialConfig>,
 }
 
 impl Default for RenderConfig {
@@ -180,6 +247,7 @@ impl Default for RenderConfig {
             edge_stride: Self::default_edge_stride(),
             ascii_simplify: None,
             backface_cull: false,
+            toon: None,
         }
     }
 }

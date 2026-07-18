@@ -7,7 +7,7 @@ use std::{
 use super::gpu_renderer::GpuVertex;
 
 use crate::{
-    a3d::{AssetRef, LoadedWorld, Transform, load_a3d_project},
+    a3d::{AssetRef, LoadedWorld, ToonMaterialConfig, Transform, load_a3d_project},
     editor_core::{EditorCommand, EditorEntry, EditorSession},
     math::{Mat4, Vec3},
     mesh::Mesh,
@@ -474,6 +474,79 @@ impl NativeEditorApp {
         self.status = "Viewport style reset".to_owned();
     }
 
+    pub(crate) fn object_toon_material(
+        &self,
+        target: &NativeEditorTarget,
+    ) -> Option<ToonMaterialConfig> {
+        let NativeEditorTarget::Object(id) = target else {
+            return None;
+        };
+        Some(
+            self.effective_toon_material(id)
+                .unwrap_or_else(|| fallback_toon_material(id)),
+        )
+    }
+
+    pub(crate) fn object_uses_fallback_toon_material(&self, target: &NativeEditorTarget) -> bool {
+        let NativeEditorTarget::Object(id) = target else {
+            return false;
+        };
+        self.effective_toon_material(id).is_none()
+    }
+
+    pub(crate) fn set_object_toon_material(
+        &mut self,
+        target: &NativeEditorTarget,
+        material: ToonMaterialConfig,
+    ) -> bool {
+        let NativeEditorTarget::Object(id) = target else {
+            return false;
+        };
+        let Some(world) = &mut self.world else {
+            return false;
+        };
+
+        let descendant_prefix = format!("{id}/");
+        let mut updated = 0usize;
+        for object in &mut world.objects {
+            if object.id == *id || object.id.starts_with(&descendant_prefix) {
+                object.render.toon = Some(material);
+                updated += 1;
+            }
+        }
+
+        if updated == 0 {
+            return false;
+        }
+
+        self.status = if updated == 1 {
+            format!("Updated toon material for {id}")
+        } else {
+            format!(
+                "Updated toon material for {id} and {} descendants",
+                updated - 1
+            )
+        };
+        true
+    }
+
+    fn effective_toon_material(&self, object_id: &str) -> Option<ToonMaterialConfig> {
+        let world = self.world.as_ref()?;
+        let mut current = Some(object_id);
+        while let Some(id) = current {
+            if let Some(material) = world
+                .objects
+                .iter()
+                .find(|object| object.id == id)
+                .and_then(|object| object.render.toon)
+            {
+                return Some(material);
+            }
+            current = id.rsplit_once('/').map(|(parent, _)| parent);
+        }
+        None
+    }
+
     pub(crate) fn viewport_gpu_geometry(
         &self,
         width: f32,
@@ -520,7 +593,10 @@ impl NativeEditorApp {
                     _ => None,
                 })
                 .is_some_and(|id| object.id == id || object.id.starts_with(&format!("{id}/")));
-            let base_color = toon_base_color(&object.id, is_selected);
+            let material = self
+                .effective_toon_material(&object.id)
+                .unwrap_or_else(|| fallback_toon_material(&object.id));
+            let base_color = material.base_color;
             let view_vertices = mesh
                 .vertices
                 .iter()
@@ -531,15 +607,16 @@ impl NativeEditorApp {
                 .map(|point| project_point_clip(*point, width, height, focal_length))
                 .collect::<Vec<_>>();
 
-            let outline = if is_selected {
-                [0.45, 0.16, 0.04, 1.0]
-            } else {
-                [0.08, 0.09, 0.11, 1.0]
-            };
+            let outline = [
+                material.outline_color[0],
+                material.outline_color[1],
+                material.outline_color[2],
+                1.0,
+            ];
 
             let mut explicit_lines = Vec::new();
             let mut edge_map: HashMap<(usize, usize), EdgeFaces> = HashMap::new();
-            let mut triangles = Vec::new();
+            let mut triangles: Vec<([usize; 3], Vec3)> = Vec::new();
             let mut vertex_normals = vec![Vec3::new(0.0, 0.0, 0.0); view_vertices.len()];
 
             for primitive in &mesh.faces {
@@ -573,7 +650,7 @@ impl NativeEditorApp {
                                     },
                                 );
                             }
-                            triangles.push(tri);
+                            triangles.push((tri, normal));
                         }
                     }
                     _ => {}
@@ -584,10 +661,12 @@ impl NativeEditorApp {
                 *normal = normal.normalized();
             }
 
-            let outline_x_ndc = (2.0 * self.outline_pixel_width) / width.max(1.0);
-            let outline_y_ndc = (2.0 * self.outline_pixel_width) / height.max(1.0);
+            let outline_width = material.outline_width.max(0.0) * self.outline_pixel_width
+                / DEFAULT_OUTLINE_PIXEL_WIDTH;
+            let outline_x_ndc = (2.0 * outline_width) / width.max(1.0);
+            let outline_y_ndc = (2.0 * outline_width) / height.max(1.0);
 
-            for tri in triangles {
+            for (tri, face_normal) in triangles {
                 let mut projected_triangle = [[0.0; 4]; 3];
                 let mut projected_hull = [[0.0; 4]; 3];
                 let mut lights = [0.0; 3];
@@ -598,7 +677,11 @@ impl NativeEditorApp {
                         break;
                     };
                     projected_triangle[slot] = projected_vertex;
-                    let normal = vertex_normals[index];
+                    let normal = if material.smooth_shading {
+                        vertex_normals[index]
+                    } else {
+                        face_normal
+                    };
                     lights[slot] = normal.dot(light_direction).abs();
                     let screen_dir = Vec3::new(normal.x, normal.y, 0.0);
                     let screen_len =
@@ -622,25 +705,50 @@ impl NativeEditorApp {
                     continue;
                 }
 
-                let color = [base_color[0], base_color[1], base_color[2], 1.0];
-                for slot in 0..3 {
-                    hulls.push(GpuVertex::new(projected_hull[slot], outline, 1.0));
-                }
-                for slot in 0..3 {
-                    fills.push(GpuVertex::new(
-                        projected_triangle[slot],
-                        color,
-                        lights[slot],
-                    ));
+                if !material.line_only {
+                    let color = [base_color[0], base_color[1], base_color[2], 1.0];
+                    for slot in 0..3 {
+                        hulls.push(GpuVertex::new(
+                            projected_hull[slot],
+                            outline,
+                            1.0,
+                            material.shade_bands,
+                            material.band_thresholds,
+                        ));
+                    }
+                    for slot in 0..3 {
+                        fills.push(GpuVertex::new(
+                            projected_triangle[slot],
+                            color,
+                            lights[slot],
+                            material.shade_bands,
+                            material.band_thresholds,
+                        ));
+                    }
                 }
             }
+
+            let line_fill = [base_color[0], base_color[1], base_color[2], 1.0];
+            let inner_line_width = inner_stroke_width(outline_width);
+            let outer_line_width = outer_stroke_width(outline_width);
 
             for (a, b) in explicit_lines {
                 let (Some(start), Some(end)) = (projected[a], projected[b]) else {
                     continue;
                 };
-                lines.push(GpuVertex::new(start, outline, 1.0));
-                lines.push(GpuVertex::new(end, outline, 1.0));
+                push_bordered_screen_space_stroke(
+                    &mut lines,
+                    start,
+                    end,
+                    outer_line_width,
+                    inner_line_width,
+                    width,
+                    height,
+                    outline,
+                    line_fill,
+                    material.shade_bands,
+                    material.band_thresholds,
+                );
             }
 
             if self.show_wireframe {
@@ -648,19 +756,61 @@ impl NativeEditorApp {
                     let (Some(start), Some(end)) = (projected[a], projected[b]) else {
                         continue;
                     };
-                    lines.push(GpuVertex::new(start, outline, 1.0));
-                    lines.push(GpuVertex::new(end, outline, 1.0));
+                    push_screen_space_stroke(
+                        &mut lines,
+                        start,
+                        end,
+                        outline_width,
+                        width,
+                        height,
+                        outline,
+                        material.shade_bands,
+                        material.band_thresholds,
+                    );
+                }
+            } else if material.line_only {
+                for (a, b) in mesh.unique_edges() {
+                    let (Some(start), Some(end)) = (projected[a], projected[b]) else {
+                        continue;
+                    };
+                    push_bordered_screen_space_stroke(
+                        &mut lines,
+                        start,
+                        end,
+                        outer_line_width,
+                        inner_line_width,
+                        width,
+                        height,
+                        outline,
+                        line_fill,
+                        material.shade_bands,
+                        material.band_thresholds,
+                    );
                 }
             } else {
                 for ((a, b), faces) in edge_map {
-                    if !faces.is_major_crease() {
+                    // The inverted hull gives curved objects a soft contour,
+                    // but very thin or nearly planar meshes (logos/glyphs)
+                    // can collapse to almost no visible hull. Draw their
+                    // mathematically-derived silhouette edges as a stable
+                    // screen-space stroke, along with intentional creases.
+                    if !(faces.is_silhouette() || faces.is_major_crease()) {
                         continue;
                     }
                     let (Some(start), Some(end)) = (projected[a], projected[b]) else {
                         continue;
                     };
-                    lines.push(GpuVertex::new(start, outline, 1.0));
-                    lines.push(GpuVertex::new(end, outline, 1.0));
+                    push_screen_space_stroke(
+                        &mut lines,
+                        start,
+                        end,
+                        outline_width.max(0.75),
+                        width,
+                        height,
+                        outline,
+                        material.shade_bands,
+                        material.band_thresholds,
+                    );
                 }
             }
         }
@@ -814,20 +964,146 @@ fn build_scene_state(scene_path: &Path) -> Result<NativeEditorApp, Box<dyn Error
     Ok(app)
 }
 
-fn toon_base_color(object_id: &str, selected: bool) -> [f32; 3] {
-    if selected {
-        return [1.0, 0.48, 0.10];
-    }
+const STROKE_DEPTH_BIAS_NDC: f32 = 1.0e-4;
+const LINE_FILL_WIDTH_PIXELS: f32 = 2.0;
 
+fn fallback_toon_material(object_id: &str) -> ToonMaterialConfig {
+    let mut material = ToonMaterialConfig::default();
     let id = object_id.to_ascii_lowercase();
-    if id.contains("earth") || id.contains("sphere") {
+    material.base_color = if id.contains("earth") || id.contains("sphere") {
         [0.18, 0.48, 0.92]
     } else if id.contains("teapot") {
         [0.92, 0.28, 0.18]
     } else if id.contains("km") || id.contains("logo") {
         [0.96, 0.76, 0.12]
     } else {
-        [0.30, 0.72, 0.52]
+        ToonMaterialConfig::default_base_color()
+    };
+    material
+}
+
+fn inner_stroke_width(_outline_width_pixels: f32) -> f32 {
+    LINE_FILL_WIDTH_PIXELS
+}
+
+fn outer_stroke_width(outline_width_pixels: f32) -> f32 {
+    LINE_FILL_WIDTH_PIXELS + outline_width_pixels.max(0.0) * 2.0
+}
+
+fn bias_clip_toward_camera(position: [f32; 4], ndc_bias: f32) -> [f32; 4] {
+    [
+        position[0],
+        position[1],
+        (position[2] / position[3] - ndc_bias) * position[3],
+        position[3],
+    ]
+}
+
+fn push_bordered_screen_space_stroke(
+    vertices: &mut Vec<GpuVertex>,
+    start: [f32; 4],
+    end: [f32; 4],
+    outer_width_pixels: f32,
+    inner_width_pixels: f32,
+    viewport_width: f32,
+    viewport_height: f32,
+    outer_color: [f32; 4],
+    inner_color: [f32; 4],
+    shade_bands: [f32; 3],
+    band_thresholds: [f32; 2],
+) {
+    push_screen_space_stroke(
+        vertices,
+        start,
+        end,
+        outer_width_pixels,
+        viewport_width,
+        viewport_height,
+        outer_color,
+        shade_bands,
+        band_thresholds,
+    );
+    push_screen_space_stroke(
+        vertices,
+        start,
+        end,
+        inner_width_pixels,
+        viewport_width,
+        viewport_height,
+        inner_color,
+        shade_bands,
+        band_thresholds,
+    );
+}
+
+fn push_screen_space_stroke(
+    vertices: &mut Vec<GpuVertex>,
+    start: [f32; 4],
+    end: [f32; 4],
+    width_pixels: f32,
+    viewport_width: f32,
+    viewport_height: f32,
+    color: [f32; 4],
+    shade_bands: [f32; 3],
+    band_thresholds: [f32; 2],
+) {
+    if start[3].abs() <= f32::EPSILON || end[3].abs() <= f32::EPSILON {
+        return;
+    }
+
+    let start = bias_clip_toward_camera(start, STROKE_DEPTH_BIAS_NDC);
+    let end = bias_clip_toward_camera(end, STROKE_DEPTH_BIAS_NDC);
+
+    let start_ndc = [start[0] / start[3], start[1] / start[3]];
+    let end_ndc = [end[0] / end[3], end[1] / end[3]];
+    let dx_pixels = (end_ndc[0] - start_ndc[0]) * viewport_width * 0.5;
+    let dy_pixels = (end_ndc[1] - start_ndc[1]) * viewport_height * 0.5;
+    let length = (dx_pixels * dx_pixels + dy_pixels * dy_pixels).sqrt();
+    if length <= f32::EPSILON {
+        return;
+    }
+
+    let half_width = width_pixels.max(0.5) * 0.5;
+    let offset_x_pixels = -dy_pixels / length * half_width;
+    let offset_y_pixels = dx_pixels / length * half_width;
+    let offset_ndc = [
+        offset_x_pixels * 2.0 / viewport_width.max(1.0),
+        offset_y_pixels * 2.0 / viewport_height.max(1.0),
+    ];
+
+    let start_a = [
+        start[0] + offset_ndc[0] * start[3],
+        start[1] + offset_ndc[1] * start[3],
+        start[2],
+        start[3],
+    ];
+    let start_b = [
+        start[0] - offset_ndc[0] * start[3],
+        start[1] - offset_ndc[1] * start[3],
+        start[2],
+        start[3],
+    ];
+    let end_a = [
+        end[0] + offset_ndc[0] * end[3],
+        end[1] + offset_ndc[1] * end[3],
+        end[2],
+        end[3],
+    ];
+    let end_b = [
+        end[0] - offset_ndc[0] * end[3],
+        end[1] - offset_ndc[1] * end[3],
+        end[2],
+        end[3],
+    ];
+
+    for position in [start_a, start_b, end_a, start_b, end_b, end_a] {
+        vertices.push(GpuVertex::new(
+            position,
+            color,
+            1.0,
+            shade_bands,
+            band_thresholds,
+        ));
     }
 }
 

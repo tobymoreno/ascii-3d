@@ -325,6 +325,19 @@ fn draw_target_details(app: &mut NativeEditorApp, ui: &mut egui::Ui, target: &Na
                     ui.label(app.editor_object_count().to_string());
                     ui.end_row();
                 });
+
+            ui.add_space(10.0);
+            ui.label(egui::RichText::new("Viewport style").strong());
+            let mut background = app.viewport_background_rgb();
+            ui.horizontal(|ui| {
+                ui.label("Background");
+                if ui.color_edit_button_srgb(&mut background).changed() {
+                    app.set_viewport_background_rgb(background);
+                }
+            });
+            if ui.button("Reset Viewport Style").clicked() {
+                app.reset_viewport_style();
+            }
         }
         NativeEditorTarget::Camera => {
             let position = app.camera_position();
@@ -372,6 +385,63 @@ fn draw_target_details(app: &mut NativeEditorApp, ui: &mut egui::Ui, target: &Na
             ui.add_space(8.0);
             if ui.button("Frame Selected (F)").clicked() {
                 app.frame_selected();
+            }
+
+            ui.add_space(12.0);
+            ui.label(egui::RichText::new("Toon material").strong());
+            let uses_fallback = app.object_uses_fallback_toon_material(target);
+            if uses_fallback {
+                ui.colored_label(
+                    MUTED_TEXT_COLOR,
+                    "Renderer fallback — editing creates an object override.",
+                );
+                ui.add_space(4.0);
+            }
+            if let Some(mut material) = app.object_toon_material(target) {
+                let mut changed = false;
+
+                ui.horizontal(|ui| {
+                    ui.label("Base color");
+                    changed |= ui.color_edit_button_rgb(&mut material.base_color).changed();
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Outline color");
+                    changed |= ui
+                        .color_edit_button_rgb(&mut material.outline_color)
+                        .changed();
+                });
+                changed |= ui
+                    .add(
+                        egui::Slider::new(&mut material.outline_width, 0.0..=4.0)
+                            .text("Outline width"),
+                    )
+                    .changed();
+
+                ui.label("Shade multipliers");
+                changed |= ui
+                    .add(egui::Slider::new(&mut material.shade_bands[0], 0.1..=1.0).text("Dark"))
+                    .changed();
+                changed |= ui
+                    .add(egui::Slider::new(&mut material.shade_bands[1], 0.1..=1.0).text("Mid"))
+                    .changed();
+                changed |= ui
+                    .add(egui::Slider::new(&mut material.shade_bands[2], 0.1..=1.2).text("Light"))
+                    .changed();
+
+                changed |= ui
+                    .checkbox(&mut material.smooth_shading, "Smooth shading")
+                    .changed();
+                changed |= ui.checkbox(&mut material.line_only, "Line only").changed();
+                if material.line_only {
+                    ui.colored_label(
+                        MUTED_TEXT_COLOR,
+                        "Line only uses base-color strokes with an outline border.",
+                    );
+                }
+
+                if changed {
+                    app.set_object_toon_material(target, material);
+                }
             }
         }
     }
@@ -435,7 +505,7 @@ fn draw_viewport(app: &mut NativeEditorApp, ui: &mut egui::Ui) {
     let (fill_vertices, hull_vertices, line_vertices) =
         app.viewport_gpu_geometry(render_rect.width(), render_rect.height());
     let triangle_count = fill_vertices.len() / 3;
-    let edge_count = line_vertices.len() / 2;
+    let edge_count = line_vertices.len() / 6;
 
     if let Some(target_format) = app.gpu_target_format() {
         viewport_painter.add(egui_wgpu::Callback::new_paint_callback(
