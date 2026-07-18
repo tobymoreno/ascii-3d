@@ -1,21 +1,30 @@
 use crate::editor_core::EditorCommand;
 
-use super::app::NativeEditorApp;
+use super::{
+    app::{NativeEditorApp, NativeEditorTarget},
+    gpu_renderer::GpuViewportCallback,
+};
 
 const WINDOW_FILL: egui::Color32 = egui::Color32::from_rgb(18, 20, 24);
 const PANEL_FILL: egui::Color32 = egui::Color32::from_rgb(25, 28, 34);
 const BAR_FILL: egui::Color32 = egui::Color32::from_rgb(22, 24, 29);
-const VIEWPORT_FILL: egui::Color32 = egui::Color32::from_rgb(35, 39, 46);
 const BORDER_COLOR: egui::Color32 = egui::Color32::from_rgb(70, 76, 88);
 const TEXT_COLOR: egui::Color32 = egui::Color32::from_rgb(225, 228, 234);
 const MUTED_TEXT_COLOR: egui::Color32 = egui::Color32::from_rgb(150, 156, 168);
 const HIERARCHY_WIDTH: f32 = 230.0;
 const PROPERTIES_WIDTH: f32 = 280.0;
+const VIEWPORT_MARGIN: f32 = 12.0;
 
 pub(crate) fn draw(app: &mut NativeEditorApp, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
     if ui.ctx().input(|input| input.key_pressed(egui::Key::Escape)) {
         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         return;
+    }
+
+    if ui.ctx().input(|input| {
+        input.key_pressed(egui::Key::F) && !input.modifiers.ctrl && !input.modifiers.alt
+    }) {
+        app.frame_selected();
     }
 
     configure_visuals(ui);
@@ -49,24 +58,99 @@ fn draw_menu_bar(app: &mut NativeEditorApp, ui: &mut egui::Ui) {
         .inner_margin(egui::Margin::symmetric(8, 5))
         .show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
-                menu_button(ui, "File", &["New", "Open…", "Save", "Exit"]);
+                file_menu(app, ui);
                 menu_button(ui, "Edit", &["Undo", "Redo", "Preferences"]);
-                menu_button(ui, "View", &["Reset View", "Frame Selection"]);
+                view_menu(app, ui);
                 menu_button(ui, "Objects", &["Add", "Duplicate", "Delete"]);
-                menu_button(ui, "Debug", &["GPU Info", "Show Metrics"]);
+                debug_menu(app, ui);
                 menu_button(ui, "Help", &["Controls", "About"]);
 
                 ui.separator();
-                ui.colored_label(
-                    MUTED_TEXT_COLOR,
-                    "Phase 4 shell — geometry rendering intentionally disabled",
-                );
+                ui.colored_label(MUTED_TEXT_COLOR, "Phase 10 - toon-shaded wgpu viewport");
             });
         });
 
     if ui.ctx().input(|input| input.viewport().close_requested()) {
         app.status = "Closing native editor".to_owned();
     }
+}
+
+fn file_menu(app: &mut NativeEditorApp, ui: &mut egui::Ui) {
+    ui.menu_button("File", |ui| {
+        ui.add_enabled(false, egui::Button::new("New"));
+
+        if ui.button("Open...").clicked() {
+            ui.close();
+            let mut dialog = rfd::FileDialog::new()
+                .add_filter("A3D scene", &["a3d"])
+                .set_title("Open A3D Scene");
+
+            if let Some(parent) = app.scene_path().parent() {
+                dialog = dialog.set_directory(parent);
+            }
+
+            match dialog.pick_file() {
+                Some(path) => {
+                    app.load_scene(path);
+                }
+                None => {
+                    app.status = "Open canceled".to_owned();
+                }
+            }
+        }
+
+        ui.add_enabled(false, egui::Button::new("Save"));
+        ui.separator();
+        if ui.button("Exit").clicked() {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    });
+}
+
+fn view_menu(app: &mut NativeEditorApp, ui: &mut egui::Ui) {
+    ui.menu_button("View", |ui| {
+        if ui.button("Reset Camera").clicked() {
+            app.reset_camera();
+            ui.close();
+        }
+        if ui.button("Frame Selected    F").clicked() {
+            app.frame_selected();
+            ui.close();
+        }
+    });
+}
+
+fn debug_menu(app: &mut NativeEditorApp, ui: &mut egui::Ui) {
+    ui.menu_button("Debug", |ui| {
+        let mut show_wireframe = app.show_wireframe();
+        if ui.checkbox(&mut show_wireframe, "Show Wireframe").changed() {
+            app.set_show_wireframe(show_wireframe);
+        }
+
+        ui.separator();
+        ui.label("Outline width");
+        let mut outline_width = app.outline_pixel_width();
+        if ui
+            .add(egui::Slider::new(&mut outline_width, 0.5..=4.0).suffix(" px"))
+            .changed()
+        {
+            app.set_outline_pixel_width(outline_width);
+        }
+
+        ui.label("Viewport background");
+        let mut background = app.viewport_background_rgb();
+        if ui.color_edit_button_srgb(&mut background).changed() {
+            app.set_viewport_background_rgb(background);
+        }
+
+        if ui.button("Reset Viewport Style").clicked() {
+            app.reset_viewport_style();
+        }
+
+        ui.separator();
+        ui.add_enabled(false, egui::Button::new("GPU Info"));
+        ui.add_enabled(false, egui::Button::new("Show Metrics"));
+    });
 }
 
 fn menu_button(ui: &mut egui::Ui, title: &str, items: &[&str]) {
@@ -106,7 +190,7 @@ fn draw_body(app: &mut NativeEditorApp, ui: &mut egui::Ui) {
         ui.allocate_ui_with_layout(
             egui::vec2(viewport_width, body_height),
             egui::Layout::top_down(egui::Align::Min),
-            |ui| draw_viewport(ui),
+            |ui| draw_viewport(app, ui),
         );
 
         ui.allocate_ui_with_layout(
@@ -146,8 +230,8 @@ fn draw_hierarchy(app: &mut NativeEditorApp, ui: &mut egui::Ui) {
             );
 
             if response.clicked() {
-                app.session.apply(EditorCommand::SelectIndex(index));
-                app.session.apply(EditorCommand::InspectSelected);
+                app.apply_editor_command(EditorCommand::SelectIndex(index));
+                app.apply_editor_command(EditorCommand::InspectSelected);
                 app.status = format!("Selected {}", entry.target.label());
             }
         }
@@ -184,7 +268,7 @@ fn draw_properties(app: &mut NativeEditorApp, ui: &mut egui::Ui) {
                 match app.session.visibility(&target) {
                     Some(mut visible) => {
                         if ui.checkbox(&mut visible, "").changed() {
-                            app.session.apply(EditorCommand::SetVisibility {
+                            app.apply_editor_command(EditorCommand::SetVisibility {
                                 target: target.clone(),
                                 visible,
                             });
@@ -199,31 +283,125 @@ fn draw_properties(app: &mut NativeEditorApp, ui: &mut egui::Ui) {
                 ui.label("Gizmo");
                 let mut gizmo_visible = app.session.gizmo_visible(&target);
                 if ui.checkbox(&mut gizmo_visible, "").changed() {
-                    app.session
-                        .apply(EditorCommand::ToggleGizmo(target.clone()));
+                    app.apply_editor_command(EditorCommand::ToggleGizmo(target.clone()));
                 }
                 ui.end_row();
             });
 
         ui.add_space(12.0);
         if ui.button("Make Active").clicked() {
-            app.session.apply(EditorCommand::Activate(target.clone()));
+            app.apply_editor_command(EditorCommand::Activate(target.clone()));
             app.status = format!("Activated {}", target.label());
         }
+
+        ui.add_space(10.0);
+        draw_target_details(app, ui, &target);
 
         ui.separator();
         ui.colored_label(
             MUTED_TEXT_COLOR,
-            "Transform controls arrive after the native viewport pipeline.",
+            "Values are loaded from the A3D world. Editing arrives with transform controls.",
         );
     });
 }
 
-fn draw_viewport(ui: &mut egui::Ui) {
-    let available = ui.available_rect_before_wrap();
-    let response = ui.allocate_rect(available, egui::Sense::hover());
+fn draw_target_details(app: &mut NativeEditorApp, ui: &mut egui::Ui, target: &NativeEditorTarget) {
+    match target {
+        NativeEditorTarget::Scene => {
+            ui.label(egui::RichText::new("Scene data").strong());
+            egui::Grid::new("native_editor_scene_data")
+                .num_columns(2)
+                .spacing([14.0, 8.0])
+                .show(ui, |ui| {
+                    ui.label("Title");
+                    ui.label(app.scene_title());
+                    ui.end_row();
 
-    ui.painter().rect_filled(response.rect, 0.0, VIEWPORT_FILL);
+                    ui.label("Source");
+                    ui.label(app.scene_path().display().to_string());
+                    ui.end_row();
+
+                    ui.label("Editor objects");
+                    ui.label(app.editor_object_count().to_string());
+                    ui.end_row();
+                });
+        }
+        NativeEditorTarget::Camera => {
+            let position = app.camera_position();
+            let camera_target = app.camera_target();
+            let angles = app.camera_angles_degrees();
+
+            ui.label(egui::RichText::new("Editor camera").strong());
+            egui::Grid::new("native_editor_camera_grid")
+                .num_columns(2)
+                .spacing([14.0, 8.0])
+                .show(ui, |ui| {
+                    vec3_row(ui, "Position", position);
+                    vec3_row(ui, "Target", camera_target);
+
+                    ui.label("Distance");
+                    ui.monospace(format!("{:.3}", app.camera_distance()));
+                    ui.end_row();
+
+                    ui.label("Yaw / Pitch");
+                    ui.monospace(format!("{:.1} / {:.1} deg", angles[0], angles[1]));
+                    ui.end_row();
+                });
+
+            ui.add_space(8.0);
+            if ui.button("Reset Camera").clicked() {
+                app.reset_camera();
+            }
+        }
+        NativeEditorTarget::Object(_) => {
+            let Some(transform) = app.object_transform(target) else {
+                ui.colored_label(MUTED_TEXT_COLOR, "Object data is unavailable.");
+                return;
+            };
+
+            ui.label(egui::RichText::new("Transform").strong());
+            egui::Grid::new("native_editor_transform_grid")
+                .num_columns(2)
+                .spacing([14.0, 8.0])
+                .show(ui, |ui| {
+                    transform_row(ui, "Position", transform.position);
+                    transform_row(ui, "Rotation", transform.rotation_degrees);
+                    transform_row(ui, "Scale", transform.scale);
+                });
+
+            ui.add_space(8.0);
+            if ui.button("Frame Selected (F)").clicked() {
+                app.frame_selected();
+            }
+        }
+    }
+}
+
+fn vec3_row(ui: &mut egui::Ui, label: &str, value: crate::math::Vec3) {
+    ui.label(label);
+    ui.monospace(format!("{:.3}, {:.3}, {:.3}", value.x, value.y, value.z));
+    ui.end_row();
+}
+
+fn transform_row(ui: &mut egui::Ui, label: &str, values: [f32; 3]) {
+    ui.label(label);
+    ui.monospace(format!(
+        "{:.3}, {:.3}, {:.3}",
+        values[0], values[1], values[2]
+    ));
+    ui.end_row();
+}
+
+fn draw_viewport(app: &mut NativeEditorApp, ui: &mut egui::Ui) {
+    let available = ui.available_rect_before_wrap();
+    let response = ui.allocate_rect(available, egui::Sense::click_and_drag());
+
+    let background = app.viewport_background_rgb();
+    ui.painter().rect_filled(
+        response.rect,
+        0.0,
+        egui::Color32::from_rgb(background[0], background[1], background[2]),
+    );
     ui.painter().rect_stroke(
         response.rect.shrink(0.5),
         0.0,
@@ -231,15 +409,60 @@ fn draw_viewport(ui: &mut egui::Ui) {
         egui::StrokeKind::Inside,
     );
 
-    let text =
-        "Viewport\nwgpu-backed clear surface\nA3D rendering is intentionally not connected yet";
-    ui.painter().text(
-        response.rect.center(),
-        egui::Align2::CENTER_CENTER,
-        text,
-        egui::FontId::proportional(16.0),
-        egui::Color32::from_rgb(190, 195, 205),
-    );
+    if response.hovered() {
+        let scroll_delta = ui.ctx().input(|input| input.smooth_scroll_delta.y);
+        if scroll_delta.abs() > f32::EPSILON {
+            app.zoom_camera(scroll_delta);
+        }
+    }
+
+    let pointer_delta = ui.ctx().input(|input| input.pointer.delta());
+    if response.dragged_by(egui::PointerButton::Secondary) {
+        let orbit_focus = ui.ctx().input(|input| input.modifiers.alt);
+        if orbit_focus {
+            app.orbit_focus([pointer_delta.x, pointer_delta.y]);
+        } else {
+            app.look_camera([pointer_delta.x, pointer_delta.y]);
+        }
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    } else if response.dragged_by(egui::PointerButton::Middle) {
+        app.pan_camera([pointer_delta.x, pointer_delta.y]);
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    }
+
+    let render_rect = response.rect.shrink(VIEWPORT_MARGIN);
+    let viewport_painter = ui.painter().with_clip_rect(render_rect);
+    let (fill_vertices, hull_vertices, line_vertices) =
+        app.viewport_gpu_geometry(render_rect.width(), render_rect.height());
+    let triangle_count = fill_vertices.len() / 3;
+    let edge_count = line_vertices.len() / 2;
+
+    if let Some(target_format) = app.gpu_target_format() {
+        viewport_painter.add(egui_wgpu::Callback::new_paint_callback(
+            render_rect,
+            GpuViewportCallback::new(fill_vertices, hull_vertices, line_vertices, target_format),
+        ));
+    }
+
+    if triangle_count == 0 && edge_count == 0 {
+        viewport_painter.text(
+            render_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "No renderable mesh geometry",
+            egui::FontId::proportional(16.0),
+            MUTED_TEXT_COLOR,
+        );
+    } else {
+        viewport_painter.text(
+            render_rect.left_top(),
+            egui::Align2::LEFT_TOP,
+            format!(
+                "{triangle_count} toon triangles + {edge_count} outline edges | Wheel: zoom  Middle: pan  Right: look  Alt+Right: orbit focus  F: frame selected"
+            ),
+            egui::FontId::monospace(12.0),
+            MUTED_TEXT_COLOR,
+        );
+    }
 }
 
 fn draw_status_bar(app: &NativeEditorApp, ui: &mut egui::Ui) {
@@ -253,6 +476,16 @@ fn draw_status_bar(app: &NativeEditorApp, ui: &mut egui::Ui) {
                 ui.colored_label(MUTED_TEXT_COLOR, "FPS: --");
                 ui.separator();
                 ui.colored_label(MUTED_TEXT_COLOR, "Renderer: wgpu");
+                ui.separator();
+                ui.colored_label(
+                    MUTED_TEXT_COLOR,
+                    format!("Objects: {}", app.editor_object_count()),
+                );
+                ui.separator();
+                ui.colored_label(
+                    MUTED_TEXT_COLOR,
+                    format!("Meshes: {}", app.mesh_asset_count()),
+                );
             });
         });
 }
