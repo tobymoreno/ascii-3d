@@ -502,7 +502,7 @@ fn draw_viewport(app: &mut NativeEditorApp, ui: &mut egui::Ui) {
 
     let render_rect = response.rect.shrink(VIEWPORT_MARGIN);
     let viewport_painter = ui.painter().with_clip_rect(render_rect);
-    let (fill_vertices, hull_vertices, line_vertices) =
+    let (fill_vertices, hull_vertices, line_vertices, geo_fill_vertices) =
         app.viewport_gpu_geometry(render_rect.width(), render_rect.height());
     let triangle_count = fill_vertices.len() / 3;
     let edge_count = line_vertices.len() / 6;
@@ -510,7 +510,13 @@ fn draw_viewport(app: &mut NativeEditorApp, ui: &mut egui::Ui) {
     if let Some(target_format) = app.gpu_target_format() {
         viewport_painter.add(egui_wgpu::Callback::new_paint_callback(
             render_rect,
-            GpuViewportCallback::new(fill_vertices, hull_vertices, line_vertices, target_format),
+            GpuViewportCallback::new(
+                fill_vertices,
+                hull_vertices,
+                line_vertices,
+                geo_fill_vertices,
+                target_format,
+            ),
         ));
     }
 

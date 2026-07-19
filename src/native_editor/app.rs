@@ -9,6 +9,7 @@ use super::gpu_renderer::GpuVertex;
 use crate::{
     a3d::{AssetRef, LoadedWorld, ToonMaterialConfig, Transform, load_a3d_project},
     editor_core::{EditorCommand, EditorEntry, EditorSession},
+    geojson::{GeoJsonMap, load_geojson_map},
     math::{Mat4, Vec3},
     mesh::Mesh,
     obj::load_obj,
@@ -152,6 +153,7 @@ pub(crate) struct NativeEditorApp {
     pub(crate) status: String,
     world: Option<LoadedWorld>,
     meshes: HashMap<String, Mesh>,
+    geojson_maps: HashMap<String, GeoJsonMap>,
     scene_path: PathBuf,
     camera: NativeCamera,
     gpu_target_format: Option<egui_wgpu::wgpu::TextureFormat>,
@@ -188,6 +190,7 @@ impl NativeEditorApp {
             status: format!("Failed to load {}: {error}", scene_path.display()),
             world: None,
             meshes: HashMap::new(),
+            geojson_maps: HashMap::new(),
             scene_path,
             camera: NativeCamera::default(),
             gpu_target_format: None,
@@ -387,20 +390,36 @@ impl NativeEditorApp {
             if !include_object(&object.id) {
                 continue;
             }
-            let AssetRef::Mesh { path } = &object.asset else {
-                continue;
-            };
-            let Some(mesh) = self.meshes.get(path) else {
-                continue;
-            };
             let world_matrix = object.world_matrix();
-
-            for vertex in &mesh.vertices {
-                let point = world_matrix.transform_point(*vertex);
-                match &mut bounds {
-                    Some(bounds) => bounds.include(point),
-                    None => bounds = Some(CameraBounds::from_point(point)),
+            match &object.asset {
+                AssetRef::Mesh { path } => {
+                    let Some(mesh) = self.meshes.get(path) else {
+                        continue;
+                    };
+                    for vertex in &mesh.vertices {
+                        let point = world_matrix.transform_point(*vertex);
+                        match &mut bounds {
+                            Some(bounds) => bounds.include(point),
+                            None => bounds = Some(CameraBounds::from_point(point)),
+                        }
+                    }
                 }
+                AssetRef::GeoJsonMap { path, radius_scale } => {
+                    let key = geojson_cache_key(path, *radius_scale);
+                    let Some(map) = self.geojson_maps.get(&key) else {
+                        continue;
+                    };
+                    for (start, end) in &map.segments {
+                        for vertex in [start, end] {
+                            let point = world_matrix.transform_point(*vertex);
+                            match &mut bounds {
+                                Some(bounds) => bounds.include(point),
+                                None => bounds = Some(CameraBounds::from_point(point)),
+                            }
+                        }
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -551,52 +570,135 @@ impl NativeEditorApp {
         &self,
         width: f32,
         height: f32,
-    ) -> (Vec<GpuVertex>, Vec<GpuVertex>, Vec<GpuVertex>) {
+    ) -> (
+        Vec<GpuVertex>,
+        Vec<GpuVertex>,
+        Vec<GpuVertex>,
+        Vec<GpuVertex>,
+    ) {
         if width <= 1.0 || height <= 1.0 {
-            return (Vec::new(), Vec::new(), Vec::new());
+            return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         }
 
         let Some(world) = &self.world else {
-            return (Vec::new(), Vec::new(), Vec::new());
+            return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         };
         let Some(view) = Mat4::look_at(
             self.camera.position,
             self.camera.target(),
             Vec3::new(0.0, 1.0, 0.0),
         ) else {
-            return (Vec::new(), Vec::new(), Vec::new());
+            return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         };
 
         let focal_length =
             0.5 * REFERENCE_VIEWPORT_HEIGHT / (0.5 * CAMERA_FOV_DEGREES.to_radians()).tan();
-        let selected = self.session.inspected_target();
         let light_direction = Vec3::new(-0.35, 0.75, 0.55).normalized();
         let mut fills = Vec::new();
         let mut hulls = Vec::new();
         let mut lines = Vec::new();
+        let mut geo_fills = Vec::new();
 
         for object in &world.objects {
-            let AssetRef::Mesh { path } = &object.asset else {
-                continue;
-            };
             if !world.object_effectively_visible(&object.id) {
                 continue;
             }
-            let Some(mesh) = self.meshes.get(path) else {
-                continue;
-            };
 
-            let model_view = view * object.world_matrix();
-            let is_selected = selected
-                .and_then(|target| match target {
-                    NativeEditorTarget::Object(id) => Some(id.as_str()),
-                    _ => None,
-                })
-                .is_some_and(|id| object.id == id || object.id.starts_with(&format!("{id}/")));
             let material = self
                 .effective_toon_material(&object.id)
                 .unwrap_or_else(|| fallback_toon_material(&object.id));
+            let outline = [
+                material.outline_color[0],
+                material.outline_color[1],
+                material.outline_color[2],
+                1.0,
+            ];
             let base_color = material.base_color;
+            let line_fill = [base_color[0], base_color[1], base_color[2], 1.0];
+            let outline_width = material.outline_width.max(0.0) * self.outline_pixel_width
+                / DEFAULT_OUTLINE_PIXEL_WIDTH;
+            let inner_line_width = inner_stroke_width(outline_width);
+            let outer_line_width = outer_stroke_width(outline_width);
+            let model_view = view * object.world_matrix();
+
+            if let AssetRef::GeoJsonMap { path, radius_scale } = &object.asset {
+                let key = geojson_cache_key(path, *radius_scale);
+                let Some(map) = self.geojson_maps.get(&key) else {
+                    continue;
+                };
+                // GeoJSON uses its resolved toon material with the same viewport light model
+                // as the Earth mesh. Its own base color remains independent.
+                let geo_fill_color = [base_color[0], base_color[1], base_color[2], 1.0];
+                for polygon in &map.polygons {
+                    let triangles = triangulate_geojson_polygon(polygon);
+                    for [a, b, c] in triangles {
+                        let mut surface_triangles = Vec::new();
+                        subdivide_spherical_triangle(
+                            [polygon.points[a], polygon.points[b], polygon.points[c]],
+                            11.0_f32.to_radians(),
+                            0,
+                            &mut surface_triangles,
+                        );
+                        for triangle in surface_triangles {
+                            let mut triangle_vertices = Vec::with_capacity(3);
+                            for local_point in triangle {
+                                let view_point = model_view.transform_point(local_point);
+                                let Some(position) =
+                                    project_point_clip(view_point, width, height, focal_length)
+                                else {
+                                    triangle_vertices.clear();
+                                    break;
+                                };
+                                let view_normal = model_view
+                                    .transform_vector(local_point.normalized())
+                                    .normalized();
+                                let light = view_normal.dot(light_direction).abs();
+                                triangle_vertices.push(GpuVertex::new(
+                                    position,
+                                    geo_fill_color,
+                                    light,
+                                    material.shade_bands,
+                                    material.band_thresholds,
+                                ));
+                            }
+                            if triangle_vertices.len() == 3 {
+                                geo_fills.extend(triangle_vertices);
+                            }
+                        }
+                    }
+                }
+                for (start, end) in &map.segments {
+                    let start = model_view.transform_point(*start);
+                    let end = model_view.transform_point(*end);
+                    let (Some(start), Some(end)) = (
+                        project_point_clip(start, width, height, focal_length),
+                        project_point_clip(end, width, height, focal_length),
+                    ) else {
+                        continue;
+                    };
+                    push_bordered_screen_space_stroke(
+                        &mut lines,
+                        start,
+                        end,
+                        outer_line_width,
+                        inner_line_width,
+                        width,
+                        height,
+                        outline,
+                        line_fill,
+                        material.shade_bands,
+                        material.band_thresholds,
+                    );
+                }
+                continue;
+            }
+
+            let AssetRef::Mesh { path } = &object.asset else {
+                continue;
+            };
+            let Some(mesh) = self.meshes.get(path) else {
+                continue;
+            };
             let view_vertices = mesh
                 .vertices
                 .iter()
@@ -606,13 +708,6 @@ impl NativeEditorApp {
                 .iter()
                 .map(|point| project_point_clip(*point, width, height, focal_length))
                 .collect::<Vec<_>>();
-
-            let outline = [
-                material.outline_color[0],
-                material.outline_color[1],
-                material.outline_color[2],
-                1.0,
-            ];
 
             let mut explicit_lines = Vec::new();
             let mut edge_map: HashMap<(usize, usize), EdgeFaces> = HashMap::new();
@@ -661,8 +756,6 @@ impl NativeEditorApp {
                 *normal = normal.normalized();
             }
 
-            let outline_width = material.outline_width.max(0.0) * self.outline_pixel_width
-                / DEFAULT_OUTLINE_PIXEL_WIDTH;
             let outline_x_ndc = (2.0 * outline_width) / width.max(1.0);
             let outline_y_ndc = (2.0 * outline_width) / height.max(1.0);
 
@@ -727,10 +820,6 @@ impl NativeEditorApp {
                     }
                 }
             }
-
-            let line_fill = [base_color[0], base_color[1], base_color[2], 1.0];
-            let inner_line_width = inner_stroke_width(outline_width);
-            let outer_line_width = outer_stroke_width(outline_width);
 
             for (a, b) in explicit_lines {
                 let (Some(start), Some(end)) = (projected[a], projected[b]) else {
@@ -815,7 +904,7 @@ impl NativeEditorApp {
             }
         }
 
-        (fills, hulls, lines)
+        (fills, hulls, lines, geo_fills)
     }
 
     pub(crate) fn viewport_lines(&self, width: f32, height: f32) -> Vec<ViewportLine> {
@@ -840,15 +929,9 @@ impl NativeEditorApp {
         let mut lines = Vec::new();
 
         for object in &world.objects {
-            let AssetRef::Mesh { path } = &object.asset else {
-                continue;
-            };
             if !world.object_effectively_visible(&object.id) {
                 continue;
             }
-            let Some(mesh) = self.meshes.get(path) else {
-                continue;
-            };
 
             let model_view = view * object.world_matrix();
             let is_selected = selected
@@ -858,28 +941,65 @@ impl NativeEditorApp {
                 })
                 .is_some_and(|id| object.id == id || object.id.starts_with(&format!("{id}/")));
 
-            let projected = mesh
-                .vertices
-                .iter()
-                .map(|vertex| {
-                    project_point(
-                        model_view.transform_point(*vertex),
-                        width,
-                        height,
-                        focal_length,
-                    )
-                })
-                .collect::<Vec<_>>();
+            match &object.asset {
+                AssetRef::Mesh { path } => {
+                    let Some(mesh) = self.meshes.get(path) else {
+                        continue;
+                    };
+                    let projected = mesh
+                        .vertices
+                        .iter()
+                        .map(|vertex| {
+                            project_point(
+                                model_view.transform_point(*vertex),
+                                width,
+                                height,
+                                focal_length,
+                            )
+                        })
+                        .collect::<Vec<_>>();
 
-            for (a, b) in mesh.unique_edges() {
-                let (Some(start), Some(end)) = (projected[a], projected[b]) else {
-                    continue;
-                };
-                lines.push(ViewportLine {
-                    start,
-                    end,
-                    selected: is_selected,
-                });
+                    for (a, b) in mesh.unique_edges() {
+                        let (Some(start), Some(end)) = (projected[a], projected[b]) else {
+                            continue;
+                        };
+                        lines.push(ViewportLine {
+                            start,
+                            end,
+                            selected: is_selected,
+                        });
+                    }
+                }
+                AssetRef::GeoJsonMap { path, radius_scale } => {
+                    let key = geojson_cache_key(path, *radius_scale);
+                    let Some(map) = self.geojson_maps.get(&key) else {
+                        continue;
+                    };
+                    for (start, end) in &map.segments {
+                        let (Some(start), Some(end)) = (
+                            project_point(
+                                model_view.transform_point(*start),
+                                width,
+                                height,
+                                focal_length,
+                            ),
+                            project_point(
+                                model_view.transform_point(*end),
+                                width,
+                                height,
+                                focal_length,
+                            ),
+                        ) else {
+                            continue;
+                        };
+                        lines.push(ViewportLine {
+                            start,
+                            end,
+                            selected: is_selected,
+                        });
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -939,17 +1059,24 @@ fn build_scene_state(scene_path: &Path) -> Result<NativeEditorApp, Box<dyn Error
     let title = world.title.clone();
     let object_count = entries.len().saturating_sub(2);
     let (meshes, mesh_errors) = load_world_meshes(&world);
+    let (geojson_maps, geojson_errors) = load_world_geojson_maps(&world);
     let mesh_count = meshes.len();
+    let geojson_count = geojson_maps.len();
 
     let mut app = NativeEditorApp {
         session: EditorSession::new(entries, NativeEditorTarget::Camera),
-        status: if mesh_errors == 0 {
-            format!("Loaded {title} ({object_count} editor objects, {mesh_count} mesh assets)")
+        status: if mesh_errors == 0 && geojson_errors == 0 {
+            format!(
+                "Loaded {title} ({object_count} editor objects, {mesh_count} mesh assets, {geojson_count} GeoJSON assets)"
+            )
         } else {
-            format!("Loaded {title}; {mesh_errors} mesh asset(s) failed to load")
+            format!(
+                "Loaded {title}; {mesh_errors} mesh and {geojson_errors} GeoJSON asset(s) failed to load"
+            )
         },
         world: Some(world),
         meshes,
+        geojson_maps,
         scene_path: scene_path.to_path_buf(),
         camera: NativeCamera::default(),
         gpu_target_format: None,
@@ -1107,6 +1234,127 @@ fn push_screen_space_stroke(
     }
 }
 
+fn subdivide_spherical_triangle(
+    triangle: [Vec3; 3],
+    max_angle: f32,
+    depth: usize,
+    output: &mut Vec<[Vec3; 3]>,
+) {
+    if depth >= 5 || triangle_max_angle(triangle) <= max_angle {
+        output.push(triangle);
+        return;
+    }
+    let radius = (triangle[0].length() + triangle[1].length() + triangle[2].length()) / 3.0;
+    let ab = (triangle[0].normalized() + triangle[1].normalized()).normalized() * radius;
+    let bc = (triangle[1].normalized() + triangle[2].normalized()).normalized() * radius;
+    let ca = (triangle[2].normalized() + triangle[0].normalized()).normalized() * radius;
+    for child in [
+        [triangle[0], ab, ca],
+        [ab, triangle[1], bc],
+        [ca, bc, triangle[2]],
+        [ab, bc, ca],
+    ] {
+        subdivide_spherical_triangle(child, max_angle, depth + 1, output);
+    }
+}
+
+fn triangle_max_angle(triangle: [Vec3; 3]) -> f32 {
+    [(0, 1), (1, 2), (2, 0)]
+        .into_iter()
+        .map(|(a, b)| {
+            triangle[a]
+                .normalized()
+                .dot(triangle[b].normalized())
+                .clamp(-1.0, 1.0)
+                .acos()
+        })
+        .fold(0.0, f32::max)
+}
+
+fn triangulate_geojson_polygon(polygon: &crate::geojson::GeoJsonPolygon) -> Vec<[usize; 3]> {
+    ear_clip_indices(&polygon.projected)
+}
+
+fn ear_clip_indices(points: &[[f32; 2]]) -> Vec<[usize; 3]> {
+    if points.len() < 3 {
+        return Vec::new();
+    }
+
+    let signed_area = points
+        .iter()
+        .enumerate()
+        .map(|(index, point)| {
+            let next = points[(index + 1) % points.len()];
+            point[0] * next[1] - next[0] * point[1]
+        })
+        .sum::<f32>();
+    let ccw = signed_area >= 0.0;
+    let mut remaining = (0..points.len()).collect::<Vec<_>>();
+    let mut triangles = Vec::with_capacity(points.len().saturating_sub(2));
+    let mut guard = 0usize;
+
+    while remaining.len() > 3 && guard < points.len() * points.len() {
+        let mut clipped = false;
+        for cursor in 0..remaining.len() {
+            let previous = remaining[(cursor + remaining.len() - 1) % remaining.len()];
+            let current = remaining[cursor];
+            let next = remaining[(cursor + 1) % remaining.len()];
+            let turn = cross_2d(points[previous], points[current], points[next]);
+            if (ccw && turn <= 1.0e-7) || (!ccw && turn >= -1.0e-7) {
+                continue;
+            }
+            if remaining.iter().copied().any(|candidate| {
+                candidate != previous
+                    && candidate != current
+                    && candidate != next
+                    && point_in_triangle(
+                        points[candidate],
+                        points[previous],
+                        points[current],
+                        points[next],
+                    )
+            }) {
+                continue;
+            }
+
+            triangles.push(if ccw {
+                [previous, current, next]
+            } else {
+                [previous, next, current]
+            });
+            remaining.remove(cursor);
+            clipped = true;
+            break;
+        }
+        if !clipped {
+            break;
+        }
+        guard += 1;
+    }
+
+    if remaining.len() == 3 {
+        triangles.push(if ccw {
+            [remaining[0], remaining[1], remaining[2]]
+        } else {
+            [remaining[0], remaining[2], remaining[1]]
+        });
+    }
+    triangles
+}
+
+fn cross_2d(a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> f32 {
+    (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+}
+
+fn point_in_triangle(point: [f32; 2], a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> bool {
+    let ab = cross_2d(a, b, point);
+    let bc = cross_2d(b, c, point);
+    let ca = cross_2d(c, a, point);
+    let has_negative = ab < -1.0e-7 || bc < -1.0e-7 || ca < -1.0e-7;
+    let has_positive = ab > 1.0e-7 || bc > 1.0e-7 || ca > 1.0e-7;
+    !(has_negative && has_positive)
+}
+
 fn project_point_clip(point: Vec3, width: f32, height: f32, focal_length: f32) -> Option<[f32; 4]> {
     let screen = project_point(point, width, height, focal_length)?;
     let depth = -point.z;
@@ -1174,6 +1422,33 @@ fn load_world_meshes(world: &LoadedWorld) -> (HashMap<String, Mesh>, usize) {
     }
 
     (meshes, errors)
+}
+
+fn geojson_cache_key(path: &str, radius_scale: f32) -> String {
+    format!("{path}#{radius_scale:.6}")
+}
+
+fn load_world_geojson_maps(world: &LoadedWorld) -> (HashMap<String, GeoJsonMap>, usize) {
+    let mut maps = HashMap::new();
+    let mut errors = 0;
+
+    for object in &world.objects {
+        let AssetRef::GeoJsonMap { path, radius_scale } = &object.asset else {
+            continue;
+        };
+        let key = geojson_cache_key(path, *radius_scale);
+        if maps.contains_key(&key) {
+            continue;
+        }
+        match load_geojson_map(path, *radius_scale) {
+            Ok(map) => {
+                maps.insert(key, map);
+            }
+            Err(_) => errors += 1,
+        }
+    }
+
+    (maps, errors)
 }
 
 fn editor_entries(world: &LoadedWorld) -> Vec<EditorEntry<NativeEditorTarget>> {

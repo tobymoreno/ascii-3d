@@ -102,6 +102,7 @@ pub(crate) struct GpuViewportCallback {
     fill_vertices: Vec<GpuVertex>,
     hull_vertices: Vec<GpuVertex>,
     line_vertices: Vec<GpuVertex>,
+    geo_fill_vertices: Vec<GpuVertex>,
     target_format: wgpu::TextureFormat,
 }
 impl GpuViewportCallback {
@@ -109,12 +110,14 @@ impl GpuViewportCallback {
         fill_vertices: Vec<GpuVertex>,
         hull_vertices: Vec<GpuVertex>,
         line_vertices: Vec<GpuVertex>,
+        geo_fill_vertices: Vec<GpuVertex>,
         target_format: wgpu::TextureFormat,
     ) -> Self {
         Self {
             fill_vertices,
             hull_vertices,
             line_vertices,
+            geo_fill_vertices,
             target_format,
         }
     }
@@ -176,9 +179,11 @@ struct GpuViewportResources {
     hull_pipeline: wgpu::RenderPipeline,
     fill_pipeline: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
+    geo_fill_pipeline: wgpu::RenderPipeline,
     hulls: DynamicVertices,
     fills: DynamicVertices,
     lines: DynamicVertices,
+    geo_fills: DynamicVertices,
 }
 impl GpuViewportResources {
     fn pipeline(
@@ -245,6 +250,7 @@ impl GpuViewportResources {
         hulls: &[GpuVertex],
         fills: &[GpuVertex],
         lines: &[GpuVertex],
+        geo_fills: &[GpuVertex],
     ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ascii-3d toon shader"),
@@ -295,9 +301,23 @@ impl GpuViewportResources {
                 wgpu::CompareFunction::LessEqual,
                 0,
             ),
+            geo_fill_pipeline: Self::pipeline(
+                device,
+                &layout,
+                &shader,
+                format,
+                "ascii-3d geojson fill pipeline",
+                wgpu::PrimitiveTopology::TriangleList,
+                "fs_fill",
+                None,
+                false,
+                wgpu::CompareFunction::LessEqual,
+                1,
+            ),
             hulls: DynamicVertices::new(device, "ascii-3d toon hull vertices", hulls),
             fills: DynamicVertices::new(device, "ascii-3d toon fill vertices", fills),
             lines: DynamicVertices::new(device, "ascii-3d toon stroke vertices", lines),
+            geo_fills: DynamicVertices::new(device, "ascii-3d geojson fill vertices", geo_fills),
         }
     }
 }
@@ -318,6 +338,7 @@ impl egui_wgpu::CallbackTrait for GpuViewportCallback {
                 &self.hull_vertices,
                 &self.fill_vertices,
                 &self.line_vertices,
+                &self.geo_fill_vertices,
             ));
         }
         if let Some(r) = resources.get_mut::<GpuViewportResources>() {
@@ -338,6 +359,12 @@ impl egui_wgpu::CallbackTrait for GpuViewportCallback {
                 queue,
                 "ascii-3d toon stroke vertices",
                 &self.line_vertices,
+            );
+            r.geo_fills.update(
+                device,
+                queue,
+                "ascii-3d geojson fill vertices",
+                &self.geo_fill_vertices,
             );
         }
         Vec::new()
@@ -360,6 +387,11 @@ impl egui_wgpu::CallbackTrait for GpuViewportCallback {
             pass.set_pipeline(&r.fill_pipeline);
             pass.set_vertex_buffer(0, r.fills.buffer.slice(..));
             pass.draw(0..r.fills.count, 0..1);
+        }
+        if r.geo_fills.count > 0 {
+            pass.set_pipeline(&r.geo_fill_pipeline);
+            pass.set_vertex_buffer(0, r.geo_fills.buffer.slice(..));
+            pass.draw(0..r.geo_fills.count, 0..1);
         }
         if r.lines.count > 0 {
             pass.set_pipeline(&r.line_pipeline);
