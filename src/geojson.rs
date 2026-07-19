@@ -6,14 +6,81 @@ use crate::math::Vec3;
 
 #[derive(Clone, Debug, Default)]
 pub struct GeoJsonPolygon {
+    /// Flattened exterior ring followed by interior rings.
     pub points: Vec<Vec3>,
+    /// All rings projected into one shared 2D coordinate system.
     pub projected: Vec<[f32; 2]>,
+    /// Start index of each interior ring.
+    pub hole_indices: Vec<usize>,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct GeoJsonMap {
     pub segments: Vec<(Vec3, Vec3)>,
     pub polygons: Vec<GeoJsonPolygon>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct GeoJsonElevationPoint {
+    pub position: Vec3,
+    pub elevation_meters: f32,
+    pub scale_rank: f32,
+}
+
+pub fn load_geojson_elevation_points(
+    path: impl AsRef<Path>,
+) -> Result<Vec<GeoJsonElevationPoint>, Box<dyn Error>> {
+    let value: Value = serde_json::from_str(&fs::read_to_string(path)?)?;
+    let mut points = Vec::new();
+
+    let Some(features) = value.get("features").and_then(Value::as_array) else {
+        return Ok(points);
+    };
+
+    for feature in features {
+        let Some(geometry) = feature.get("geometry") else {
+            continue;
+        };
+        if geometry.get("type").and_then(Value::as_str) != Some("Point") {
+            continue;
+        }
+        let Some(coordinate) = geometry.get("coordinates").and_then(coordinate_lon_lat) else {
+            continue;
+        };
+        let properties = feature.get("properties");
+        let Some(elevation_meters) = properties
+            .and_then(|value| value.get("elevation"))
+            .and_then(value_as_f32)
+            .or_else(|| {
+                properties
+                    .and_then(|value| value.get("elev"))
+                    .and_then(value_as_f32)
+            })
+        else {
+            continue;
+        };
+        if !elevation_meters.is_finite() || elevation_meters <= 0.0 {
+            continue;
+        }
+        let scale_rank = properties
+            .and_then(|value| value.get("scalerank"))
+            .and_then(value_as_f32)
+            .unwrap_or(8.0);
+        points.push(GeoJsonElevationPoint {
+            position: lon_lat_to_sphere(coordinate, 1.0).normalized(),
+            elevation_meters,
+            scale_rank,
+        });
+    }
+
+    Ok(points)
+}
+
+fn value_as_f32(value: &Value) -> Option<f32> {
+    value
+        .as_f64()
+        .map(|number| number as f32)
+        .or_else(|| value.as_str()?.parse::<f32>().ok())
 }
 
 pub fn load_geojson_map(
@@ -62,24 +129,14 @@ fn collect_value(
         }
         Some("Polygon") => {
             if let Some(rings) = value.get("coordinates").and_then(Value::as_array) {
-                for ring in rings {
-                    add_line_string(Some(ring), radius_scale, segments);
-                }
-                if let Some(exterior) = rings.first() {
-                    add_polygon_ring(exterior, radius_scale, polygons);
-                }
+                add_polygon(rings, radius_scale, segments, polygons);
             }
         }
         Some("MultiPolygon") => {
             if let Some(multi_polygons) = value.get("coordinates").and_then(Value::as_array) {
                 for polygon in multi_polygons {
                     if let Some(rings) = polygon.as_array() {
-                        for ring in rings {
-                            add_line_string(Some(ring), radius_scale, segments);
-                        }
-                        if let Some(exterior) = rings.first() {
-                            add_polygon_ring(exterior, radius_scale, polygons);
-                        }
+                        add_polygon(rings, radius_scale, segments, polygons);
                     }
                 }
             }
@@ -88,80 +145,136 @@ fn collect_value(
     }
 }
 
-fn add_polygon_ring(value: &Value, radius_scale: f32, polygons: &mut Vec<GeoJsonPolygon>) {
-    let Some(values) = value.as_array() else {
-        return;
-    };
-    let mut coordinates = values
-        .iter()
-        .filter_map(coordinate_lon_lat)
-        .collect::<Vec<_>>();
-    if coordinates.len() >= 2 && coordinates[0] == *coordinates.last().unwrap() {
-        coordinates.pop();
-    }
-    if coordinates.len() < 3 {
-        return;
-    }
-
-    let points = coordinates
-        .iter()
-        .map(|coordinate| lon_lat_to_sphere(*coordinate, radius_scale))
-        .collect::<Vec<_>>();
-    let projected = project_ring_for_triangulation(&coordinates);
-    polygons.push(GeoJsonPolygon { points, projected });
-}
-
-fn project_ring_for_triangulation(coordinates: &[[f32; 2]]) -> Vec<[f32; 2]> {
-    let mean_latitude =
-        coordinates.iter().map(|point| point[1]).sum::<f32>() / coordinates.len() as f32;
-    let unwrapped_longitudes = unwrap_longitudes(coordinates);
-    let longitude_span = unwrapped_longitudes
-        .iter()
-        .copied()
-        .fold((f32::INFINITY, f32::NEG_INFINITY), |(min, max), value| {
-            (min.min(value), max.max(value))
-        });
-
-    if mean_latitude.abs() > 70.0 && longitude_span.1 - longitude_span.0 > 180.0 {
-        let north = mean_latitude >= 0.0;
-        coordinates
+fn add_polygon(
+    ring_values: &[Value],
+    radius_scale: f32,
+    segments: &mut Vec<(Vec3, Vec3)>,
+    polygons: &mut Vec<GeoJsonPolygon>,
+) {
+    let mut rings = Vec::<Vec<[f32; 2]>>::new();
+    for ring_value in ring_values {
+        add_line_string(Some(ring_value), radius_scale, segments);
+        let Some(values) = ring_value.as_array() else {
+            continue;
+        };
+        let mut ring = values
             .iter()
-            .map(|point| {
-                let angle = point[0].to_radians();
-                let radius = if north {
-                    90.0 - point[1]
-                } else {
-                    90.0 + point[1]
-                };
-                [radius * angle.sin(), radius * angle.cos()]
-            })
-            .collect()
-    } else {
-        let longitude_scale = mean_latitude.to_radians().cos().abs().max(0.15);
-        unwrapped_longitudes
-            .into_iter()
-            .zip(coordinates.iter())
-            .map(|(longitude, point)| [longitude * longitude_scale, point[1]])
-            .collect()
+            .filter_map(coordinate_lon_lat)
+            .collect::<Vec<_>>();
+        if ring.len() >= 2 && ring.first() == ring.last() {
+            ring.pop();
+        }
+        if ring.len() >= 3 {
+            rings.push(ring);
+        }
     }
+    if rings.is_empty() {
+        return;
+    }
+
+    let mut projected_rings = project_polygon_rings(&rings);
+    // Normalize winding without breaking the index correspondence between the
+    // spherical and projected copies of each ring.
+    if signed_ring_area(&projected_rings[0]) < 0.0 {
+        rings[0].reverse();
+        projected_rings[0].reverse();
+    }
+    for ring_index in 1..rings.len() {
+        if signed_ring_area(&projected_rings[ring_index]) > 0.0 {
+            rings[ring_index].reverse();
+            projected_rings[ring_index].reverse();
+        }
+    }
+
+    let mut points = Vec::new();
+    let mut projected = Vec::new();
+    let mut hole_indices = Vec::new();
+    for (ring_index, (ring, projected_ring)) in rings.iter().zip(projected_rings).enumerate() {
+        if ring_index > 0 {
+            hole_indices.push(points.len());
+        }
+        points.extend(
+            ring.iter()
+                .map(|coordinate| lon_lat_to_sphere(*coordinate, radius_scale)),
+        );
+        projected.extend(projected_ring);
+    }
+    polygons.push(GeoJsonPolygon {
+        points,
+        projected,
+        hole_indices,
+    });
 }
 
-fn unwrap_longitudes(coordinates: &[[f32; 2]]) -> Vec<f32> {
-    let mut result = Vec::with_capacity(coordinates.len());
-    let mut previous = coordinates[0][0];
-    result.push(previous);
-    for coordinate in &coordinates[1..] {
-        let mut longitude = coordinate[0];
-        while longitude - previous > 180.0 {
-            longitude -= 360.0;
-        }
-        while longitude - previous < -180.0 {
-            longitude += 360.0;
-        }
-        result.push(longitude);
-        previous = longitude;
+fn project_polygon_rings(rings: &[Vec<[f32; 2]>]) -> Vec<Vec<[f32; 2]>> {
+    // Use a local equirectangular tangent plane centered on the exterior ring.
+    // This is much more numerically stable than the previous globe-wide
+    // gnomonic projection for very large land polygons.
+    let exterior = &rings[0];
+    let reference_lon = circular_mean_longitude(exterior);
+    let reference_lat =
+        exterior.iter().map(|coordinate| coordinate[1]).sum::<f32>() / exterior.len().max(1) as f32;
+    let cos_lat = reference_lat.to_radians().cos().abs().max(0.25);
+
+    rings
+        .iter()
+        .map(|ring| {
+            let unwrapped = unwrap_longitudes_from_reference(ring, reference_lon);
+            ring.iter()
+                .zip(unwrapped.into_iter())
+                .map(|(coordinate, lon)| {
+                    [
+                        (lon - reference_lon) * cos_lat,
+                        coordinate[1] - reference_lat,
+                    ]
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>()
+}
+
+fn circular_mean_longitude(coordinates: &[[f32; 2]]) -> f32 {
+    if coordinates.is_empty() {
+        return 0.0;
     }
-    result
+
+    let mut sum_sin = 0.0;
+    let mut sum_cos = 0.0;
+    for coordinate in coordinates {
+        let radians = coordinate[0].to_radians();
+        sum_sin += radians.sin();
+        sum_cos += radians.cos();
+    }
+
+    sum_sin.atan2(sum_cos).to_degrees()
+}
+
+fn signed_ring_area(ring: &[[f32; 2]]) -> f32 {
+    if ring.len() < 3 {
+        return 0.0;
+    }
+    ring.iter()
+        .zip(ring.iter().cycle().skip(1))
+        .take(ring.len())
+        .map(|(a, b)| a[0] * b[1] - b[0] * a[1])
+        .sum::<f32>()
+        * 0.5
+}
+
+fn unwrap_longitudes_from_reference(coordinates: &[[f32; 2]], reference: f32) -> Vec<f32> {
+    coordinates
+        .iter()
+        .map(|coordinate| {
+            let mut longitude = coordinate[0];
+            while longitude - reference > 180.0 {
+                longitude -= 360.0;
+            }
+            while longitude - reference < -180.0 {
+                longitude += 360.0;
+            }
+            longitude
+        })
+        .collect()
 }
 
 fn add_line_string(
@@ -227,6 +340,19 @@ mod tests {
     }
 
     #[test]
+    fn polygon_preserves_hole_start_indices() {
+        let value: Value = serde_json::from_str(
+            r#"{"type":"Polygon","coordinates":[[[0,0],[10,0],[10,10],[0,10],[0,0]],[[2,2],[2,4],[4,4],[4,2],[2,2]]]}"#,
+        )
+        .unwrap();
+        let mut segments = Vec::new();
+        let mut polygons = Vec::new();
+        collect_value(&value, 1.0, &mut segments, &mut polygons);
+        assert_eq!(polygons[0].points.len(), 8);
+        assert_eq!(polygons[0].hole_indices, vec![4]);
+    }
+
+    #[test]
     fn seam_crossing_ring_projects_continuously() {
         let coordinates = [
             [170.0, 10.0],
@@ -234,8 +360,11 @@ mod tests {
             [-170.0, -10.0],
             [170.0, -10.0],
         ];
-        let projected = project_ring_for_triangulation(&coordinates);
-        let xs = projected.iter().map(|point| point[0]).collect::<Vec<_>>();
+        let projected = project_polygon_rings(&[coordinates.to_vec()]);
+        let xs = projected[0]
+            .iter()
+            .map(|point| point[0])
+            .collect::<Vec<_>>();
         let span = xs.iter().copied().fold(f32::NEG_INFINITY, f32::max)
             - xs.iter().copied().fold(f32::INFINITY, f32::min);
         assert!(span < 60.0);

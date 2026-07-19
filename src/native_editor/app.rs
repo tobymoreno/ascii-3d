@@ -1,21 +1,29 @@
 use std::{
+    cell::RefCell,
     collections::HashMap,
     error::Error,
     path::{Path, PathBuf},
+    time::Instant,
 };
 
-use super::gpu_renderer::GpuVertex;
+use super::{
+    geojson_lines::{GeoJsonLineStyle, append_geojson_lines},
+    gpu_renderer::{GpuVertex, UploadStats},
+    labels::{GlobeLabel, LabelKind, load_builtin_labels, rasterize_marine_label},
+};
 
 use crate::{
     a3d::{AssetRef, LoadedWorld, ToonMaterialConfig, Transform, load_a3d_project},
     editor_core::{EditorCommand, EditorEntry, EditorSession},
-    geojson::{GeoJsonMap, load_geojson_map},
+    geojson::{GeoJsonElevationPoint, GeoJsonMap, load_geojson_elevation_points, load_geojson_map},
     math::{Mat4, Vec3},
     mesh::Mesh,
     obj::load_obj,
 };
 
 const STARTUP_SCENE: &str = "assets/a3d/earth_km/scene.a3d";
+const ELEVATION_POINTS_ASSET: &str =
+    "assets/maps/ne_10m_geography_regions_elevation_points.geojson";
 const DEFAULT_CAMERA_TARGET: Vec3 = Vec3::new(0.0, 0.0, 0.0);
 const DEFAULT_CAMERA_DISTANCE: f32 = 8.0;
 const MIN_CAMERA_DISTANCE: f32 = 0.25;
@@ -36,7 +44,7 @@ const CREASE_NORMAL_DOT_THRESHOLD: f32 = 0.70;
 const DEFAULT_OUTLINE_PIXEL_WIDTH: f32 = 1.8;
 const MIN_OUTLINE_PIXEL_WIDTH: f32 = 0.5;
 const MAX_OUTLINE_PIXEL_WIDTH: f32 = 4.0;
-const DEFAULT_VIEWPORT_BACKGROUND_RGB: [u8; 3] = [52, 56, 64];
+const DEFAULT_VIEWPORT_BACKGROUND_RGB: [u8; 3] = [2, 18, 36];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum NativeEditorTarget {
@@ -57,10 +65,11 @@ impl NativeEditorTarget {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct NativeCamera {
-    position: Vec3,
-    yaw_radians: f32,
-    pitch_radians: f32,
-    focus_distance: f32,
+    pub(super) position: Vec3,
+    pub(super) yaw_radians: f32,
+    pub(super) pitch_radians: f32,
+    pub(super) roll_radians: f32,
+    pub(super) focus_distance: f32,
 }
 
 impl Default for NativeCamera {
@@ -69,13 +78,14 @@ impl Default for NativeCamera {
             position: DEFAULT_CAMERA_TARGET + Vec3::new(0.0, 0.0, DEFAULT_CAMERA_DISTANCE),
             yaw_radians: 0.0,
             pitch_radians: 0.0,
+            roll_radians: 0.0,
             focus_distance: DEFAULT_CAMERA_DISTANCE,
         }
     }
 }
 
 impl NativeCamera {
-    fn forward(self) -> Vec3 {
+    pub(super) fn forward(self) -> Vec3 {
         let horizontal = self.pitch_radians.cos();
         Vec3::new(
             horizontal * self.yaw_radians.sin(),
@@ -85,15 +95,23 @@ impl NativeCamera {
         .normalized()
     }
 
-    fn target(self) -> Vec3 {
+    pub(super) fn target(self) -> Vec3 {
         self.position + self.forward() * self.focus_distance
     }
 
-    fn view_axes(self) -> (Vec3, Vec3) {
+    pub(super) fn view_axes(self) -> (Vec3, Vec3) {
         let forward = self.forward();
-        let right = forward.cross(Vec3::new(0.0, 1.0, 0.0)).normalized();
-        let up = right.cross(forward).normalized();
+        let base_right = forward.cross(Vec3::new(0.0, 1.0, 0.0)).normalized();
+        let base_up = base_right.cross(forward).normalized();
+        let cosine = self.roll_radians.cos();
+        let sine = self.roll_radians.sin();
+        let right = base_right * cosine + base_up * sine;
+        let up = base_up * cosine - base_right * sine;
         (right, up)
+    }
+
+    pub(super) fn up(self) -> Vec3 {
+        self.view_axes().1
     }
 
     fn look_at(&mut self, target: Vec3) {
@@ -148,18 +166,55 @@ pub(crate) struct ViewportLine {
     pub(crate) selected: bool,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct ViewportLabel {
+    pub(crate) text: String,
+    pub(crate) position: [f32; 2],
+    pub(crate) font_size: f32,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct MarineGlyphQuad {
+    pub(crate) glyph: char,
+    pub(crate) corners: [[f32; 2]; 4],
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CachedGeoTriangle {
+    points: [Vec3; 3],
+    colors: [[f32; 4]; 3],
+}
+
+#[derive(Clone, Debug)]
+struct CachedGeoGpuGeometry {
+    key: String,
+    revision: u64,
+    vertices: Vec<GpuVertex>,
+}
+
 pub(crate) struct NativeEditorApp {
     pub(crate) session: EditorSession<NativeEditorTarget>,
     pub(crate) status: String,
-    world: Option<LoadedWorld>,
+    pub(super) world: Option<LoadedWorld>,
     meshes: HashMap<String, Mesh>,
+    wire_meshes: HashMap<String, Mesh>,
     geojson_maps: HashMap<String, GeoJsonMap>,
+    geojson_render_meshes: HashMap<String, Vec<CachedGeoTriangle>>,
+    globe_labels: Vec<GlobeLabel>,
+    marine_label_textures: HashMap<String, egui::TextureHandle>,
     scene_path: PathBuf,
-    camera: NativeCamera,
+    pub(super) camera: NativeCamera,
+    pub(super) scene_transform: Transform,
     gpu_target_format: Option<egui_wgpu::wgpu::TextureFormat>,
     show_wireframe: bool,
+    show_labels: bool,
     outline_pixel_width: f32,
     viewport_background_rgb: [u8; 3],
+    fps_last_frame: Instant,
+    fps_smoothed: f32,
+    geometry_ms_smoothed: f32,
+    geo_gpu_geometry_cache: RefCell<Option<CachedGeoGpuGeometry>>,
+    upload_stats: UploadStats,
 }
 
 impl Default for NativeEditorApp {
@@ -190,14 +245,62 @@ impl NativeEditorApp {
             status: format!("Failed to load {}: {error}", scene_path.display()),
             world: None,
             meshes: HashMap::new(),
+            wire_meshes: HashMap::new(),
             geojson_maps: HashMap::new(),
+            geojson_render_meshes: HashMap::new(),
+            globe_labels: load_builtin_labels(Path::new(env!("CARGO_MANIFEST_DIR"))),
+            marine_label_textures: HashMap::new(),
             scene_path,
             camera: NativeCamera::default(),
+            scene_transform: Transform::default(),
             gpu_target_format: None,
             show_wireframe: false,
+            show_labels: true,
             outline_pixel_width: DEFAULT_OUTLINE_PIXEL_WIDTH,
             viewport_background_rgb: DEFAULT_VIEWPORT_BACKGROUND_RGB,
+            fps_last_frame: Instant::now(),
+            fps_smoothed: 0.0,
+            geometry_ms_smoothed: 0.0,
+            geo_gpu_geometry_cache: RefCell::new(None),
+            upload_stats: UploadStats::default(),
         }
+    }
+
+    pub(crate) fn update_frame_timing(&mut self) {
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.fps_last_frame).as_secs_f32();
+        self.fps_last_frame = now;
+
+        if !(0.000_001..=0.5).contains(&elapsed) {
+            return;
+        }
+
+        let instantaneous = 1.0 / elapsed;
+        self.fps_smoothed = if self.fps_smoothed <= f32::EPSILON {
+            instantaneous
+        } else {
+            self.fps_smoothed * 0.90 + instantaneous * 0.10
+        };
+    }
+
+    pub(crate) fn fps(&self) -> Option<f32> {
+        (self.fps_smoothed > f32::EPSILON).then_some(self.fps_smoothed)
+    }
+
+    pub(crate) fn record_geometry_time(&mut self, elapsed_ms: f32) {
+        self.geometry_ms_smoothed = if self.geometry_ms_smoothed <= f32::EPSILON {
+            elapsed_ms
+        } else {
+            self.geometry_ms_smoothed * 0.90 + elapsed_ms * 0.10
+        };
+    }
+
+    pub(crate) fn geometry_ms(&self) -> Option<f32> {
+        (self.geometry_ms_smoothed > f32::EPSILON).then_some(self.geometry_ms_smoothed)
+    }
+
+    pub(crate) fn upload_stats(&self) -> UploadStats {
+        self.upload_stats.clone()
     }
 
     pub(crate) fn load_scene(&mut self, scene_path: PathBuf) -> bool {
@@ -205,6 +308,8 @@ impl NativeEditorApp {
             Ok(mut state) => {
                 state.gpu_target_format = self.gpu_target_format;
                 state.show_wireframe = self.show_wireframe;
+                state.show_labels = self.show_labels;
+                state.marine_label_textures = std::mem::take(&mut self.marine_label_textures);
                 state.outline_pixel_width = self.outline_pixel_width;
                 state.viewport_background_rgb = self.viewport_background_rgb;
                 *self = state;
@@ -390,7 +495,7 @@ impl NativeEditorApp {
             if !include_object(&object.id) {
                 continue;
             }
-            let world_matrix = object.world_matrix();
+            let world_matrix = self.scene_transform.matrix() * object.world_matrix();
             match &object.asset {
                 AssetRef::Mesh { path } => {
                     let Some(mesh) = self.meshes.get(path) else {
@@ -493,6 +598,268 @@ impl NativeEditorApp {
         self.status = "Viewport style reset".to_owned();
     }
 
+    pub(crate) fn show_labels(&self) -> bool {
+        self.show_labels
+    }
+
+    pub(crate) fn set_show_labels(&mut self, show: bool) {
+        self.show_labels = show;
+        self.status = if show {
+            format!("Labels enabled ({})", self.globe_labels.len())
+        } else {
+            "Labels hidden".to_owned()
+        };
+    }
+
+    pub(crate) fn viewport_labels(&self, width: f32, height: f32) -> Vec<ViewportLabel> {
+        if !self.show_labels || width <= 1.0 || height <= 1.0 {
+            return Vec::new();
+        }
+        let Some(world) = &self.world else {
+            return Vec::new();
+        };
+        let Some(view) =
+            Mat4::look_at(self.camera.position, self.camera.target(), self.camera.up())
+        else {
+            return Vec::new();
+        };
+        let Some(earth) = world.objects.iter().find(|object| {
+            world.object_effectively_visible(&object.id)
+                && matches!(&object.asset, AssetRef::Mesh { path } if is_native_ocean_sphere(path))
+        }) else {
+            return Vec::new();
+        };
+
+        let model_view = view * self.scene_transform.matrix() * earth.world_matrix();
+        let focal_length =
+            0.5 * REFERENCE_VIEWPORT_HEIGHT / (0.5 * CAMERA_FOV_DEGREES.to_radians()).tan();
+        let mut candidates = Vec::<(i32, [f32; 2], f32, String)>::new();
+
+        for label in self
+            .globe_labels
+            .iter()
+            .filter(|label| label.kind != LabelKind::Marine)
+        {
+            let local_position = label.direction * (1.0 + label.altitude);
+            let view_point = model_view.transform_point(local_position);
+            if view_point.z >= -CAMERA_NEAR {
+                continue;
+            }
+            let view_normal = model_view.transform_vector(label.direction).normalized();
+            let to_camera = (view_point * -1.0).normalized();
+            if view_normal.dot(to_camera) <= 0.20 {
+                continue;
+            }
+            let Some(screen) = project_point(view_point, width, height, focal_length) else {
+                continue;
+            };
+            if screen[0] < 8.0
+                || screen[0] > width - 8.0
+                || screen[1] < 8.0
+                || screen[1] > height - 8.0
+            {
+                continue;
+            }
+            candidates.push((label.priority, screen, label.font_size, label.text.clone()));
+        }
+
+        candidates.sort_by(|left, right| left.0.cmp(&right.0));
+        let mut accepted = Vec::<ViewportLabel>::new();
+        for (_priority, position, font_size, text) in candidates {
+            let half_width = font_size * (text.chars().count() as f32 * 0.30 + 0.8);
+            let half_height = font_size * 0.78;
+            let overlaps = accepted.iter().any(|existing| {
+                let existing_half_width =
+                    existing.font_size * (existing.text.chars().count() as f32 * 0.30 + 0.8);
+                let existing_half_height = existing.font_size * 0.78;
+                (position[0] - existing.position[0]).abs() < half_width + existing_half_width
+                    && (position[1] - existing.position[1]).abs()
+                        < half_height + existing_half_height
+            });
+            if overlaps {
+                continue;
+            }
+            accepted.push(ViewportLabel {
+                text,
+                position,
+                font_size,
+            });
+            if accepted.len() >= 80 {
+                break;
+            }
+        }
+        accepted
+    }
+
+    pub(crate) fn viewport_marine_glyph_quads(
+        &self,
+        width: f32,
+        height: f32,
+    ) -> Vec<MarineGlyphQuad> {
+        if !self.show_labels || width <= 1.0 || height <= 1.0 {
+            return Vec::new();
+        }
+        let Some(world) = &self.world else {
+            return Vec::new();
+        };
+        let Some(view) =
+            Mat4::look_at(self.camera.position, self.camera.target(), self.camera.up())
+        else {
+            return Vec::new();
+        };
+        let Some(earth) = world.objects.iter().find(|object| {
+            world.object_effectively_visible(&object.id)
+                && matches!(&object.asset, AssetRef::Mesh { path } if is_native_ocean_sphere(path))
+        }) else {
+            return Vec::new();
+        };
+
+        let model_view = view * self.scene_transform.matrix() * earth.world_matrix();
+        let focal_length =
+            0.5 * REFERENCE_VIEWPORT_HEIGHT / (0.5 * CAMERA_FOV_DEGREES.to_radians()).tan();
+        let mut candidates = Vec::<(i32, Vec<MarineGlyphQuad>, [f32; 4])>::new();
+
+        for label in self
+            .globe_labels
+            .iter()
+            .filter(|label| label.kind == LabelKind::Marine)
+        {
+            let anchor = label.direction.normalized();
+            let center_view = model_view.transform_point(anchor * (1.0 + label.altitude));
+            if center_view.z >= -CAMERA_NEAR {
+                continue;
+            }
+            let view_normal = model_view.transform_vector(anchor).normalized();
+            let to_camera = (center_view * -1.0).normalized();
+            if view_normal.dot(to_camera) <= 0.30 {
+                continue;
+            }
+
+            let world_up = Vec3::new(0.0, 1.0, 0.0);
+            let mut anchor_east = world_up.cross(anchor).normalized();
+            if anchor_east.length_squared() <= f32::EPSILON {
+                anchor_east = Vec3::new(1.0, 0.0, 0.0);
+            }
+
+            // The label loader already applies Initial Caps. Preserve that
+            // exact casing when producing one spherical quad per character.
+            let characters = label.text.chars().collect::<Vec<_>>();
+            if characters.is_empty() {
+                continue;
+            }
+
+            // Each character is its own small spherical patch. The baseline advances
+            // over the globe in angular units, and all four corners are normalized
+            // back to the Earth radius before camera projection.
+            let glyph_advance = (label.font_size * 0.001968).clamp(0.020, 0.048);
+            let glyph_half_width = glyph_advance * 0.34;
+            let glyph_half_height = (label.font_size * 0.0019).clamp(0.016, 0.032);
+            let center_index = (characters.len().saturating_sub(1)) as f32 * 0.5;
+            let radius = 1.0 + label.altitude;
+            let mut glyphs = Vec::new();
+            let mut bounds = [
+                f32::INFINITY,
+                f32::INFINITY,
+                f32::NEG_INFINITY,
+                f32::NEG_INFINITY,
+            ];
+            let mut label_valid = true;
+
+            for (index, glyph) in characters.into_iter().enumerate() {
+                let offset = (index as f32 - center_index) * glyph_advance;
+                let glyph_center_direction = (anchor + anchor_east * offset).normalized();
+                let mut east = world_up.cross(glyph_center_direction).normalized();
+                if east.length_squared() <= f32::EPSILON {
+                    east = anchor_east;
+                }
+                let north = glyph_center_direction.cross(east).normalized();
+
+                let spherical_corner = |x: f32, y: f32| {
+                    (glyph_center_direction + east * x + north * y).normalized() * radius
+                };
+                let local_corners = [
+                    spherical_corner(-glyph_half_width, glyph_half_height),
+                    spherical_corner(glyph_half_width, glyph_half_height),
+                    spherical_corner(glyph_half_width, -glyph_half_height),
+                    spherical_corner(-glyph_half_width, -glyph_half_height),
+                ];
+
+                let mut corners = [[0.0; 2]; 4];
+                for (slot, point) in local_corners.into_iter().enumerate() {
+                    let point_view = model_view.transform_point(point);
+                    if point_view.z >= -CAMERA_NEAR {
+                        label_valid = false;
+                        break;
+                    }
+                    let Some(screen) = project_point(point_view, width, height, focal_length)
+                    else {
+                        label_valid = false;
+                        break;
+                    };
+                    corners[slot] = screen;
+                    bounds[0] = bounds[0].min(screen[0]);
+                    bounds[1] = bounds[1].min(screen[1]);
+                    bounds[2] = bounds[2].max(screen[0]);
+                    bounds[3] = bounds[3].max(screen[1]);
+                }
+                if !label_valid {
+                    break;
+                }
+                glyphs.push(MarineGlyphQuad { glyph, corners });
+            }
+
+            if !label_valid || glyphs.is_empty() {
+                continue;
+            }
+            if bounds[2] < 0.0 || bounds[0] > width || bounds[3] < 0.0 || bounds[1] > height {
+                continue;
+            }
+            candidates.push((label.priority, glyphs, bounds));
+        }
+
+        candidates.sort_by(|left, right| left.0.cmp(&right.0));
+        let mut accepted_bounds = Vec::<[f32; 4]>::new();
+        let mut accepted = Vec::<MarineGlyphQuad>::new();
+        let mut accepted_labels = 0usize;
+        for (_priority, glyphs, bounds) in candidates {
+            let overlaps = accepted_bounds.iter().any(|other| {
+                bounds[0] < other[2]
+                    && bounds[2] > other[0]
+                    && bounds[1] < other[3]
+                    && bounds[3] > other[1]
+            });
+            if overlaps {
+                continue;
+            }
+            accepted_bounds.push(bounds);
+            accepted.extend(glyphs);
+            accepted_labels += 1;
+            if accepted_labels >= 24 {
+                break;
+            }
+        }
+        accepted
+    }
+
+    pub(crate) fn marine_glyph_texture(
+        &mut self,
+        context: &egui::Context,
+        glyph: char,
+    ) -> egui::TextureHandle {
+        let key = glyph.to_string();
+        if let Some(texture) = self.marine_label_textures.get(&key) {
+            return texture.clone();
+        }
+        let image = rasterize_marine_label(&key);
+        let texture = context.load_texture(
+            format!("marine-glyph:{key}"),
+            image,
+            egui::TextureOptions::LINEAR,
+        );
+        self.marine_label_textures.insert(key, texture.clone());
+        texture
+    }
+
     pub(crate) fn object_toon_material(
         &self,
         target: &NativeEditorTarget,
@@ -575,29 +942,56 @@ impl NativeEditorApp {
         Vec<GpuVertex>,
         Vec<GpuVertex>,
         Vec<GpuVertex>,
+        Vec<GpuVertex>,
+        Vec<GpuVertex>,
+        u64,
     ) {
         if width <= 1.0 || height <= 1.0 {
-            return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+            return (
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                0,
+            );
         }
 
         let Some(world) = &self.world else {
-            return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+            return (
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                0,
+            );
         };
-        let Some(view) = Mat4::look_at(
-            self.camera.position,
-            self.camera.target(),
-            Vec3::new(0.0, 1.0, 0.0),
-        ) else {
-            return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let Some(view) =
+            Mat4::look_at(self.camera.position, self.camera.target(), self.camera.up())
+        else {
+            return (
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                0,
+            );
         };
 
         let focal_length =
             0.5 * REFERENCE_VIEWPORT_HEIGHT / (0.5 * CAMERA_FOV_DEGREES.to_radians()).tan();
-        let light_direction = Vec3::new(-0.35, 0.75, 0.55).normalized();
         let mut fills = Vec::new();
         let mut hulls = Vec::new();
         let mut lines = Vec::new();
+        let mut overlay_lines = Vec::new();
         let mut geo_fills = Vec::new();
+        let mut atmosphere_vertices = Vec::new();
+        let mut geo_revision = 0;
 
         for object in &world.objects {
             if !world.object_effectively_visible(&object.id) {
@@ -619,77 +1013,125 @@ impl NativeEditorApp {
                 / DEFAULT_OUTLINE_PIXEL_WIDTH;
             let inner_line_width = inner_stroke_width(outline_width);
             let outer_line_width = outer_stroke_width(outline_width);
-            let model_view = view * object.world_matrix();
+            let model_view = view * self.scene_transform.matrix() * object.world_matrix();
 
             if let AssetRef::GeoJsonMap { path, radius_scale } = &object.asset {
                 let key = geojson_cache_key(path, *radius_scale);
-                let Some(map) = self.geojson_maps.get(&key) else {
-                    continue;
-                };
-                // GeoJSON uses its resolved toon material with the same viewport light model
-                // as the Earth mesh. Its own base color remains independent.
-                let geo_fill_color = [base_color[0], base_color[1], base_color[2], 1.0];
-                for polygon in &map.polygons {
-                    let triangles = triangulate_geojson_polygon(polygon);
-                    for [a, b, c] in triangles {
-                        let mut surface_triangles = Vec::new();
-                        subdivide_spherical_triangle(
-                            [polygon.points[a], polygon.points[b], polygon.points[c]],
-                            11.0_f32.to_radians(),
-                            0,
-                            &mut surface_triangles,
-                        );
-                        for triangle in surface_triangles {
-                            let mut triangle_vertices = Vec::with_capacity(3);
-                            for local_point in triangle {
-                                let view_point = model_view.transform_point(local_point);
-                                let Some(position) =
-                                    project_point_clip(view_point, width, height, focal_length)
-                                else {
-                                    triangle_vertices.clear();
-                                    break;
-                                };
-                                let view_normal = model_view
-                                    .transform_vector(local_point.normalized())
-                                    .normalized();
-                                let light = view_normal.dot(light_direction).abs();
-                                triangle_vertices.push(GpuVertex::new(
-                                    position,
-                                    geo_fill_color,
-                                    light,
-                                    material.shade_bands,
-                                    material.band_thresholds,
-                                ));
-                            }
-                            if triangle_vertices.len() == 3 {
-                                geo_fills.extend(triangle_vertices);
-                            }
-                        }
-                    }
-                }
-                for (start, end) in &map.segments {
-                    let start = model_view.transform_point(*start);
-                    let end = model_view.transform_point(*end);
-                    let (Some(start), Some(end)) = (
-                        project_point_clip(start, width, height, focal_length),
-                        project_point_clip(end, width, height, focal_length),
-                    ) else {
+
+                if material.line_only {
+                    let Some(map) = self.geojson_maps.get(&key) else {
                         continue;
                     };
-                    push_bordered_screen_space_stroke(
-                        &mut lines,
-                        start,
-                        end,
-                        outer_line_width,
-                        inner_line_width,
+                    append_geojson_lines(
+                        &mut overlay_lines,
+                        map,
+                        model_view,
                         width,
                         height,
-                        outline,
-                        line_fill,
-                        material.shade_bands,
-                        material.band_thresholds,
+                        focal_length,
+                        GeoJsonLineStyle {
+                            // For line-only GeoJSON overlays, outline_width is the
+                            // screen-space stroke width and shade_bands[0] is opacity.
+                            // This keeps country, state, and river styles data-driven
+                            // from the A3D group without expanding the shared schema.
+                            inner_color: [
+                                line_fill[0],
+                                line_fill[1],
+                                line_fill[2],
+                                material.shade_bands[0].clamp(0.0, 1.0),
+                            ],
+                            outer_color: [outline[0], outline[1], outline[2], 0.0],
+                            inner_width_pixels: material.outline_width.max(0.08),
+                            outer_width_pixels: 0.0,
+                            shade_bands: [1.0, 1.0, 1.0],
+                            band_thresholds: material.band_thresholds,
+                        },
                     );
+                    continue;
                 }
+
+                // Native Earth land is sampled per fragment from the terrain texture
+                // on the ocean sphere. Keep the GeoJSON object for terminal/ASCII use,
+                // but do not build a second floating polygon shell in the native view.
+                if is_native_shader_land_map(path) {
+                    continue;
+                }
+
+                let Some(cached_triangles) = self.geojson_render_meshes.get(&key) else {
+                    continue;
+                };
+
+                // Cache the fully transformed/projected land vertices while the camera,
+                // viewport, object transform, scene transform, and material are unchanged.
+                // The renderer also uses the revision to avoid re-uploading the same land
+                // vertex buffer on continuous egui repaints.
+                let cache_key = format!(
+                    "{}|{}x{}|{:?}|{:?}|{:?}|{:?}",
+                    key,
+                    width.to_bits(),
+                    height.to_bits(),
+                    self.camera,
+                    self.scene_transform,
+                    object.world_matrix(),
+                    material,
+                );
+
+                let cached_geometry = self.geo_gpu_geometry_cache.borrow();
+                if let Some(cached) = cached_geometry
+                    .as_ref()
+                    .filter(|cached| cached.key == cache_key)
+                {
+                    geo_fills.extend_from_slice(&cached.vertices);
+                    geo_revision = cached.revision;
+                    continue;
+                }
+                drop(cached_geometry);
+
+                let mut rebuilt = Vec::new();
+                for cached in cached_triangles {
+                    if geo_triangle_fully_back_facing(cached.points, model_view) {
+                        continue;
+                    }
+
+                    let mut terrain_vertices = Vec::with_capacity(3);
+                    for (local_point, color) in cached.points.into_iter().zip(cached.colors) {
+                        let view_point = model_view.transform_point(local_point);
+                        let Some(position) =
+                            project_point_clip(view_point, width, height, focal_length)
+                        else {
+                            terrain_vertices.clear();
+                            break;
+                        };
+                        let view_normal = model_view
+                            .transform_vector(local_point.normalized())
+                            .normalized();
+                        terrain_vertices.push(GpuVertex::with_normal(
+                            position,
+                            color,
+                            [view_normal.x, view_normal.y, view_normal.z],
+                            material.shade_bands,
+                            material.band_thresholds,
+                        ));
+                    }
+                    if terrain_vertices.len() == 3 {
+                        rebuilt.extend(terrain_vertices);
+                    }
+                }
+
+                let revision = self
+                    .geo_gpu_geometry_cache
+                    .borrow()
+                    .as_ref()
+                    .map_or(1, |cached| cached.revision.wrapping_add(1).max(1));
+                // Interior mutability is limited to this derived render cache; scene data
+                // and editor state remain immutable during geometry collection.
+                *self.geo_gpu_geometry_cache.borrow_mut() = Some(CachedGeoGpuGeometry {
+                    key: cache_key,
+                    revision,
+                    vertices: rebuilt.clone(),
+                });
+                geo_fills.extend(rebuilt);
+                geo_revision = revision;
                 continue;
             }
 
@@ -699,6 +1141,7 @@ impl NativeEditorApp {
             let Some(mesh) = self.meshes.get(path) else {
                 continue;
             };
+            let use_analytic_sphere_normals = is_native_ocean_sphere(path);
             let view_vertices = mesh
                 .vertices
                 .iter()
@@ -713,6 +1156,36 @@ impl NativeEditorApp {
             let mut edge_map: HashMap<(usize, usize), EdgeFaces> = HashMap::new();
             let mut triangles: Vec<([usize; 3], Vec3)> = Vec::new();
             let mut vertex_normals = vec![Vec3::new(0.0, 0.0, 0.0); view_vertices.len()];
+
+            if use_analytic_sphere_normals {
+                let center_view = model_view.transform_point(Vec3::new(0.0, 0.0, 0.0));
+                if let Some(center_clip) =
+                    project_point_clip(center_view, width, height, focal_length)
+                {
+                    let center_ndc = [
+                        center_clip[0] / center_clip[3],
+                        center_clip[1] / center_clip[3],
+                    ];
+                    let radius_ndc = projected
+                        .iter()
+                        .flatten()
+                        .map(|projected_vertex| {
+                            let dx = projected_vertex[0] / projected_vertex[3] - center_ndc[0];
+                            let dy = projected_vertex[1] / projected_vertex[3] - center_ndc[1];
+                            (dx * dx + dy * dy).sqrt()
+                        })
+                        .fold(0.0_f32, f32::max);
+                    if radius_ndc > 0.0 {
+                        push_atmosphere_quad(
+                            &mut atmosphere_vertices,
+                            center_clip,
+                            center_ndc,
+                            radius_ndc,
+                            [0.64, 0.80, 1.00, 0.95],
+                        );
+                    }
+                }
+            }
 
             for primitive in &mesh.faces {
                 match primitive.as_slice() {
@@ -756,13 +1229,20 @@ impl NativeEditorApp {
                 *normal = normal.normalized();
             }
 
-            let outline_x_ndc = (2.0 * outline_width) / width.max(1.0);
-            let outline_y_ndc = (2.0 * outline_width) / height.max(1.0);
+            // Earth uses a dedicated translucent atmosphere shell. Other objects
+            // retain their material-driven inverted-hull outline width.
+            let hull_width = if use_analytic_sphere_normals {
+                7.0
+            } else {
+                outline_width
+            };
+            let outline_x_ndc = (2.0 * hull_width) / width.max(1.0);
+            let outline_y_ndc = (2.0 * hull_width) / height.max(1.0);
 
             for (tri, face_normal) in triangles {
                 let mut projected_triangle = [[0.0; 4]; 3];
                 let mut projected_hull = [[0.0; 4]; 3];
-                let mut lights = [0.0; 3];
+                let mut normals = [[0.0; 3]; 3];
                 let mut valid = true;
                 for (slot, index) in tri.into_iter().enumerate() {
                     let Some(projected_vertex) = projected[index] else {
@@ -770,12 +1250,20 @@ impl NativeEditorApp {
                         break;
                     };
                     projected_triangle[slot] = projected_vertex;
-                    let normal = if material.smooth_shading {
+                    let normal = if use_analytic_sphere_normals {
+                        // The ocean is a mathematically perfect sphere. Derive its
+                        // view-space normal from the local vertex direction instead
+                        // of imported UV-sphere normals, so latitude rings cannot
+                        // restart or crease the lighting gradient.
+                        model_view
+                            .transform_vector(mesh.vertices[index].normalized())
+                            .normalized()
+                    } else if material.smooth_shading {
                         vertex_normals[index]
                     } else {
                         face_normal
                     };
-                    lights[slot] = normal.dot(light_direction).abs();
+                    normals[slot] = [normal.x, normal.y, normal.z];
                     let screen_dir = Vec3::new(normal.x, normal.y, 0.0);
                     let screen_len =
                         (screen_dir.x * screen_dir.x + screen_dir.y * screen_dir.y).sqrt();
@@ -800,23 +1288,37 @@ impl NativeEditorApp {
 
                 if !material.line_only {
                     let color = [base_color[0], base_color[1], base_color[2], 1.0];
-                    for slot in 0..3 {
-                        hulls.push(GpuVertex::new(
-                            projected_hull[slot],
-                            outline,
-                            1.0,
-                            material.shade_bands,
-                            material.band_thresholds,
-                        ));
+                    if !use_analytic_sphere_normals {
+                        for slot in 0..3 {
+                            hulls.push(GpuVertex::new(
+                                projected_hull[slot],
+                                outline,
+                                1.0,
+                                material.shade_bands,
+                                material.band_thresholds,
+                            ));
+                        }
                     }
                     for slot in 0..3 {
-                        fills.push(GpuVertex::new(
-                            projected_triangle[slot],
-                            color,
-                            lights[slot],
-                            material.shade_bands,
-                            material.band_thresholds,
-                        ));
+                        if use_analytic_sphere_normals {
+                            let local = mesh.vertices[tri[slot]].normalized();
+                            fills.push(GpuVertex::with_terrain_surface(
+                                projected_triangle[slot],
+                                color,
+                                normals[slot],
+                                [local.x, local.y, local.z],
+                                material.shade_bands,
+                                material.band_thresholds,
+                            ));
+                        } else {
+                            fills.push(GpuVertex::with_normal(
+                                projected_triangle[slot],
+                                color,
+                                normals[slot],
+                                material.shade_bands,
+                                material.band_thresholds,
+                            ));
+                        }
                     }
                 }
             }
@@ -840,38 +1342,38 @@ impl NativeEditorApp {
                 );
             }
 
-            if self.show_wireframe {
-                for (a, b) in mesh.unique_edges() {
-                    let (Some(start), Some(end)) = (projected[a], projected[b]) else {
+            if self.show_wireframe || material.line_only {
+                // Filled rendering uses the native high-resolution mesh, while debug
+                // wireframe and line-only rendering use the shared low-resolution
+                // mesh as a clean proxy when one is available. Drawing every edge of
+                // the 128x64 sphere creates a dense checker pattern and very thick
+                // bordered strokes.
+                let edge_mesh = self.wire_meshes.get(path).unwrap_or(mesh);
+                let edge_projected =
+                    project_mesh_vertices(edge_mesh, model_view, width, height, focal_length);
+                let stroke_width = if self.show_wireframe {
+                    0.48
+                } else {
+                    inner_line_width.clamp(0.55, 0.90)
+                };
+                let stroke_color = if material.line_only {
+                    line_fill
+                } else {
+                    outline
+                };
+
+                for (a, b) in edge_mesh.unique_edges() {
+                    let (Some(start), Some(end)) = (edge_projected[a], edge_projected[b]) else {
                         continue;
                     };
                     push_screen_space_stroke(
                         &mut lines,
                         start,
                         end,
-                        outline_width,
+                        stroke_width,
                         width,
                         height,
-                        outline,
-                        material.shade_bands,
-                        material.band_thresholds,
-                    );
-                }
-            } else if material.line_only {
-                for (a, b) in mesh.unique_edges() {
-                    let (Some(start), Some(end)) = (projected[a], projected[b]) else {
-                        continue;
-                    };
-                    push_bordered_screen_space_stroke(
-                        &mut lines,
-                        start,
-                        end,
-                        outer_line_width,
-                        inner_line_width,
-                        width,
-                        height,
-                        outline,
-                        line_fill,
+                        stroke_color,
                         material.shade_bands,
                         material.band_thresholds,
                     );
@@ -904,7 +1406,15 @@ impl NativeEditorApp {
             }
         }
 
-        (fills, hulls, lines, geo_fills)
+        (
+            fills,
+            hulls,
+            lines,
+            overlay_lines,
+            geo_fills,
+            atmosphere_vertices,
+            geo_revision,
+        )
     }
 
     pub(crate) fn viewport_lines(&self, width: f32, height: f32) -> Vec<ViewportLine> {
@@ -915,11 +1425,9 @@ impl NativeEditorApp {
         let Some(world) = &self.world else {
             return Vec::new();
         };
-        let Some(view) = Mat4::look_at(
-            self.camera.position,
-            self.camera.target(),
-            Vec3::new(0.0, 1.0, 0.0),
-        ) else {
+        let Some(view) =
+            Mat4::look_at(self.camera.position, self.camera.target(), self.camera.up())
+        else {
             return Vec::new();
         };
 
@@ -933,7 +1441,7 @@ impl NativeEditorApp {
                 continue;
             }
 
-            let model_view = view * object.world_matrix();
+            let model_view = view * self.scene_transform.matrix() * object.world_matrix();
             let is_selected = selected
                 .and_then(|target| match target {
                     NativeEditorTarget::Object(id) => Some(id.as_str()),
@@ -1058,8 +1566,15 @@ fn build_scene_state(scene_path: &Path) -> Result<NativeEditorApp, Box<dyn Error
     let entries = editor_entries(&world);
     let title = world.title.clone();
     let object_count = entries.len().saturating_sub(2);
-    let (meshes, mesh_errors) = load_world_meshes(&world);
+    let (meshes, wire_meshes, mesh_errors) = load_world_meshes(&world);
     let (geojson_maps, geojson_errors) = load_world_geojson_maps(&world);
+    let elevation_points_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(ELEVATION_POINTS_ASSET);
+    let elevation_points =
+        load_geojson_elevation_points(&elevation_points_path).unwrap_or_default();
+    let elevation_point_count = elevation_points.len();
+    let geojson_render_meshes = build_geojson_render_meshes(&geojson_maps, &elevation_points);
+    let globe_labels = load_builtin_labels(Path::new(env!("CARGO_MANIFEST_DIR")));
     let mesh_count = meshes.len();
     let geojson_count = geojson_maps.len();
 
@@ -1067,7 +1582,7 @@ fn build_scene_state(scene_path: &Path) -> Result<NativeEditorApp, Box<dyn Error
         session: EditorSession::new(entries, NativeEditorTarget::Camera),
         status: if mesh_errors == 0 && geojson_errors == 0 {
             format!(
-                "Loaded {title} ({object_count} editor objects, {mesh_count} mesh assets, {geojson_count} GeoJSON assets)"
+                "Loaded {title} ({object_count} editor objects, {mesh_count} mesh assets, {geojson_count} GeoJSON assets, {elevation_point_count} elevation points)"
             )
         } else {
             format!(
@@ -1076,13 +1591,24 @@ fn build_scene_state(scene_path: &Path) -> Result<NativeEditorApp, Box<dyn Error
         },
         world: Some(world),
         meshes,
+        wire_meshes,
         geojson_maps,
+        geojson_render_meshes,
+        globe_labels,
+        marine_label_textures: HashMap::new(),
         scene_path: scene_path.to_path_buf(),
         camera: NativeCamera::default(),
+        scene_transform: Transform::default(),
         gpu_target_format: None,
         show_wireframe: false,
+        show_labels: true,
         outline_pixel_width: DEFAULT_OUTLINE_PIXEL_WIDTH,
         viewport_background_rgb: DEFAULT_VIEWPORT_BACKGROUND_RGB,
+        fps_last_frame: Instant::now(),
+        fps_smoothed: 0.0,
+        geometry_ms_smoothed: 0.0,
+        geo_gpu_geometry_cache: RefCell::new(None),
+        upload_stats: UploadStats::default(),
     };
     if let Some(bounds) = app.scene_bounds() {
         app.fit_camera_to_bounds(bounds);
@@ -1124,6 +1650,40 @@ fn bias_clip_toward_camera(position: [f32; 4], ndc_bias: f32) -> [f32; 4] {
         (position[2] / position[3] - ndc_bias) * position[3],
         position[3],
     ]
+}
+
+fn push_atmosphere_quad(
+    vertices: &mut Vec<GpuVertex>,
+    center_clip: [f32; 4],
+    center_ndc: [f32; 2],
+    radius_ndc: f32,
+    color: [f32; 4],
+) {
+    let expand = 1.14;
+    let radius = radius_ndc * expand;
+    let z = center_clip[2];
+    let w = center_clip[3];
+    let corners = [
+        ([-1.0_f32, -1.0_f32], [-radius, -radius]),
+        ([1.0_f32, -1.0_f32], [radius, -radius]),
+        ([1.0_f32, 1.0_f32], [radius, radius]),
+        ([-1.0_f32, 1.0_f32], [-radius, radius]),
+    ];
+    let clip = corners.map(|(uv, offset)| {
+        let ndc_x = center_ndc[0] + offset[0];
+        let ndc_y = center_ndc[1] + offset[1];
+        let position = [ndc_x * w, ndc_y * w, z, w];
+        GpuVertex::with_normal(
+            position,
+            color,
+            [uv[0] * expand, uv[1] * expand, 0.0],
+            [1.0; 3],
+            [0.0, 1.0],
+        )
+    });
+    for index in [0usize, 1, 2, 0, 2, 3] {
+        vertices.push(clip[index]);
+    }
 }
 
 fn push_bordered_screen_space_stroke(
@@ -1234,6 +1794,17 @@ fn push_screen_space_stroke(
     }
 }
 
+fn geo_triangle_fully_back_facing(triangle: [Vec3; 3], model_view: Mat4) -> bool {
+    triangle.into_iter().all(|local_point| {
+        let view_point = model_view.transform_point(local_point);
+        let view_normal = model_view
+            .transform_vector(local_point.normalized())
+            .normalized();
+        let to_camera = (view_point * -1.0).normalized();
+        view_normal.dot(to_camera) <= 0.0
+    })
+}
+
 fn subdivide_spherical_triangle(
     triangle: [Vec3; 3],
     max_angle: f32,
@@ -1271,88 +1842,157 @@ fn triangle_max_angle(triangle: [Vec3; 3]) -> f32 {
         .fold(0.0, f32::max)
 }
 
-fn triangulate_geojson_polygon(polygon: &crate::geojson::GeoJsonPolygon) -> Vec<[usize; 3]> {
-    ear_clip_indices(&polygon.projected)
+fn procedural_terrain_elevation(point: Vec3, elevation_points: &[GeoJsonElevationPoint]) -> f32 {
+    let unit = point.normalized();
+    let latitude = unit.y.clamp(-1.0, 1.0).asin().to_degrees();
+    let longitude = unit.x.atan2(unit.z).to_degrees();
+
+    // Retain a restrained broad field so sparse named peaks do not create
+    // isolated circular islands of color between observations.
+    let broad_shape = 0.025 * (longitude.to_radians() * 2.1 + latitude.to_radians() * 0.7).sin()
+        + 0.018 * (longitude.to_radians() * 4.3 - latitude.to_radians() * 1.9).cos();
+
+    // Natural Earth supplies named elevation points rather than a continuous
+    // DEM. Convert each point into a smooth spherical influence. Higher and
+    // more important points have a wider influence, while max-combining avoids
+    // inflating terrain where several nearby labels overlap.
+    let sampled_elevation = elevation_points
+        .iter()
+        .map(|sample| {
+            let angular_distance = unit
+                .dot(sample.position)
+                .clamp(-1.0, 1.0)
+                .acos()
+                .to_degrees();
+            let importance = ((10.0 - sample.scale_rank) / 10.0).clamp(0.0, 1.0);
+            let normalized_height = (sample.elevation_meters / 5500.0).clamp(0.0, 1.25).sqrt();
+            let influence_radius =
+                (3.5 + normalized_height * 8.0 + importance * 3.0).clamp(3.5, 14.0);
+            let falloff = (-0.5 * (angular_distance / influence_radius).powi(2)).exp();
+            normalized_height * falloff
+        })
+        .fold(0.0_f32, f32::max);
+
+    (0.16 + broad_shape + sampled_elevation * 0.78).clamp(0.0, 1.0)
 }
 
-fn ear_clip_indices(points: &[[f32; 2]]) -> Vec<[usize; 3]> {
-    if points.len() < 3 {
+fn procedural_terrain_color(point: Vec3, elevation: f32) -> [f32; 4] {
+    let unit = point.normalized();
+    let latitude = unit.y.clamp(-1.0, 1.0).asin().to_degrees();
+    let longitude = unit.x.atan2(unit.z).to_degrees();
+    let subtropical_dryness = ((latitude.abs() - 27.0).abs() / 18.0).clamp(0.0, 1.0);
+    let regional_variation =
+        0.5 + 0.5 * (longitude.to_radians() * 2.7 + latitude.to_radians() * 1.4).sin();
+    let moisture =
+        (0.68 - 0.24 * (1.0 - subtropical_dryness) + 0.16 * regional_variation).clamp(0.0, 1.0);
+
+    let lush_lowland = [0.16, 0.48, 0.20];
+    let dry_lowland = [0.48, 0.50, 0.20];
+    let foothill = [0.57, 0.46, 0.22];
+    let mountain = [0.43, 0.27, 0.13];
+    let high_peak = [0.66, 0.57, 0.43];
+
+    let lowland = lerp_rgb(dry_lowland, lush_lowland, moisture);
+    let color = if elevation < 0.32 {
+        lerp_rgb(lowland, foothill, elevation / 0.32)
+    } else if elevation < 0.62 {
+        lerp_rgb(foothill, mountain, (elevation - 0.32) / 0.30)
+    } else {
+        lerp_rgb(mountain, high_peak, (elevation - 0.62) / 0.38)
+    };
+    [color[0], color[1], color[2], 1.0]
+}
+
+fn wrapped_longitude_delta(longitude: f32, reference: f32) -> f32 {
+    let mut delta = longitude - reference;
+    while delta > 180.0 {
+        delta -= 360.0;
+    }
+    while delta < -180.0 {
+        delta += 360.0;
+    }
+    delta
+}
+
+fn lerp_rgb(a: [f32; 3], b: [f32; 3], amount: f32) -> [f32; 3] {
+    let amount = amount.clamp(0.0, 1.0);
+    [
+        a[0] + (b[0] - a[0]) * amount,
+        a[1] + (b[1] - a[1]) * amount,
+        a[2] + (b[2] - a[2]) * amount,
+    ]
+}
+
+fn triangulate_geojson_polygon(polygon: &crate::geojson::GeoJsonPolygon) -> Vec<[usize; 3]> {
+    // For land fill, triangulate only the exterior ring.
+    // Natural Earth land holes are better restored explicitly from the lakes
+    // layer than inferred from very large projected polygons, which can create
+    // continent-scale blue cutouts when hole winding or projection gets noisy.
+    let exterior_end = polygon
+        .hole_indices
+        .first()
+        .copied()
+        .unwrap_or(polygon.projected.len());
+    if exterior_end < 3 {
         return Vec::new();
     }
 
-    let signed_area = points
+    let exterior = &polygon.projected[..exterior_end];
+    let coordinates = exterior
         .iter()
-        .enumerate()
-        .map(|(index, point)| {
-            let next = points[(index + 1) % points.len()];
-            point[0] * next[1] - next[0] * point[1]
+        .flat_map(|point| [point[0] as f64, point[1] as f64])
+        .collect::<Vec<_>>();
+
+    let Ok(indices) = earcutr::earcut(&coordinates, &[], 2) else {
+        return Vec::new();
+    };
+
+    indices
+        .chunks_exact(3)
+        .filter_map(|triangle| {
+            let tri = [triangle[0], triangle[1], triangle[2]];
+            let centroid = [
+                (exterior[tri[0]][0] + exterior[tri[1]][0] + exterior[tri[2]][0]) / 3.0,
+                (exterior[tri[0]][1] + exterior[tri[1]][1] + exterior[tri[2]][1]) / 3.0,
+            ];
+            point_in_ring(centroid, exterior).then_some(tri)
         })
-        .sum::<f32>();
-    let ccw = signed_area >= 0.0;
-    let mut remaining = (0..points.len()).collect::<Vec<_>>();
-    let mut triangles = Vec::with_capacity(points.len().saturating_sub(2));
-    let mut guard = 0usize;
-
-    while remaining.len() > 3 && guard < points.len() * points.len() {
-        let mut clipped = false;
-        for cursor in 0..remaining.len() {
-            let previous = remaining[(cursor + remaining.len() - 1) % remaining.len()];
-            let current = remaining[cursor];
-            let next = remaining[(cursor + 1) % remaining.len()];
-            let turn = cross_2d(points[previous], points[current], points[next]);
-            if (ccw && turn <= 1.0e-7) || (!ccw && turn >= -1.0e-7) {
-                continue;
-            }
-            if remaining.iter().copied().any(|candidate| {
-                candidate != previous
-                    && candidate != current
-                    && candidate != next
-                    && point_in_triangle(
-                        points[candidate],
-                        points[previous],
-                        points[current],
-                        points[next],
-                    )
-            }) {
-                continue;
-            }
-
-            triangles.push(if ccw {
-                [previous, current, next]
-            } else {
-                [previous, next, current]
-            });
-            remaining.remove(cursor);
-            clipped = true;
-            break;
-        }
-        if !clipped {
-            break;
-        }
-        guard += 1;
-    }
-
-    if remaining.len() == 3 {
-        triangles.push(if ccw {
-            [remaining[0], remaining[1], remaining[2]]
-        } else {
-            [remaining[0], remaining[2], remaining[1]]
-        });
-    }
-    triangles
+        .collect()
 }
 
-fn cross_2d(a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> f32 {
-    (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+fn point_in_ring(point: [f32; 2], ring: &[[f32; 2]]) -> bool {
+    if ring.len() < 3 {
+        return false;
+    }
+
+    let mut inside = false;
+    let mut previous = *ring.last().unwrap();
+    for &current in ring {
+        let intersects = ((current[1] > point[1]) != (previous[1] > point[1]))
+            && (point[0]
+                < (previous[0] - current[0]) * (point[1] - current[1])
+                    / (previous[1] - current[1]).max(1.0e-6)
+                    + current[0]);
+        if intersects {
+            inside = !inside;
+        }
+        previous = current;
+    }
+    inside
 }
 
-fn point_in_triangle(point: [f32; 2], a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> bool {
-    let ab = cross_2d(a, b, point);
-    let bc = cross_2d(b, c, point);
-    let ca = cross_2d(c, a, point);
-    let has_negative = ab < -1.0e-7 || bc < -1.0e-7 || ca < -1.0e-7;
-    let has_positive = ab > 1.0e-7 || bc > 1.0e-7 || ca > 1.0e-7;
-    !(has_negative && has_positive)
+fn project_mesh_vertices(
+    mesh: &Mesh,
+    model_view: Mat4,
+    width: f32,
+    height: f32,
+    focal_length: f32,
+) -> Vec<Option<[f32; 4]>> {
+    mesh.vertices
+        .iter()
+        .map(|vertex| model_view.transform_point(*vertex))
+        .map(|point| project_point_clip(point, width, height, focal_length))
+        .collect()
 }
 
 fn project_point_clip(point: Vec3, width: f32, height: f32, focal_length: f32) -> Option<[f32; 4]> {
@@ -1401,8 +2041,9 @@ fn project_point(point: Vec3, width: f32, height: f32, focal_length: f32) -> Opt
     ])
 }
 
-fn load_world_meshes(world: &LoadedWorld) -> (HashMap<String, Mesh>, usize) {
+fn load_world_meshes(world: &LoadedWorld) -> (HashMap<String, Mesh>, HashMap<String, Mesh>, usize) {
     let mut meshes = HashMap::new();
+    let mut wire_meshes = HashMap::new();
     let mut errors = 0;
 
     for object in &world.objects {
@@ -1413,19 +2054,81 @@ fn load_world_meshes(world: &LoadedWorld) -> (HashMap<String, Mesh>, usize) {
             continue;
         }
 
-        match load_obj(path) {
+        let native_path = native_mesh_override_path(path);
+        match load_obj(&native_path) {
             Ok(mesh) => {
+                // Keep the resolved A3D asset path as the cache key. Filled native
+                // rendering uses the higher-resolution override.
                 meshes.insert(path.clone(), mesh);
+
+                // When an override is active, retain the shared low-resolution mesh
+                // as a wireframe/line-only proxy. This keeps debug lines readable.
+                if native_path != Path::new(path) {
+                    if let Ok(proxy) = load_obj(path) {
+                        wire_meshes.insert(path.clone(), proxy);
+                    }
+                }
             }
             Err(_) => errors += 1,
         }
     }
 
-    (meshes, errors)
+    (meshes, wire_meshes, errors)
+}
+
+fn is_native_ocean_sphere(path: &str) -> bool {
+    Path::new(path).file_name().and_then(|name| name.to_str()) == Some("sphere_uv_32x16.obj")
+}
+
+fn native_mesh_override_path(path: &str) -> PathBuf {
+    Path::new(path).to_path_buf()
+}
+
+fn is_native_shader_land_map(path: &str) -> bool {
+    path.contains("ne_50m_land") || path.contains("admin_0_countries")
 }
 
 fn geojson_cache_key(path: &str, radius_scale: f32) -> String {
     format!("{path}#{radius_scale:.6}")
+}
+
+fn build_geojson_render_meshes(
+    maps: &HashMap<String, GeoJsonMap>,
+    elevation_points: &[GeoJsonElevationPoint],
+) -> HashMap<String, Vec<CachedGeoTriangle>> {
+    let mut cached_maps = HashMap::new();
+
+    for (key, map) in maps {
+        if is_native_shader_land_map(key) {
+            cached_maps.insert(key.clone(), Vec::new());
+            continue;
+        }
+        let mut cached_triangles = Vec::new();
+        for polygon in &map.polygons {
+            for [a, b, c] in triangulate_geojson_polygon(polygon) {
+                let mut surface_triangles = Vec::new();
+                subdivide_spherical_triangle(
+                    [polygon.points[a], polygon.points[b], polygon.points[c]],
+                    15.0_f32.to_radians(),
+                    0,
+                    &mut surface_triangles,
+                );
+                for points in surface_triangles {
+                    let elevations =
+                        points.map(|point| procedural_terrain_elevation(point, elevation_points));
+                    let colors = [
+                        procedural_terrain_color(points[0], elevations[0]),
+                        procedural_terrain_color(points[1], elevations[1]),
+                        procedural_terrain_color(points[2], elevations[2]),
+                    ];
+                    cached_triangles.push(CachedGeoTriangle { points, colors });
+                }
+            }
+        }
+        cached_maps.insert(key.clone(), cached_triangles);
+    }
+
+    cached_maps
 }
 
 fn load_world_geojson_maps(world: &LoadedWorld) -> (HashMap<String, GeoJsonMap>, usize) {

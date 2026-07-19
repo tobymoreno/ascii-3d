@@ -24,21 +24,6 @@
             0.48,
             0.92
           ],
-          "shade_bands": [
-            0.46,
-            0.72,
-            1.0
-          ],
-          "band_thresholds": [
-            0.32,
-            0.68
-          ],
-          "outline_color": [
-            0.08,
-            0.09,
-            0.11
-          ],
-          "outline_width": 1.8,
           "smooth_shading": true
         }
       },
@@ -65,8 +50,8 @@
       "id": "map",
       "asset": {
         "type": "geo_json_map",
-        "path": "../../maps/basic_world_outlines.geojson",
-        "radius_scale": 2.036
+        "path": "../../maps/ne_50m_land_simplified.geojson",
+        "radius_scale": 2.003
       },
       "render": {
         "visible": true,
@@ -78,8 +63,8 @@
             0.2
           ],
           "shade_bands": [
-            0.46,
-            0.72,
+            1.0,
+            1.0,
             1.0
           ],
           "band_thresholds": [
@@ -107,6 +92,107 @@
           "degrees_per_second": 15.0
         }
       ]
+    },
+    {
+      "id": "country_boundaries",
+      "asset": {
+        "type": "geo_json_map",
+        "path": "../../maps/ne_110m_admin_0_boundary_lines_land.geojson",
+        "radius_scale": 2.007
+      },
+      "render": {
+        "visible": true,
+        "stroke_character": "|",
+        "toon": {
+          "base_color": [
+            0.62,
+            0.59,
+            0.54
+          ],
+          "shade_bands": [
+            0.35,
+            1.0,
+            1.0
+          ],
+          "band_thresholds": [
+            0.32,
+            0.68
+          ],
+          "outline_color": [
+            0.62,
+            0.59,
+            0.54
+          ],
+          "outline_width": 0.65,
+          "smooth_shading": false,
+          "line_only": true
+        }
+      },
+      "behaviors": [
+        {
+          "type": "rotate",
+          "axis": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "degrees_per_second": 15.0
+        }
+      ]
+    },
+    {
+      "id": "rivers",
+      "asset": {
+        "type": "geo_json_map",
+        "path": "../../maps/ne_50m_rivers_lake_centerlines_scale_rank.geojson",
+        "radius_scale": 2.006
+      },
+      "render": {
+        "visible": true,
+        "stroke_character": "~",
+        "toon": {
+          "base_color": [
+            0.6,
+            0.59,
+            0.56
+          ],
+          "shade_bands": [
+            0.42,
+            1.0,
+            1.0
+          ],
+          "band_thresholds": [
+            0.32,
+            0.68
+          ],
+          "outline_color": [
+            0.6,
+            0.59,
+            0.56
+          ],
+          "outline_width": 0.75,
+          "smooth_shading": false,
+          "line_only": true
+        }
+      },
+      "behaviors": [
+        {
+          "type": "rotate",
+          "axis": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "degrees_per_second": 15.0
+        }
+      ]
     }
-  ]
+  ],
+  "viewport_style": {
+    "background": [
+      0.01,
+      0.08,
+      0.18
+    ]
+  }
 }

@@ -16,6 +16,10 @@ const PROPERTIES_WIDTH: f32 = 280.0;
 const VIEWPORT_MARGIN: f32 = 12.0;
 
 pub(crate) fn draw(app: &mut NativeEditorApp, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    app.update_frame_timing();
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_millis(16));
+
     if ui.ctx().input(|input| input.key_pressed(egui::Key::Escape)) {
         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         return;
@@ -26,6 +30,8 @@ pub(crate) fn draw(app: &mut NativeEditorApp, ui: &mut egui::Ui, _frame: &mut ef
     }) {
         app.frame_selected();
     }
+
+    super::controls::handle_transform_keys(app, ui.ctx());
 
     configure_visuals(ui);
 
@@ -125,6 +131,11 @@ fn debug_menu(app: &mut NativeEditorApp, ui: &mut egui::Ui) {
         let mut show_wireframe = app.show_wireframe();
         if ui.checkbox(&mut show_wireframe, "Show Wireframe").changed() {
             app.set_show_wireframe(show_wireframe);
+        }
+
+        let mut show_labels = app.show_labels();
+        if ui.checkbox(&mut show_labels, "Show Labels").changed() {
+            app.set_show_labels(show_labels);
         }
 
         ui.separator();
@@ -366,7 +377,8 @@ fn draw_target_details(app: &mut NativeEditorApp, ui: &mut egui::Ui, target: &Na
                 app.reset_camera();
             }
         }
-        NativeEditorTarget::Object(_) => {
+        NativeEditorTarget::Object(object_id) => {
+            let is_earth_surface = object_id == "sphere" || object_id.ends_with("/sphere");
             let Some(transform) = app.object_transform(target) else {
                 ui.colored_label(MUTED_TEXT_COLOR, "Object data is unavailable.");
                 return;
@@ -404,29 +416,41 @@ fn draw_target_details(app: &mut NativeEditorApp, ui: &mut egui::Ui, target: &Na
                     ui.label("Base color");
                     changed |= ui.color_edit_button_rgb(&mut material.base_color).changed();
                 });
-                ui.horizontal(|ui| {
-                    ui.label("Outline color");
+                if is_earth_surface {
+                    ui.colored_label(
+                        MUTED_TEXT_COLOR,
+                        "Earth lighting and atmosphere are rendered continuously by the native shader.",
+                    );
+                } else {
+                    ui.horizontal(|ui| {
+                        ui.label("Outline color");
+                        changed |= ui
+                            .color_edit_button_rgb(&mut material.outline_color)
+                            .changed();
+                    });
                     changed |= ui
-                        .color_edit_button_rgb(&mut material.outline_color)
+                        .add(
+                            egui::Slider::new(&mut material.outline_width, 0.0..=4.0)
+                                .text("Outline width"),
+                        )
                         .changed();
-                });
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut material.outline_width, 0.0..=4.0)
-                            .text("Outline width"),
-                    )
-                    .changed();
 
-                ui.label("Shade multipliers");
-                changed |= ui
-                    .add(egui::Slider::new(&mut material.shade_bands[0], 0.1..=1.0).text("Dark"))
-                    .changed();
-                changed |= ui
-                    .add(egui::Slider::new(&mut material.shade_bands[1], 0.1..=1.0).text("Mid"))
-                    .changed();
-                changed |= ui
-                    .add(egui::Slider::new(&mut material.shade_bands[2], 0.1..=1.2).text("Light"))
-                    .changed();
+                    ui.label("Shade multipliers");
+                    changed |= ui
+                        .add(
+                            egui::Slider::new(&mut material.shade_bands[0], 0.1..=1.0).text("Dark"),
+                        )
+                        .changed();
+                    changed |= ui
+                        .add(egui::Slider::new(&mut material.shade_bands[1], 0.1..=1.0).text("Mid"))
+                        .changed();
+                    changed |= ui
+                        .add(
+                            egui::Slider::new(&mut material.shade_bands[2], 0.1..=1.2)
+                                .text("Light"),
+                        )
+                        .changed();
+                }
 
                 changed |= ui
                     .checkbox(&mut material.smooth_shading, "Smooth shading")
@@ -502,10 +526,24 @@ fn draw_viewport(app: &mut NativeEditorApp, ui: &mut egui::Ui) {
 
     let render_rect = response.rect.shrink(VIEWPORT_MARGIN);
     let viewport_painter = ui.painter().with_clip_rect(render_rect);
-    let (fill_vertices, hull_vertices, line_vertices, geo_fill_vertices) =
-        app.viewport_gpu_geometry(render_rect.width(), render_rect.height());
-    let triangle_count = fill_vertices.len() / 3;
+    let geometry_started = std::time::Instant::now();
+    let (
+        fill_vertices,
+        hull_vertices,
+        line_vertices,
+        overlay_line_vertices,
+        geo_fill_vertices,
+        atmosphere_vertices,
+        geo_revision,
+    ) = app.viewport_gpu_geometry(render_rect.width(), render_rect.height());
+    app.record_geometry_time(geometry_started.elapsed().as_secs_f32() * 1_000.0);
+
+    let ocean_triangle_count = fill_vertices.len() / 3;
+    let land_triangle_count = geo_fill_vertices.len() / 3;
+    let hull_triangle_count = hull_vertices.len() / 3;
+    let atmosphere_triangle_count = atmosphere_vertices.len() / 3;
     let edge_count = line_vertices.len() / 6;
+    let upload_snapshot = app.upload_stats().snapshot();
 
     if let Some(target_format) = app.gpu_target_format() {
         viewport_painter.add(egui_wgpu::Callback::new_paint_callback(
@@ -514,13 +552,21 @@ fn draw_viewport(app: &mut NativeEditorApp, ui: &mut egui::Ui) {
                 fill_vertices,
                 hull_vertices,
                 line_vertices,
+                overlay_line_vertices,
                 geo_fill_vertices,
+                atmosphere_vertices,
+                geo_revision,
                 target_format,
+                app.upload_stats(),
             ),
         ));
     }
 
-    if triangle_count == 0 && edge_count == 0 {
+    if ocean_triangle_count == 0
+        && land_triangle_count == 0
+        && atmosphere_triangle_count == 0
+        && edge_count == 0
+    {
         viewport_painter.text(
             render_rect.center(),
             egui::Align2::CENTER_CENTER,
@@ -533,10 +579,96 @@ fn draw_viewport(app: &mut NativeEditorApp, ui: &mut egui::Ui) {
             render_rect.left_top(),
             egui::Align2::LEFT_TOP,
             format!(
-                "{triangle_count} toon triangles + {edge_count} outline edges | Wheel: zoom  Middle: pan  Right: look  Alt+Right: orbit focus  F: frame selected"
+                "Ocean: {ocean_triangle_count} tris | Land: {land_triangle_count} tris | Hull: {hull_triangle_count} tris | Atmos: {atmosphere_triangle_count} tris | Edges: {edge_count} | Writes: {:.2} KiB (O {:.1} / H {:.1} / L {:.1} / G {:.1})",
+                upload_snapshot.total_bytes() as f32 / 1024.0,
+                upload_snapshot.fill_bytes as f32 / 1024.0,
+                upload_snapshot.hull_bytes as f32 / 1024.0,
+                upload_snapshot.line_bytes as f32 / 1024.0,
+                upload_snapshot.geo_bytes as f32 / 1024.0,
             ),
             egui::FontId::monospace(12.0),
             MUTED_TEXT_COLOR,
+        );
+    }
+    draw_viewport_marine_glyph_quads(app, &viewport_painter, render_rect);
+    draw_viewport_labels(app, &viewport_painter, render_rect);
+}
+
+fn draw_viewport_marine_glyph_quads(
+    app: &mut NativeEditorApp,
+    painter: &egui::Painter,
+    render_rect: egui::Rect,
+) {
+    let quads = app.viewport_marine_glyph_quads(render_rect.width(), render_rect.height());
+    for quad in quads {
+        if quad.glyph == ' ' {
+            continue;
+        }
+        let texture = app.marine_glyph_texture(painter.ctx(), quad.glyph);
+        let corners = quad
+            .corners
+            .map(|point| egui::pos2(render_rect.min.x + point[0], render_rect.min.y + point[1]));
+        let mut mesh = egui::Mesh::with_texture(texture.id());
+        mesh.vertices.extend_from_slice(&[
+            egui::epaint::Vertex {
+                pos: corners[0],
+                uv: egui::pos2(0.0, 0.0),
+                color: egui::Color32::WHITE,
+            },
+            egui::epaint::Vertex {
+                pos: corners[1],
+                uv: egui::pos2(1.0, 0.0),
+                color: egui::Color32::WHITE,
+            },
+            egui::epaint::Vertex {
+                pos: corners[2],
+                uv: egui::pos2(1.0, 1.0),
+                color: egui::Color32::WHITE,
+            },
+            egui::epaint::Vertex {
+                pos: corners[3],
+                uv: egui::pos2(0.0, 1.0),
+                color: egui::Color32::WHITE,
+            },
+        ]);
+        mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
+        painter.add(egui::Shape::mesh(mesh));
+    }
+}
+
+fn draw_viewport_labels(app: &NativeEditorApp, painter: &egui::Painter, render_rect: egui::Rect) {
+    for label in app.viewport_labels(render_rect.width(), render_rect.height()) {
+        let position = egui::pos2(
+            render_rect.min.x + label.position[0],
+            render_rect.min.y + label.position[1],
+        );
+        let font = egui::FontId::proportional(label.font_size);
+        let outline = egui::Color32::from_rgba_premultiplied(8, 13, 22, 235);
+        let shadow = egui::Color32::from_rgba_premultiplied(3, 8, 18, 150);
+        let fill = egui::Color32::from_rgba_premultiplied(248, 250, 255, 248);
+
+        for (dx, dy) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0)] {
+            painter.text(
+                position + egui::vec2(dx, dy),
+                egui::Align2::CENTER_CENTER,
+                &label.text,
+                font.clone(),
+                outline,
+            );
+        }
+        painter.text(
+            position + egui::vec2(1.0, 1.0),
+            egui::Align2::CENTER_CENTER,
+            &label.text,
+            font.clone(),
+            shadow,
+        );
+        painter.text(
+            position,
+            egui::Align2::CENTER_CENTER,
+            &label.text,
+            font,
+            fill,
         );
     }
 }
@@ -549,7 +681,17 @@ fn draw_status_bar(app: &NativeEditorApp, ui: &mut egui::Ui) {
             ui.horizontal(|ui| {
                 ui.label(&app.status);
                 ui.separator();
-                ui.colored_label(MUTED_TEXT_COLOR, "FPS: --");
+                let fps = app
+                    .fps()
+                    .map(|value| format!("FPS: {value:.1}"))
+                    .unwrap_or_else(|| "FPS: --".to_owned());
+                ui.colored_label(MUTED_TEXT_COLOR, fps);
+                ui.separator();
+                let geometry = app
+                    .geometry_ms()
+                    .map(|value| format!("Geometry CPU: {value:.2} ms"))
+                    .unwrap_or_else(|| "Geometry CPU: --".to_owned());
+                ui.colored_label(MUTED_TEXT_COLOR, geometry);
                 ui.separator();
                 ui.colored_label(MUTED_TEXT_COLOR, "Renderer: wgpu");
                 ui.separator();

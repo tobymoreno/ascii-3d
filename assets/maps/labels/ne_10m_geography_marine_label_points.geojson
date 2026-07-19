@@ -1,0 +1,918 @@
+{
+  "type": "FeatureCollection",
+  "name": "ne_10m_geography_marine_label_points",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Indian Ocean",
+        "name_en": "Indian Ocean",
+        "featurecla": "ocean",
+        "scalerank": 0
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          78.0,
+          -22.0
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "South Pacific Ocean",
+        "name_en": "Pacific Ocean",
+        "featurecla": "ocean",
+        "scalerank": 0
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -135.0,
+          -28.0
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "North Pacific Ocean",
+        "name_en": "Pacific Ocean",
+        "featurecla": "ocean",
+        "scalerank": 0
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -155.0,
+          25.0
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "South Atlantic Ocean",
+        "name_en": "Atlantic Ocean",
+        "featurecla": "ocean",
+        "scalerank": 0
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -18.0,
+          -25.0
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "North Atlantic Ocean",
+        "name_en": "Atlantic Ocean",
+        "featurecla": "ocean",
+        "scalerank": 0
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -38.0,
+          30.0
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Southern Ocean",
+        "name_en": "Southern Ocean",
+        "featurecla": "ocean",
+        "scalerank": 0
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          25.0,
+          -58.0
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Arctic Ocean",
+        "name_en": "Arctic Ocean",
+        "featurecla": "ocean",
+        "scalerank": 0
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          10.0,
+          78.0
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Black Sea",
+        "name_en": "Black Sea",
+        "featurecla": "sea",
+        "scalerank": 1
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          33.569269736402376,
+          44.27694387606414
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Philippine Sea",
+        "name_en": "Philippine Sea",
+        "featurecla": "sea",
+        "scalerank": 1
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          128.18222055762837,
+          20.861295232118383
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Tasman Sea",
+        "name_en": "Tasman Sea",
+        "featurecla": "sea",
+        "scalerank": 1
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          163.06902711529656,
+          -40.92386683033488
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Bay of Bengal",
+        "name_en": "Bay of Bengal",
+        "featurecla": "bay",
+        "scalerank": 1
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          88.05398040870212,
+          18.43422939557368
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "South China Sea",
+        "name_en": "South China Sea",
+        "featurecla": "sea",
+        "scalerank": 1
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          111.33200407125571,
+          10.453675917574243
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Arabian Sea",
+        "name_en": "Arabian Sea",
+        "featurecla": "sea",
+        "scalerank": 1
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          63.7293048883247,
+          19.79667343838131
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Beaufort Sea",
+        "name_en": "Beaufort Sea",
+        "featurecla": "sea",
+        "scalerank": 1
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -136.44633413367995,
+          71.11222064414547
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Caribbean Sea",
+        "name_en": "Caribbean Sea",
+        "featurecla": "sea",
+        "scalerank": 1
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -76.08256930718473,
+          15.37059571166152
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Gulf of Mexico",
+        "name_en": "Gulf of Mexico",
+        "featurecla": "gulf",
+        "scalerank": 1
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -89.56834683978596,
+          27.60997663380761
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Labrador Sea",
+        "name_en": "Labrador Sea",
+        "featurecla": "sea",
+        "scalerank": 1
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -57.16005266530485,
+          53.535194232758265
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Hudson Bay",
+        "name_en": "Hudson Bay",
+        "featurecla": "bay",
+        "scalerank": 1
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -87.00022766440456,
+          61.14456518611022
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Caspian Sea",
+        "name_en": "Caspian Sea",
+        "featurecla": "sea",
+        "scalerank": 1
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          50.70275453255408,
+          42.67674784935302
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Baffin Bay",
+        "name_en": "Baffin Bay",
+        "featurecla": "bay",
+        "scalerank": 1
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -69.59632380747887,
+          73.58514088438403
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Gulf of Alaska",
+        "name_en": "Gulf of Alaska",
+        "featurecla": "gulf",
+        "scalerank": 1
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -151.79331826771187,
+          58.40263734792463
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Red Sea",
+        "name_en": "Red Sea",
+        "featurecla": "sea",
+        "scalerank": 1
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          39.07814573128458,
+          20.048995565931047
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Sea of Okhotsk",
+        "name_en": "Sea of Okhotsk",
+        "featurecla": "sea",
+        "scalerank": 1
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          145.56678693296016,
+          52.85405493142422
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Weddell Sea",
+        "name_en": "Weddell Sea",
+        "featurecla": "sea",
+        "scalerank": 1
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -52.26885792009744,
+          -78.3962711570088
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Persian Gulf",
+        "name_en": "Persian Gulf",
+        "featurecla": "gulf",
+        "scalerank": 1
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          51.56016199385319,
+          27.10513005885204
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Celebes Sea",
+        "name_en": "Celebes Sea",
+        "featurecla": "sea",
+        "scalerank": 2
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          121.24980635120625,
+          4.352951216952492
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Sulu Sea",
+        "name_en": "Sulu Sea",
+        "featurecla": "sea",
+        "scalerank": 2
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          120.19935912724327,
+          8.800880048305018
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Norwegian Sea",
+        "name_en": "Norwegian Sea",
+        "featurecla": "sea",
+        "scalerank": 2
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          10.621316577505997,
+          66.92987051183177
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Greenland Sea",
+        "name_en": "Greenland Sea",
+        "featurecla": "sea",
+        "scalerank": 2
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -15.257423465126534,
+          75.02641195053906
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Banda Sea",
+        "name_en": "Banda Sea",
+        "featurecla": "sea",
+        "scalerank": 2
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          124.85901576095651,
+          -4.723506826525631
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Bay of Biscay",
+        "name_en": "Bay of Biscay",
+        "featurecla": "bay",
+        "scalerank": 2
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -3.1912172672719095,
+          46.02788801835764
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Gulf of Guinea",
+        "name_en": "Gulf of Guinea",
+        "featurecla": "gulf",
+        "scalerank": 2
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          3.6818365681993908,
+          3.0104400308876897
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Scotia Sea",
+        "name_en": "Scotia Sea",
+        "featurecla": "sea",
+        "scalerank": 2
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -54.98437678566401,
+          -61.14804840271723
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Baltic Sea",
+        "name_en": "Baltic Sea",
+        "featurecla": "sea",
+        "scalerank": 2
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          18.157302305652834,
+          57.084074773816205
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Barents Sea",
+        "name_en": "Barents Sea",
+        "featurecla": "sea",
+        "scalerank": 2
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          45.60001815753461,
+          74.58935071641281
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "North Sea",
+        "name_en": "North Sea",
+        "featurecla": "sea",
+        "scalerank": 2
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          3.2636105388156484,
+          55.835450375878146
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Irish Sea",
+        "name_en": "Irish Sea",
+        "featurecla": "sea",
+        "scalerank": 2
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -4.672709051906576,
+          53.583638677954994
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Java Sea",
+        "name_en": "Java Sea",
+        "featurecla": "sea",
+        "scalerank": 2
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          109.99766351780823,
+          -5.03306363484643
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Andaman Sea",
+        "name_en": "Andaman Sea",
+        "featurecla": "sea",
+        "scalerank": 2
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          96.87259995721324,
+          12.510792084667392
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Yellow Sea",
+        "name_en": "Yellow Sea",
+        "featurecla": "sea",
+        "scalerank": 2
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          123.71980611208087,
+          36.78970182565324
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "East China Sea",
+        "name_en": "East China Sea",
+        "featurecla": "sea",
+        "scalerank": 2
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          124.97345780981479,
+          29.115272374012825
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Chukchi Sea",
+        "name_en": "Chukchi Sea",
+        "featurecla": "sea",
+        "scalerank": 2
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -170.77392411474563,
+          68.40751774741253
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Bay of Campeche",
+        "name_en": "Bay of Campeche",
+        "featurecla": "bay",
+        "scalerank": 2
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -93.29536414427618,
+          19.079383199819787
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Arafura Sea",
+        "name_en": "Arafura Sea",
+        "featurecla": "sea",
+        "scalerank": 2
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          135.88704039929434,
+          -7.770343872122107
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Timor Sea",
+        "name_en": "Timor Sea",
+        "featurecla": "sea",
+        "scalerank": 2
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          128.728513799529,
+          -11.132804719107366
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Gulf of Thailand",
+        "name_en": "Gulf of Thailand",
+        "featurecla": "gulf",
+        "scalerank": 2
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          101.74275524014625,
+          10.24970285416958
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Laccadive Sea",
+        "name_en": "Laccadive Sea",
+        "featurecla": "sea",
+        "scalerank": 2
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          75.8867793138234,
+          10.192348788569726
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Bellingshausen Sea",
+        "name_en": "Bellingshausen Sea",
+        "featurecla": "sea",
+        "scalerank": 2
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -77.40293388336828,
+          -72.19097018690859
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Amundsen Sea",
+        "name_en": "Amundsen Sea",
+        "featurecla": "sea",
+        "scalerank": 2
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -105.48934835344001,
+          -74.40853125826784
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Kara Sea",
+        "name_en": "Kara Sea",
+        "featurecla": "sea",
+        "scalerank": 2
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          77.7831573564937,
+          75.19041727088636
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Laptev Sea",
+        "name_en": "Laptev Sea",
+        "featurecla": "sea",
+        "scalerank": 2
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          117.49261491786287,
+          75.96770750667434
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Bering Sea",
+        "name_en": "Bering Sea",
+        "featurecla": "sea",
+        "scalerank": 2
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -173.22277373733343,
+          61.47006960665275
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Sargasso Sea",
+        "name_en": "Sargasso Sea",
+        "featurecla": "sea",
+        "scalerank": 2
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -59.88779623969775,
+          27.653730834670426
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Mediterranean Sea",
+        "name_en": "Mediterranean Sea",
+        "featurecla": "sea",
+        "scalerank": 1
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          17.8640195857601,
+          36.891398889832736
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Ross Sea",
+        "name_en": "Ross Sea",
+        "featurecla": "sea",
+        "scalerank": 1
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -162.74060471248865,
+          -80.62326325767312
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Coral Sea",
+        "name_en": "Coral Sea",
+        "featurecla": "sea",
+        "scalerank": 1
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          154.38422629615323,
+          -17.200902897312897
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Sea of Japan",
+        "name_en": "Sea of Japan",
+        "featurecla": "sea",
+        "scalerank": 1
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          136.66791967495536,
+          42.12865364649092
+        ]
+      }
+    }
+  ]
+}
