@@ -139,6 +139,37 @@ fn debug_menu(app: &mut NativeEditorApp, ui: &mut egui::Ui) {
         }
 
         ui.separator();
+        ui.label("Cloud layer");
+        let mut show_clouds = app.show_clouds();
+        if ui.checkbox(&mut show_clouds, "Show Clouds").changed() {
+            app.set_show_clouds(show_clouds);
+        }
+
+        let mut cloud_opacity = app.cloud_opacity();
+        if ui
+            .add(egui::Slider::new(&mut cloud_opacity, 0.0..=1.0).text("Opacity"))
+            .changed()
+        {
+            app.set_cloud_opacity(cloud_opacity);
+        }
+
+        let mut cloud_coverage = app.cloud_coverage();
+        if ui
+            .add(egui::Slider::new(&mut cloud_coverage, 0.0..=1.0).text("Coverage"))
+            .changed()
+        {
+            app.set_cloud_coverage(cloud_coverage);
+        }
+
+        let mut cloud_seed = app.cloud_seed();
+        if ui
+            .add(egui::Slider::new(&mut cloud_seed, 0..=9999).text("Seed"))
+            .changed()
+        {
+            app.set_cloud_seed(cloud_seed);
+        }
+
+        ui.separator();
         ui.label("Outline width");
         let mut outline_width = app.outline_pixel_width();
         if ui
@@ -526,6 +557,7 @@ fn draw_viewport(app: &mut NativeEditorApp, ui: &mut egui::Ui) {
 
     let render_rect = response.rect.shrink(VIEWPORT_MARGIN);
     let viewport_painter = ui.painter().with_clip_rect(render_rect);
+    draw_star_cluster_haze(app, &viewport_painter, render_rect);
     draw_starfield(app, &viewport_painter, render_rect);
     let geometry_started = std::time::Instant::now();
     let (
@@ -535,6 +567,7 @@ fn draw_viewport(app: &mut NativeEditorApp, ui: &mut egui::Ui) {
         overlay_line_vertices,
         geo_fill_vertices,
         atmosphere_vertices,
+        cloud_vertices,
         geo_revision,
     ) = app.viewport_gpu_geometry(render_rect.width(), render_rect.height());
     app.record_geometry_time(geometry_started.elapsed().as_secs_f32() * 1_000.0);
@@ -543,6 +576,7 @@ fn draw_viewport(app: &mut NativeEditorApp, ui: &mut egui::Ui) {
     let land_triangle_count = geo_fill_vertices.len() / 3;
     let hull_triangle_count = hull_vertices.len() / 3;
     let atmosphere_triangle_count = atmosphere_vertices.len() / 3;
+    let cloud_triangle_count = cloud_vertices.len() / 3;
     let edge_count = line_vertices.len() / 6;
     let upload_snapshot = app.upload_stats().snapshot();
 
@@ -556,6 +590,7 @@ fn draw_viewport(app: &mut NativeEditorApp, ui: &mut egui::Ui) {
                 overlay_line_vertices,
                 geo_fill_vertices,
                 atmosphere_vertices,
+                cloud_vertices,
                 geo_revision,
                 target_format,
                 app.upload_stats(),
@@ -566,6 +601,7 @@ fn draw_viewport(app: &mut NativeEditorApp, ui: &mut egui::Ui) {
     if ocean_triangle_count == 0
         && land_triangle_count == 0
         && atmosphere_triangle_count == 0
+        && cloud_triangle_count == 0
         && edge_count == 0
     {
         viewport_painter.text(
@@ -580,12 +616,13 @@ fn draw_viewport(app: &mut NativeEditorApp, ui: &mut egui::Ui) {
             render_rect.left_top(),
             egui::Align2::LEFT_TOP,
             format!(
-                "Ocean: {ocean_triangle_count} tris | Land: {land_triangle_count} tris | Hull: {hull_triangle_count} tris | Atmos: {atmosphere_triangle_count} tris | Edges: {edge_count} | Writes: {:.2} KiB (O {:.1} / H {:.1} / L {:.1} / G {:.1})",
+                "Ocean: {ocean_triangle_count} tris | Land: {land_triangle_count} tris | Hull: {hull_triangle_count} tris | Clouds: {cloud_triangle_count} tris | Atmos: {atmosphere_triangle_count} tris | Edges: {edge_count} | Writes: {:.2} KiB (O {:.1} / H {:.1} / L {:.1} / G {:.1} / C {:.1})",
                 upload_snapshot.total_bytes() as f32 / 1024.0,
                 upload_snapshot.fill_bytes as f32 / 1024.0,
                 upload_snapshot.hull_bytes as f32 / 1024.0,
                 upload_snapshot.line_bytes as f32 / 1024.0,
                 upload_snapshot.geo_bytes as f32 / 1024.0,
+                upload_snapshot.cloud_bytes as f32 / 1024.0,
             ),
             egui::FontId::monospace(12.0),
             MUTED_TEXT_COLOR,
@@ -593,6 +630,108 @@ fn draw_viewport(app: &mut NativeEditorApp, ui: &mut egui::Ui) {
     }
     draw_viewport_marine_glyph_quads(app, &viewport_painter, render_rect);
     draw_viewport_labels(app, &viewport_painter, render_rect);
+}
+
+fn draw_star_cluster_haze(app: &NativeEditorApp, painter: &egui::Painter, render_rect: egui::Rect) {
+    for haze in app.viewport_cluster_hazes(render_rect.width(), render_rect.height()) {
+        let center = egui::pos2(
+            render_rect.min.x + haze.position[0],
+            render_rect.min.y + haze.position[1],
+        );
+        let rgb = haze
+            .color
+            .map(|channel| (channel.clamp(0.0, 1.0) * 255.0).round() as u8);
+        let puff_count = 5usize;
+        for puff_index in 0..puff_count {
+            let t = puff_index as f32;
+            let seed = haze.seed * 137.31 + t * 11.73;
+            let angle = hash01(seed * 0.73 + 1.17) * std::f32::consts::TAU;
+            let offset_scale = (0.08 + hash01(seed * 1.91 + 9.3) * 0.62) * haze.size_pixels;
+            let offset = egui::vec2(angle.cos(), angle.sin()) * offset_scale;
+            let puff_center = center + offset;
+            let puff_radius = haze.size_pixels * (0.44 + hash01(seed * 2.33 + 4.1) * 0.58);
+            let alpha = (haze.brightness * (0.28 + (1.0 - t / puff_count as f32) * 0.18) * 255.0)
+                .clamp(0.0, 255.0) as u8;
+            draw_irregular_haze_puff(
+                painter,
+                puff_center,
+                puff_radius,
+                alpha,
+                egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]),
+                seed,
+            );
+        }
+    }
+}
+
+fn draw_irregular_haze_puff(
+    painter: &egui::Painter,
+    center: egui::Pos2,
+    radius: f32,
+    alpha: u8,
+    color: egui::Color32,
+    seed: f32,
+) {
+    if alpha == 0 || radius <= 0.5 {
+        return;
+    }
+
+    let ring_count = 3usize;
+    let segment_count = 18usize;
+    for ring_index in 0..ring_count {
+        let ring_t = ring_index as f32 / ring_count.max(1) as f32;
+        let ring_radius = radius * (1.0 - ring_t * 0.28);
+        let center_alpha = ((alpha as f32) * (0.34 - ring_t * 0.08)).clamp(0.0, 255.0) as u8;
+        let edge_alpha =
+            ((alpha as f32) * (0.05 - ring_t * 0.012).max(0.0)).clamp(0.0, 255.0) as u8;
+        let mut mesh = egui::Mesh::default();
+        let center_index = mesh.vertices.len() as u32;
+        mesh.vertices.push(egui::epaint::Vertex {
+            pos: center,
+            uv: egui::epaint::WHITE_UV,
+            color: egui::Color32::from_rgba_unmultiplied(
+                color.r(),
+                color.g(),
+                color.b(),
+                center_alpha,
+            ),
+        });
+
+        for segment in 0..=segment_count {
+            let s = segment as f32;
+            let a = s / segment_count as f32 * std::f32::consts::TAU;
+            let n1 = hash01(seed * 3.17 + s * 0.73 + ring_t * 11.1);
+            let n2 = hash01(seed * 7.91 + s * 1.37 + ring_t * 3.7);
+            let radial = ring_radius
+                * (0.72
+                    + 0.38 * n1
+                    + 0.12 * (a * 3.0 + seed).sin()
+                    + 0.08 * (a * 5.0 + seed * 0.7).cos());
+            let dx = a.cos() * radial + (n2 - 0.5) * radius * 0.10;
+            let dy = a.sin() * radial + (n1 - 0.5) * radius * 0.10;
+            mesh.vertices.push(egui::epaint::Vertex {
+                pos: egui::pos2(center.x + dx, center.y + dy),
+                uv: egui::epaint::WHITE_UV,
+                color: egui::Color32::from_rgba_unmultiplied(
+                    color.r(),
+                    color.g(),
+                    color.b(),
+                    edge_alpha,
+                ),
+            });
+        }
+
+        for segment in 0..segment_count {
+            let i1 = center_index + 1 + segment as u32;
+            let i2 = center_index + 1 + segment as u32 + 1;
+            mesh.indices.extend_from_slice(&[center_index, i1, i2]);
+        }
+        painter.add(egui::Shape::mesh(mesh));
+    }
+}
+
+fn hash01(value: f32) -> f32 {
+    (value.sin() * 43_758.547).fract().abs()
 }
 
 fn draw_starfield(app: &NativeEditorApp, painter: &egui::Painter, render_rect: egui::Rect) {

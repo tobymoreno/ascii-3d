@@ -7,12 +7,12 @@ use std::{
 };
 
 use super::{
+    clouds::{CloudPuff, CloudSettings, generate_cloud_puffs},
     geojson_lines::{GeoJsonLineStyle, append_geojson_lines},
     gpu_renderer::{GpuVertex, UploadStats},
     labels::{GlobeLabel, LabelKind, load_builtin_labels, rasterize_marine_label},
+    starfield::{Starfield, ViewportClusterHaze, ViewportStar},
 };
-
-use super::starfield::{Starfield, ViewportStar};
 
 use crate::{
     a3d::{AssetRef, LoadedWorld, ToonMaterialConfig, Transform, load_a3d_project},
@@ -211,6 +211,7 @@ pub(crate) struct NativeEditorApp {
     gpu_target_format: Option<egui_wgpu::wgpu::TextureFormat>,
     show_wireframe: bool,
     show_labels: bool,
+    cloud_settings: CloudSettings,
     outline_pixel_width: f32,
     viewport_background_rgb: [u8; 3],
     fps_last_frame: Instant,
@@ -260,6 +261,7 @@ impl NativeEditorApp {
             gpu_target_format: None,
             show_wireframe: false,
             show_labels: true,
+            cloud_settings: CloudSettings::default(),
             outline_pixel_width: DEFAULT_OUTLINE_PIXEL_WIDTH,
             viewport_background_rgb: DEFAULT_VIEWPORT_BACKGROUND_RGB,
             fps_last_frame: Instant::now(),
@@ -313,6 +315,7 @@ impl NativeEditorApp {
                 state.gpu_target_format = self.gpu_target_format;
                 state.show_wireframe = self.show_wireframe;
                 state.show_labels = self.show_labels;
+                state.cloud_settings = self.cloud_settings;
                 state.marine_label_textures = std::mem::take(&mut self.marine_label_textures);
                 state.outline_pixel_width = self.outline_pixel_width;
                 state.viewport_background_rgb = self.viewport_background_rgb;
@@ -615,6 +618,46 @@ impl NativeEditorApp {
         };
     }
 
+    pub(crate) fn show_clouds(&self) -> bool {
+        self.cloud_settings.show
+    }
+
+    pub(crate) fn set_show_clouds(&mut self, show: bool) {
+        self.cloud_settings.show = show;
+        self.status = if show {
+            "Cloud layer enabled".to_owned()
+        } else {
+            "Cloud layer hidden".to_owned()
+        };
+    }
+
+    pub(crate) fn cloud_opacity(&self) -> f32 {
+        self.cloud_settings.opacity
+    }
+
+    pub(crate) fn set_cloud_opacity(&mut self, opacity: f32) {
+        self.cloud_settings.opacity = opacity.clamp(0.0, 1.0);
+        self.status = format!("Cloud opacity: {:.2}", self.cloud_settings.opacity);
+    }
+
+    pub(crate) fn cloud_coverage(&self) -> f32 {
+        self.cloud_settings.coverage
+    }
+
+    pub(crate) fn set_cloud_coverage(&mut self, coverage: f32) {
+        self.cloud_settings.coverage = coverage.clamp(0.0, 1.0);
+        self.status = format!("Cloud coverage: {:.2}", self.cloud_settings.coverage);
+    }
+
+    pub(crate) fn cloud_seed(&self) -> u32 {
+        self.cloud_settings.seed
+    }
+
+    pub(crate) fn set_cloud_seed(&mut self, seed: u32) {
+        self.cloud_settings.seed = seed;
+        self.status = format!("Cloud seed: {}", self.cloud_settings.seed);
+    }
+
     pub(crate) fn viewport_labels(&self, width: f32, height: f32) -> Vec<ViewportLabel> {
         if !self.show_labels || width <= 1.0 || height <= 1.0 {
             return Vec::new();
@@ -864,6 +907,22 @@ impl NativeEditorApp {
         texture
     }
 
+    pub(crate) fn viewport_cluster_hazes(
+        &self,
+        width: f32,
+        height: f32,
+    ) -> Vec<ViewportClusterHaze> {
+        let (right, up) = self.camera.view_axes();
+        self.starfield.project_cluster_hazes(
+            self.camera.forward(),
+            right,
+            up,
+            width,
+            height,
+            CAMERA_FOV_DEGREES,
+        )
+    }
+
     pub(crate) fn viewport_stars(&self, width: f32, height: f32) -> Vec<ViewportStar> {
         let (right, up) = self.camera.view_axes();
         self.starfield.project(
@@ -964,10 +1023,12 @@ impl NativeEditorApp {
         Vec<GpuVertex>,
         Vec<GpuVertex>,
         Vec<GpuVertex>,
+        Vec<GpuVertex>,
         u64,
     ) {
         if width <= 1.0 || height <= 1.0 {
             return (
+                Vec::new(),
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
@@ -980,6 +1041,7 @@ impl NativeEditorApp {
 
         let Some(world) = &self.world else {
             return (
+                Vec::new(),
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
@@ -999,6 +1061,7 @@ impl NativeEditorApp {
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
+                Vec::new(),
                 0,
             );
         };
@@ -1011,7 +1074,9 @@ impl NativeEditorApp {
         let mut overlay_lines = Vec::new();
         let mut geo_fills = Vec::new();
         let mut atmosphere_vertices = Vec::new();
+        let mut cloud_vertices = Vec::new();
         let mut geo_revision = 0;
+        let mut generated_clouds = false;
 
         for object in &world.objects {
             if !world.object_effectively_visible(&object.id) {
@@ -1178,6 +1243,17 @@ impl NativeEditorApp {
             let mut vertex_normals = vec![Vec3::new(0.0, 0.0, 0.0); view_vertices.len()];
 
             if use_analytic_sphere_normals {
+                if !generated_clouds {
+                    append_cloud_layer(
+                        &mut cloud_vertices,
+                        model_view,
+                        self.cloud_settings,
+                        width,
+                        height,
+                        focal_length,
+                    );
+                    generated_clouds = true;
+                }
                 let center_view = model_view.transform_point(Vec3::new(0.0, 0.0, 0.0));
                 if let Some(center_clip) =
                     project_point_clip(center_view, width, height, focal_length)
@@ -1449,6 +1525,7 @@ impl NativeEditorApp {
             overlay_lines,
             geo_fills,
             atmosphere_vertices,
+            cloud_vertices,
             geo_revision,
         )
     }
@@ -1640,6 +1717,7 @@ fn build_scene_state(scene_path: &Path) -> Result<NativeEditorApp, Box<dyn Error
         gpu_target_format: None,
         show_wireframe: false,
         show_labels: true,
+        cloud_settings: CloudSettings::default(),
         outline_pixel_width: DEFAULT_OUTLINE_PIXEL_WIDTH,
         viewport_background_rgb: DEFAULT_VIEWPORT_BACKGROUND_RGB,
         fps_last_frame: Instant::now(),
@@ -1698,6 +1776,107 @@ fn push_atmosphere_ring(
     _color: [f32; 4],
 ) {
     // Atmosphere now reuses the Earth inverted hull geometry below.
+}
+
+fn append_cloud_layer(
+    vertices: &mut Vec<GpuVertex>,
+    model_view: Mat4,
+    settings: CloudSettings,
+    width: f32,
+    height: f32,
+    focal_length: f32,
+) {
+    if !settings.show || settings.opacity <= 0.001 || settings.coverage <= 0.001 {
+        return;
+    }
+
+    let mut puffs_with_depth = generate_cloud_puffs(settings)
+        .into_iter()
+        .filter_map(|puff| {
+            let center_view = model_view.transform_point(puff.center);
+            if center_view.z >= -CAMERA_NEAR {
+                return None;
+            }
+            let view_normal = model_view.transform_vector(puff.normal).normalized();
+            let to_camera = (center_view * -1.0).normalized();
+            if view_normal.dot(to_camera) <= 0.02 {
+                return None;
+            }
+            Some((-center_view.z, puff))
+        })
+        .collect::<Vec<_>>();
+
+    puffs_with_depth.sort_by(|left, right| {
+        right
+            .0
+            .partial_cmp(&left.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    for (_depth, puff) in puffs_with_depth {
+        push_cloud_puff(
+            vertices,
+            model_view,
+            puff,
+            settings.opacity,
+            width,
+            height,
+            focal_length,
+        );
+    }
+}
+
+fn push_cloud_puff(
+    vertices: &mut Vec<GpuVertex>,
+    model_view: Mat4,
+    puff: CloudPuff,
+    global_opacity: f32,
+    width: f32,
+    height: f32,
+    focal_length: f32,
+) {
+    let shell_radius = puff.center.length();
+    let tangent = puff.tangent * puff.size[0];
+    let bitangent = puff.bitangent * puff.size[1];
+    let corners = [
+        (puff.center - tangent + bitangent).normalized() * shell_radius,
+        (puff.center + tangent + bitangent).normalized() * shell_radius,
+        (puff.center + tangent - bitangent).normalized() * shell_radius,
+        (puff.center - tangent - bitangent).normalized() * shell_radius,
+    ];
+    let projected = corners
+        .into_iter()
+        .map(|point| {
+            project_point_clip(
+                model_view.transform_point(point),
+                width,
+                height,
+                focal_length,
+            )
+        })
+        .collect::<Option<Vec<_>>>();
+    let Some(projected) = projected else {
+        return;
+    };
+
+    let view_normal = model_view.transform_vector(puff.normal).normalized();
+    let normal = [view_normal.x, view_normal.y, view_normal.z];
+    let alpha = (puff.opacity * global_opacity).clamp(0.0, 1.0);
+    if alpha <= 0.001 {
+        return;
+    }
+
+    let coolness = 0.92 + puff.seed * 0.05;
+    let color = [0.94 * coolness, 0.97 * coolness, 1.0, alpha];
+    let uvz = [[-1.0, 1.0], [1.0, 1.0], [1.0, -1.0], [-1.0, -1.0]];
+    for index in [0usize, 1, 2, 0, 2, 3] {
+        vertices.push(GpuVertex::with_cloud(
+            projected[index],
+            color,
+            normal,
+            [uvz[index][0], uvz[index][1], puff.seed],
+        ));
+    }
 }
 
 fn lerp_clip(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {

@@ -66,20 +66,44 @@ struct VertexOutput {
         let sun_dot = dot(view_normal, sun_direction);
         let wrapped_light = smoothstep(-0.42, 0.88, sun_dot);
 
-        let ocean_brightness = mix(0.58, 1.10, wrapped_light);
-        var ocean_color = input.color.rgb * ocean_brightness;
+        // Push the ocean toward a deeper, more saturated Earth-blue palette.
+        // The night/far side stays navy while the sunlit side shifts brighter.
+        let deep_ocean = vec3<f32>(0.028, 0.110, 0.255);
+        let mid_ocean = vec3<f32>(0.048, 0.185, 0.395);
+        let bright_ocean = vec3<f32>(0.108, 0.315, 0.610);
+        let ocean_tint = mix(deep_ocean, bright_ocean, wrapped_light);
+        let source_ocean = input.color.rgb * mix(0.42, 0.82, wrapped_light);
+        var ocean_color = mix(source_ocean, ocean_tint, 0.82);
 
         // Feather the inside edge of the globe instead of drawing a hard line.
-        // The broad smoothstep transition remains independent of sphere mesh edges.
+        // Keep the rim blue rather than chalky so the hemisphere reads more oceanic.
         let limb = 1.0 - clamp(abs(view_normal.z), 0.0, 1.0);
         let inner_rim = smoothstep(0.58, 0.98, limb);
-        ocean_color += vec3<f32>(0.045, 0.070, 0.100) * inner_rim;
+        ocean_color += vec3<f32>(0.020, 0.055, 0.110) * inner_rim;
+
+        // Give the darker half of the globe a richer blue cast instead of washing out.
+        let dark_side = 1.0 - wrapped_light;
+        ocean_color += mid_ocean * dark_side * 0.18;
 
         // Preserve the baked terrain palette while giving land only a restrained
         // version of the same continuous sunlight gradient.
         let land_brightness = mix(0.88, 1.06, wrapped_light);
         let land_color = terrain.rgb * land_brightness;
-        let surface_color = mix(ocean_color, land_color, terrain.a);
+        var surface_color = mix(ocean_color, land_color, terrain.a);
+
+        // Apply one broad, transparent day/night shadow over both ocean and land
+        // so the sun direction reads clearly across the whole globe.
+        let terminator = smoothstep(-0.18, 0.28, sun_dot);
+        let dark_side_strength = 1.0 - terminator;
+        let night_tint = vec3<f32>(0.020, 0.032, 0.060);
+        let shadowed_surface = surface_color * 0.52 + night_tint * 0.48;
+        surface_color = mix(shadowed_surface, surface_color, terminator);
+
+        // Add a subtle cool falloff near the terminator so the shading transition
+        // feels atmospheric instead of like a hard matte overlay.
+        let twilight = 1.0 - abs(terminator * 2.0 - 1.0);
+        surface_color += vec3<f32>(0.010, 0.018, 0.032) * twilight * 0.18;
+
         return vec4<f32>(surface_color, input.color.a);
     }
 
@@ -162,6 +186,53 @@ struct VertexOutput {
 
     return vec4<f32>(color, alpha);
 }
+fn hash21(p: vec2<f32>) -> f32 {
+    return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453123);
+}
+
+fn noise2(p: vec2<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let a = hash21(i);
+    let b = hash21(i + vec2<f32>(1.0, 0.0));
+    let c = hash21(i + vec2<f32>(0.0, 1.0));
+    let d = hash21(i + vec2<f32>(1.0, 1.0));
+    let u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+@fragment fn fs_cloud(input: VertexOutput) -> @location(0) vec4<f32> {
+    let uv = input.local_normal.xy;
+    let seed = input.local_normal.z * 13.17;
+    let warp = vec2<f32>(
+        noise2(uv * 2.9 + vec2<f32>(seed, seed + 1.7)),
+        noise2(uv * 2.9 + vec2<f32>(seed + 4.2, seed + 6.1))
+    ) * 2.0 - 1.0;
+    let warped = uv + warp * 0.22;
+    let radial = length(vec2<f32>(warped.x * 0.95, warped.y * 1.08));
+    let body = 1.0 - smoothstep(0.36, 1.02, radial);
+    let breakup = 0.55 + 0.45 * noise2(warped * 4.6 + vec2<f32>(seed + 9.7, seed + 13.1));
+    let alpha = input.color.a * body * breakup;
+    if (alpha < 0.02) {
+        discard;
+    }
+
+    let normal = normalize(input.normal);
+    let light_direction = normalize(vec3<f32>(-0.35, 0.72, 0.60));
+    let diffuse = 0.72 + 0.28 * max(dot(normal, light_direction), 0.0);
+    let limb = 1.0 - clamp(abs(normal.z), 0.0, 1.0);
+    let rim = smoothstep(0.55, 0.98, limb);
+    let shadow_shift = vec2<f32>(0.24, -0.18);
+    let shadow_shape = 1.0 - smoothstep(0.18, 0.92, length((warped + shadow_shift) * vec2<f32>(0.95, 1.15)));
+    let shadow_noise = noise2(warped * 3.2 + vec2<f32>(seed + 22.0, seed + 31.0));
+    let shadow = shadow_shape * (0.45 + 0.55 * shadow_noise) * 0.42;
+    let highlight = smoothstep(0.15, 0.95, body) * (0.15 + 0.20 * noise2(warped * 5.7 + vec2<f32>(seed + 2.3, seed + 7.4)));
+    var color = input.color.rgb * diffuse + vec3<f32>(0.03, 0.05, 0.08) * rim;
+    color = mix(color, vec3<f32>(0.42, 0.45, 0.50), shadow);
+    color = color + vec3<f32>(0.05, 0.06, 0.08) * highlight;
+    return vec4<f32>(color, alpha);
+}
+
 @fragment fn fs_line(input: VertexOutput) -> @location(0) vec4<f32> {
     return input.color;
 }
@@ -248,6 +319,24 @@ impl GpuVertex {
         }
     }
 
+    pub(crate) fn with_cloud(
+        position: [f32; 4],
+        color: [f32; 4],
+        view_normal: [f32; 3],
+        cloud_uv_seed: [f32; 3],
+    ) -> Self {
+        Self {
+            position,
+            color,
+            normal: view_normal,
+            light: 1.0,
+            bands: [1.0, 1.0, 1.0],
+            thresholds: [0.0, 1.0],
+            local_normal: cloud_uv_seed,
+            terrain_surface: 0.0,
+        }
+    }
+
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
@@ -268,6 +357,7 @@ struct UploadStatsInner {
     fill_bytes: AtomicU64,
     line_bytes: AtomicU64,
     geo_bytes: AtomicU64,
+    cloud_bytes: AtomicU64,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -276,11 +366,12 @@ pub(crate) struct UploadSnapshot {
     pub(crate) fill_bytes: u64,
     pub(crate) line_bytes: u64,
     pub(crate) geo_bytes: u64,
+    pub(crate) cloud_bytes: u64,
 }
 
 impl UploadSnapshot {
     pub(crate) fn total_bytes(self) -> u64 {
-        self.hull_bytes + self.fill_bytes + self.line_bytes + self.geo_bytes
+        self.hull_bytes + self.fill_bytes + self.line_bytes + self.geo_bytes + self.cloud_bytes
     }
 }
 
@@ -291,6 +382,7 @@ impl UploadStats {
             fill_bytes: self.inner.fill_bytes.load(Ordering::Relaxed),
             line_bytes: self.inner.line_bytes.load(Ordering::Relaxed),
             geo_bytes: self.inner.geo_bytes.load(Ordering::Relaxed),
+            cloud_bytes: self.inner.cloud_bytes.load(Ordering::Relaxed),
         }
     }
 
@@ -307,6 +399,9 @@ impl UploadStats {
         self.inner
             .geo_bytes
             .store(snapshot.geo_bytes, Ordering::Relaxed);
+        self.inner
+            .cloud_bytes
+            .store(snapshot.cloud_bytes, Ordering::Relaxed);
     }
 }
 
@@ -327,6 +422,7 @@ pub(crate) struct GpuViewportCallback {
     overlay_line_vertices: Vec<GpuVertex>,
     geo_fill_vertices: Vec<GpuVertex>,
     atmosphere_vertices: Vec<GpuVertex>,
+    cloud_vertices: Vec<GpuVertex>,
     geo_revision: u64,
     target_format: wgpu::TextureFormat,
     upload_stats: UploadStats,
@@ -339,6 +435,7 @@ impl GpuViewportCallback {
         overlay_line_vertices: Vec<GpuVertex>,
         geo_fill_vertices: Vec<GpuVertex>,
         atmosphere_vertices: Vec<GpuVertex>,
+        cloud_vertices: Vec<GpuVertex>,
         geo_revision: u64,
         target_format: wgpu::TextureFormat,
         upload_stats: UploadStats,
@@ -350,6 +447,7 @@ impl GpuViewportCallback {
             overlay_line_vertices,
             geo_fill_vertices,
             atmosphere_vertices,
+            cloud_vertices,
             geo_revision,
             target_format,
             upload_stats,
@@ -425,6 +523,7 @@ struct GpuViewportResources {
     line_pipeline: wgpu::RenderPipeline,
     overlay_line_pipeline: wgpu::RenderPipeline,
     geo_fill_pipeline: wgpu::RenderPipeline,
+    cloud_pipeline: wgpu::RenderPipeline,
     atmosphere_pipeline: wgpu::RenderPipeline,
     terrain_bind_group: wgpu::BindGroup,
     hulls: DynamicVertices,
@@ -432,6 +531,7 @@ struct GpuViewportResources {
     lines: DynamicVertices,
     overlay_lines: DynamicVertices,
     geo_fills: DynamicVertices,
+    clouds: DynamicVertices,
     atmospheres: DynamicVertices,
     geo_revision: u64,
 }
@@ -504,6 +604,7 @@ impl GpuViewportResources {
         overlay_lines: &[GpuVertex],
         geo_fills: &[GpuVertex],
         atmosphere_vertices: &[GpuVertex],
+        cloud_vertices: &[GpuVertex],
     ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ascii-3d toon shader"),
@@ -645,6 +746,19 @@ impl GpuViewportResources {
                 wgpu::CompareFunction::LessEqual,
                 1,
             ),
+            cloud_pipeline: Self::pipeline(
+                device,
+                &layout,
+                &shader,
+                format,
+                "ascii-3d cloud pipeline",
+                wgpu::PrimitiveTopology::TriangleList,
+                "fs_cloud",
+                None,
+                false,
+                wgpu::CompareFunction::LessEqual,
+                0,
+            ),
             atmosphere_pipeline: Self::pipeline(
                 device,
                 &layout,
@@ -668,6 +782,7 @@ impl GpuViewportResources {
                 overlay_lines,
             ),
             geo_fills: DynamicVertices::new(device, "ascii-3d geojson fill vertices", geo_fills),
+            clouds: DynamicVertices::new(device, "ascii-3d cloud vertices", cloud_vertices),
             atmospheres: DynamicVertices::new(
                 device,
                 "ascii-3d atmosphere vertices",
@@ -699,6 +814,7 @@ impl egui_wgpu::CallbackTrait for GpuViewportCallback {
                 &self.overlay_line_vertices,
                 &self.geo_fill_vertices,
                 &self.atmosphere_vertices,
+                &self.cloud_vertices,
             ));
         }
 
@@ -712,6 +828,8 @@ impl egui_wgpu::CallbackTrait for GpuViewportCallback {
                 * std::mem::size_of::<GpuVertex>()) as u64;
             uploads.geo_bytes =
                 (self.geo_fill_vertices.len() * std::mem::size_of::<GpuVertex>()) as u64;
+            uploads.cloud_bytes =
+                (self.cloud_vertices.len() * std::mem::size_of::<GpuVertex>()) as u64;
             uploads.hull_bytes +=
                 (self.atmosphere_vertices.len() * std::mem::size_of::<GpuVertex>()) as u64;
         } else if let Some(r) = resources.get_mut::<GpuViewportResources>() {
@@ -744,6 +862,12 @@ impl egui_wgpu::CallbackTrait for GpuViewportCallback {
                 queue,
                 "ascii-3d atmosphere vertices",
                 &self.atmosphere_vertices,
+            );
+            uploads.cloud_bytes = r.clouds.update_if_changed(
+                device,
+                queue,
+                "ascii-3d cloud vertices",
+                &self.cloud_vertices,
             );
             if r.geo_revision != self.geo_revision {
                 uploads.geo_bytes = r.geo_fills.update_if_changed(
@@ -782,6 +906,11 @@ impl egui_wgpu::CallbackTrait for GpuViewportCallback {
             pass.set_pipeline(&r.geo_fill_pipeline);
             pass.set_vertex_buffer(0, r.geo_fills.buffer.slice(..));
             pass.draw(0..r.geo_fills.count, 0..1);
+        }
+        if r.clouds.count > 0 {
+            pass.set_pipeline(&r.cloud_pipeline);
+            pass.set_vertex_buffer(0, r.clouds.buffer.slice(..));
+            pass.draw(0..r.clouds.count, 0..1);
         }
         if r.atmospheres.count > 0 {
             pass.set_pipeline(&r.atmosphere_pipeline);

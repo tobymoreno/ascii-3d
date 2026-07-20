@@ -98,7 +98,7 @@
       "asset": {
         "type": "geo_json_map",
         "path": "../../maps/ne_110m_admin_0_boundary_lines_land.geojson",
-        "radius_scale": 2.007
+        "radius_scale": 2.0015
       },
       "render": {
         "visible": true,
@@ -145,7 +145,7 @@
       "asset": {
         "type": "geo_json_map",
         "path": "../../maps/ne_50m_rivers_lake_centerlines_scale_rank.geojson",
-        "radius_scale": 2.006
+        "radius_scale": 2.0018
       },
       "render": {
         "visible": true,

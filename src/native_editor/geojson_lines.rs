@@ -9,6 +9,9 @@ const CAMERA_NEAR: f32 = 0.1;
 const MAX_CAMERA_DISTANCE: f32 = 250.0;
 const STROKE_DEPTH_BIAS_NDC: f32 = 1.0e-4;
 const GEOJSON_LIGHT_DIRECTION: Vec3 = Vec3::new(-0.55, 0.20, 0.81);
+const EDGE_CORRECTION_STRENGTH: f32 = 0.65;
+const EDGE_CORRECTION_START_RADIANS: f32 = 15.0_f32.to_radians();
+const EDGE_CORRECTION_FULL_RADIANS: f32 = 60.0_f32.to_radians();
 
 fn lerp(left: f32, right: f32, amount: f32) -> f32 {
     left + (right - left) * amount
@@ -138,8 +141,24 @@ fn project_point_clip(point: Vec3, width: f32, height: f32, focal_length: f32) -
     }
 
     let depth = -point.z;
-    let screen_x = width * 0.5 + point.x / depth * focal_length;
-    let screen_y = height * 0.5 - point.y / depth * focal_length;
+    let rect_x = point.x / depth;
+    let rect_y = point.y / depth;
+
+    // Match the native mesh projection exactly. Without this correction,
+    // GeoJSON lines drift away from the globe near the horizontal edges.
+    let horizontal_radius = (point.x * point.x + depth * depth).sqrt();
+    let cylindrical_x = point.x.atan2(depth);
+    let cylindrical_y = point.y / horizontal_radius.max(CAMERA_NEAR);
+    let edge_t = ((cylindrical_x.abs() - EDGE_CORRECTION_START_RADIANS)
+        / (EDGE_CORRECTION_FULL_RADIANS - EDGE_CORRECTION_START_RADIANS))
+        .clamp(0.0, 1.0);
+    let smooth_edge = edge_t * edge_t * (3.0 - 2.0 * edge_t);
+    let blend = EDGE_CORRECTION_STRENGTH * smooth_edge;
+    let corrected_x = rect_x + (cylindrical_x - rect_x) * blend;
+    let corrected_y = rect_y + (cylindrical_y - rect_y) * blend;
+
+    let screen_x = width * 0.5 + corrected_x * focal_length;
+    let screen_y = height * 0.5 - corrected_y * focal_length;
     let far = (MAX_CAMERA_DISTANCE * 4.0).max(CAMERA_NEAR + 1.0);
     let depth_ndc = (far / (far - CAMERA_NEAR)
         - (far * CAMERA_NEAR) / ((far - CAMERA_NEAR) * depth))

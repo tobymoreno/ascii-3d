@@ -52,16 +52,16 @@
   },
   "clusters": {
     "enabled": true,
-    "count": 18,
+    "count": 20,
     "stars_per_cluster_minimum": 18,
-    "stars_per_cluster_maximum": 44,
-    "cluster_radius_degrees_minimum": 2.6,
-    "cluster_radius_degrees_maximum": 7.8,
-    "haze_puffs_minimum": 0,
-    "haze_puffs_maximum": 0,
-    "haze_size_pixels_minimum": 5.0,
-    "haze_size_pixels_maximum": 16.0,
-    "haze_brightness_minimum": 0.04,
-    "haze_brightness_maximum": 0.16
+    "stars_per_cluster_maximum": 42,
+    "cluster_radius_degrees_minimum": 2.8,
+    "cluster_radius_degrees_maximum": 8.4,
+    "haze_puffs_minimum": 3,
+    "haze_puffs_maximum": 5,
+    "haze_size_pixels_minimum": 12.0,
+    "haze_size_pixels_maximum": 24.0,
+    "haze_brightness_minimum": 0.05,
+    "haze_brightness_maximum": 0.11
   }
 }

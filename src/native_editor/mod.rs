@@ -1,4 +1,5 @@
 mod app;
+mod clouds;
 mod controls;
 mod geojson_lines;
 pub(crate) mod gpu_renderer;

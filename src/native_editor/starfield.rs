@@ -163,6 +163,15 @@ impl Default for ClusterConfig {
 }
 
 #[derive(Clone, Copy, Debug)]
+struct ClusterHazeInstance {
+    direction: Vec3,
+    size_pixels: f32,
+    brightness: f32,
+    color: [f32; 3],
+    seed: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
 struct StarInstance {
     direction: Vec3,
     size_pixels: f32,
@@ -175,6 +184,15 @@ struct StarInstance {
     speed_phase: f32,
     core_intensity: f32,
     halo_scale: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ViewportClusterHaze {
+    pub(crate) position: [f32; 2],
+    pub(crate) size_pixels: f32,
+    pub(crate) brightness: f32,
+    pub(crate) color: [f32; 3],
+    pub(crate) seed: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -191,6 +209,7 @@ pub(crate) struct ViewportStar {
 pub(crate) struct Starfield {
     config: CelestialSphereConfig,
     stars: Vec<StarInstance>,
+    cluster_hazes: Vec<ClusterHazeInstance>,
     started_at: Instant,
 }
 
@@ -201,16 +220,79 @@ impl Starfield {
             .ok()
             .and_then(|text| serde_json::from_str::<CelestialSphereConfig>(&text).ok())
             .unwrap_or_default();
-        let stars = generate_stars(&config);
+        let (stars, cluster_hazes) = generate_starfield(&config);
         Self {
             config,
             stars,
+            cluster_hazes,
             started_at: Instant::now(),
         }
     }
 
     pub(crate) fn count(&self) -> usize {
         self.stars.len()
+    }
+
+    pub(crate) fn project_cluster_hazes(
+        &self,
+        forward: Vec3,
+        right: Vec3,
+        up: Vec3,
+        width: f32,
+        height: f32,
+        fov_degrees: f32,
+    ) -> Vec<ViewportClusterHaze> {
+        if !self.config.enabled || width <= 1.0 || height <= 1.0 {
+            return Vec::new();
+        }
+
+        let time = self.started_at.elapsed().as_secs_f32();
+        let global_rotation = self
+            .config
+            .sphere
+            .rotation_speed_degrees_per_second
+            .to_radians()
+            * time
+            + self.config.sphere.rotation_degrees[1].to_radians();
+        let cosine = global_rotation.cos();
+        let sine = global_rotation.sin();
+        let focal_length = 0.5 * height / (0.5 * fov_degrees.to_radians()).tan();
+
+        self.cluster_hazes
+            .iter()
+            .filter_map(|haze| {
+                let direction = Vec3::new(
+                    haze.direction.x * cosine + haze.direction.z * sine,
+                    haze.direction.y,
+                    -haze.direction.x * sine + haze.direction.z * cosine,
+                );
+                let depth = direction.dot(forward);
+                if depth <= 0.02 {
+                    return None;
+                }
+                let x = direction.dot(right) / depth;
+                let y = direction.dot(up) / depth;
+                let screen = [
+                    width * 0.5 + x * focal_length,
+                    height * 0.5 - y * focal_length,
+                ];
+                let margin = haze.size_pixels * 2.5;
+                if screen[0] < -margin
+                    || screen[0] > width + margin
+                    || screen[1] < -margin
+                    || screen[1] > height + margin
+                {
+                    return None;
+                }
+                Some(ViewportClusterHaze {
+                    position: screen,
+                    size_pixels: haze.size_pixels,
+                    brightness: haze.brightness,
+                    color: haze.color,
+                    seed: haze.seed,
+                })
+            })
+            .collect()
     }
 
     pub(crate) fn project(
@@ -292,9 +374,12 @@ impl Starfield {
     }
 }
 
-fn generate_stars(config: &CelestialSphereConfig) -> Vec<StarInstance> {
+fn generate_starfield(
+    config: &CelestialSphereConfig,
+) -> (Vec<StarInstance>, Vec<ClusterHazeInstance>) {
     let mut random = SplitMix64::new(config.seed);
     let mut stars = Vec::with_capacity(config.stars.count + config.clusters.count * 64);
+    let mut cluster_hazes = Vec::with_capacity(config.clusters.count * 8);
 
     for _ in 0..config.stars.count {
         stars.push(sample_regular_star(config, &mut random));
@@ -302,11 +387,11 @@ fn generate_stars(config: &CelestialSphereConfig) -> Vec<StarInstance> {
 
     if config.clusters.enabled {
         for _ in 0..config.clusters.count {
-            append_cluster(config, &mut random, &mut stars);
+            append_cluster(config, &mut random, &mut stars, &mut cluster_hazes);
         }
     }
 
-    stars
+    (stars, cluster_hazes)
 }
 
 fn sample_regular_star(config: &CelestialSphereConfig, random: &mut SplitMix64) -> StarInstance {
@@ -373,6 +458,7 @@ fn append_cluster(
     config: &CelestialSphereConfig,
     random: &mut SplitMix64,
     stars: &mut Vec<StarInstance>,
+    cluster_hazes: &mut Vec<ClusterHazeInstance>,
 ) {
     let center = sample_unit_vector(random);
     let radius_degrees = random.range(
@@ -393,51 +479,63 @@ fn append_cluster(
         let local_offset =
             tangent * (offset_radius * angle.cos()) + bitangent * (offset_radius * angle.sin());
         let direction = (center + local_offset).normalized();
-        let size = random.range(0.8, 2.6);
-        let brightness = random.range(0.35, 0.95);
+        let size = random.range(0.65, 2.10);
+        let brightness = random.range(0.22, 0.72);
         stars.push(StarInstance {
             direction,
             size_pixels: size,
             brightness,
-            softness: random.range(0.18, 0.75),
+            softness: random.range(0.28, 0.82),
             color: mix_color(cluster_color, sample_star_color(config, random), 0.25),
             phase: random.range(0.0, TAU),
             twinkle_speed_hz: random.range(0.14, 0.95),
             twinkle_amplitude: random.range(0.08, 0.32),
             speed_phase: random.range(0.0, TAU),
-            core_intensity: 0.92,
-            halo_scale: random.range(1.25, 2.1),
+            core_intensity: 0.86,
+            halo_scale: random.range(1.05, 1.45),
         });
     }
 
+    // Keep haze visibly attached to the star cluster itself.
+    // Always place one primary haze patch near the cluster center,
+    // then place only a few smaller companion patches nearby.
     let haze_count = random.range_usize(
         config.clusters.haze_puffs_minimum,
         config.clusters.haze_puffs_maximum,
     );
-    for _ in 0..haze_count {
-        let offset_radius = radius_radians * random.range(0.15, 1.05);
+
+    cluster_hazes.push(ClusterHazeInstance {
+        direction: center,
+        size_pixels: random.range(
+            config.clusters.haze_size_pixels_minimum,
+            config.clusters.haze_size_pixels_maximum,
+        ),
+        brightness: random.range(
+            config.clusters.haze_brightness_minimum,
+            config.clusters.haze_brightness_maximum,
+        ) * 1.10,
+        color: mix_color(cluster_color, config.appearance.cool, 0.35),
+        seed: random.unit(),
+    });
+
+    for _ in 1..haze_count {
+        let offset_radius = radius_radians * random.unit().powf(1.9) * 0.42;
         let angle = random.range(0.0, TAU);
         let local_offset =
             tangent * (offset_radius * angle.cos()) + bitangent * (offset_radius * angle.sin());
         let direction = (center + local_offset).normalized();
-        stars.push(StarInstance {
+        cluster_hazes.push(ClusterHazeInstance {
             direction,
             size_pixels: random.range(
                 config.clusters.haze_size_pixels_minimum,
                 config.clusters.haze_size_pixels_maximum,
-            ),
+            ) * random.range(0.60, 0.88),
             brightness: random.range(
                 config.clusters.haze_brightness_minimum,
                 config.clusters.haze_brightness_maximum,
-            ),
-            softness: random.range(0.88, 0.99),
+            ) * random.range(0.72, 0.92),
             color: mix_color(cluster_color, config.appearance.cool, 0.35),
-            phase: random.range(0.0, TAU),
-            twinkle_speed_hz: random.range(0.03, 0.12),
-            twinkle_amplitude: random.range(0.01, 0.05),
-            speed_phase: random.range(0.0, TAU),
-            core_intensity: random.range(0.02, 0.11),
-            halo_scale: random.range(2.8, 5.8),
+            seed: random.unit(),
         });
     }
 }
@@ -523,8 +621,8 @@ mod tests {
     #[test]
     fn generation_is_deterministic_for_same_seed() {
         let config = CelestialSphereConfig::default();
-        let first = generate_stars(&config);
-        let second = generate_stars(&config);
+        let first = generate_starfield(&config).0;
+        let second = generate_starfield(&config).0;
         assert_eq!(first.len(), second.len());
         for (left, right) in first.iter().zip(second.iter()).take(24) {
             assert_eq!(left.direction, right.direction);
@@ -535,7 +633,7 @@ mod tests {
 
     #[test]
     fn generated_directions_are_unit_length() {
-        let stars = generate_stars(&CelestialSphereConfig::default());
+        let stars = generate_starfield(&CelestialSphereConfig::default()).0;
         for star in stars.iter().take(128) {
             assert!((star.direction.length() - 1.0).abs() < 1.0e-4);
         }
@@ -544,7 +642,7 @@ mod tests {
     #[test]
     fn size_distribution_is_biased_toward_small_stars() {
         let config = CelestialSphereConfig::default();
-        let stars = generate_stars(&config);
+        let stars = generate_starfield(&config).0;
         let midpoint = (config.stars.minimum_size_pixels + config.stars.maximum_size_pixels) * 0.5;
         let small = stars
             .iter()
@@ -558,7 +656,7 @@ mod tests {
         let mut config = CelestialSphereConfig::default();
         config.stars.count = 10;
         config.clusters.count = 2;
-        let stars = generate_stars(&config);
+        let stars = generate_starfield(&config).0;
         assert!(stars.len() > config.stars.count);
     }
 }
