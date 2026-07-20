@@ -1,0 +1,67 @@
+{
+  "enabled": true,
+  "seed": 1337,
+  "sphere": {
+    "radius": 1000.0,
+    "follow_camera_position": true,
+    "rotation_degrees": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "rotation_speed_degrees_per_second": 0.0035
+  },
+  "stars": {
+    "count": 3200,
+    "minimum_size_pixels": 0.45,
+    "maximum_size_pixels": 2.8,
+    "minimum_brightness": 0.22,
+    "maximum_brightness": 1.0,
+    "medium_star_fraction": 0.13,
+    "hero_star_fraction": 0.026
+  },
+  "appearance": {
+    "minimum_softness": 0.04,
+    "maximum_softness": 0.98,
+    "neutral": [
+      0.94,
+      0.96,
+      1.0
+    ],
+    "cool": [
+      0.72,
+      0.84,
+      1.0
+    ],
+    "warm": [
+      1.0,
+      0.86,
+      0.7
+    ],
+    "cool_fraction": 0.19,
+    "warm_fraction": 0.08
+  },
+  "twinkle": {
+    "enabled": true,
+    "minimum_amplitude": 0.03,
+    "maximum_amplitude": 0.28,
+    "minimum_speed_hz": 0.09,
+    "maximum_speed_hz": 0.75,
+    "speed_modulation": 0.42,
+    "speed_modulation_hz": 0.043
+  },
+  "clusters": {
+    "enabled": true,
+    "count": 18,
+    "stars_per_cluster_minimum": 18,
+    "stars_per_cluster_maximum": 44,
+    "cluster_radius_degrees_minimum": 2.6,
+    "cluster_radius_degrees_maximum": 7.8,
+    "haze_puffs_minimum": 0,
+    "haze_puffs_maximum": 0,
+    "haze_size_pixels_minimum": 5.0,
+    "haze_size_pixels_maximum": 16.0,
+    "haze_brightness_minimum": 0.04,
+    "haze_brightness_maximum": 0.16
+  }
+}

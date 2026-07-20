@@ -526,6 +526,7 @@ fn draw_viewport(app: &mut NativeEditorApp, ui: &mut egui::Ui) {
 
     let render_rect = response.rect.shrink(VIEWPORT_MARGIN);
     let viewport_painter = ui.painter().with_clip_rect(render_rect);
+    draw_starfield(app, &viewport_painter, render_rect);
     let geometry_started = std::time::Instant::now();
     let (
         fill_vertices,
@@ -594,6 +595,39 @@ fn draw_viewport(app: &mut NativeEditorApp, ui: &mut egui::Ui) {
     draw_viewport_labels(app, &viewport_painter, render_rect);
 }
 
+fn draw_starfield(app: &NativeEditorApp, painter: &egui::Painter, render_rect: egui::Rect) {
+    for star in app.viewport_stars(render_rect.width(), render_rect.height()) {
+        let center = egui::pos2(
+            render_rect.min.x + star.position[0],
+            render_rect.min.y + star.position[1],
+        );
+        let rgb = star
+            .color
+            .map(|channel| (channel.clamp(0.0, 1.0) * 255.0).round() as u8);
+
+        let core_alpha = (star.brightness * star.core_intensity * 255.0).clamp(0.0, 255.0) as u8;
+        if core_alpha > 0 {
+            painter.circle_filled(
+                center,
+                star.size_pixels.max(0.35),
+                egui::Color32::from_rgba_unmultiplied(rgb[0], rgb[1], rgb[2], core_alpha),
+            );
+        }
+
+        if star.size_pixels > 1.65 && star.core_intensity > 0.65 {
+            painter.circle_filled(
+                center,
+                (star.size_pixels * 0.30).max(0.35),
+                egui::Color32::from_rgba_unmultiplied(
+                    255,
+                    255,
+                    255,
+                    ((core_alpha as f32) * 0.72).clamp(0.0, 255.0) as u8,
+                ),
+            );
+        }
+    }
+}
 fn draw_viewport_marine_glyph_quads(
     app: &mut NativeEditorApp,
     painter: &egui::Painter,
@@ -694,6 +728,8 @@ fn draw_status_bar(app: &NativeEditorApp, ui: &mut egui::Ui) {
                 ui.colored_label(MUTED_TEXT_COLOR, geometry);
                 ui.separator();
                 ui.colored_label(MUTED_TEXT_COLOR, "Renderer: wgpu");
+                ui.separator();
+                ui.colored_label(MUTED_TEXT_COLOR, format!("Stars: {}", app.star_count()));
                 ui.separator();
                 ui.colored_label(
                     MUTED_TEXT_COLOR,
