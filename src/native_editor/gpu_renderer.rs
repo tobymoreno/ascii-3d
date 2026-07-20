@@ -129,28 +129,37 @@ struct VertexOutput {
 @fragment fn fs_atmosphere(input: VertexOutput) -> @location(0) vec4<f32> {
     let uv = input.normal.xy;
     let radius = length(uv);
-    if (radius > 1.18) {
+    if (radius < 0.93 || radius > 1.12) {
         discard;
     }
 
-    let sun_axis = normalize(vec2<f32>(-0.94, 0.34));
     let safe_uv = normalize(uv + vec2<f32>(0.00001, 0.0));
+    let sun_axis = normalize(vec2<f32>(-0.94, 0.34));
     let sun = clamp(dot(safe_uv, sun_axis) * 0.5 + 0.5, 0.0, 1.0);
-    let sun_boost = mix(0.72, 1.28, sun);
+    let sun_boost = mix(0.82, 1.22, sun);
 
-    let inside_feather = 1.0 - smoothstep(0.84, 1.01, radius);
-    let inner_rim = smoothstep(0.87, 1.01, radius) * (1.0 - smoothstep(1.01, 1.08, radius));
-    let outer_glow = smoothstep(0.98, 1.10, radius) * (1.0 - smoothstep(1.10, 1.18, radius));
+    let angle = atan2(safe_uv.y, safe_uv.x);
+    let angular_variation = 0.92 + 0.08 * (0.5 + 0.5 * sin(angle * 3.0 - 0.6));
 
-    let interior_tint = vec3<f32>(0.60, 0.77, 1.00) * inside_feather * 0.085;
-    let rim_tint = vec3<f32>(0.72, 0.86, 1.00) * inner_rim * (0.20 + 0.18 * sun_boost);
-    let glow_tint = vec3<f32>(0.50, 0.72, 1.00) * outer_glow * (0.16 + 0.24 * sun_boost);
-    let color = interior_tint + rim_tint + glow_tint;
+    let ring_distance = abs(radius - 1.0);
+    let soft_band = 1.0 - smoothstep(0.0, 0.085, ring_distance);
+    let core_band = 1.0 - smoothstep(0.0, 0.030, ring_distance);
+
+    let inner_side = 1.0 - smoothstep(0.93, 1.0, radius);
+    let outer_side = smoothstep(1.0, 1.12, radius);
+
+    let color =
+        vec3<f32>(0.56, 0.78, 1.00) * inner_side * 0.030 +
+        vec3<f32>(0.66, 0.86, 1.00) * soft_band * (0.18 + 0.14 * sun_boost) * angular_variation +
+        vec3<f32>(0.83, 0.94, 1.00) * core_band * (0.08 + 0.08 * sun_boost);
+
     let alpha = input.color.a * (
-        inside_feather * 0.10 +
-        inner_rim * (0.16 + 0.10 * sun_boost) +
-        outer_glow * (0.10 + 0.18 * sun_boost)
+        inner_side * 0.05 +
+        soft_band * (0.28 + 0.16 * sun_boost) * angular_variation +
+        core_band * 0.10 +
+        outer_side * 0.04
     );
+
     return vec4<f32>(color, alpha);
 }
 @fragment fn fs_line(input: VertexOutput) -> @location(0) vec4<f32> {

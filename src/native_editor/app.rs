@@ -12,6 +12,8 @@ use super::{
     labels::{GlobeLabel, LabelKind, load_builtin_labels, rasterize_marine_label},
 };
 
+use super::starfield::{Starfield, ViewportStar};
+
 use crate::{
     a3d::{AssetRef, LoadedWorld, ToonMaterialConfig, Transform, load_a3d_project},
     editor_core::{EditorCommand, EditorEntry, EditorSession},
@@ -201,6 +203,7 @@ pub(crate) struct NativeEditorApp {
     geojson_maps: HashMap<String, GeoJsonMap>,
     geojson_render_meshes: HashMap<String, Vec<CachedGeoTriangle>>,
     globe_labels: Vec<GlobeLabel>,
+    starfield: Starfield,
     marine_label_textures: HashMap<String, egui::TextureHandle>,
     scene_path: PathBuf,
     pub(super) camera: NativeCamera,
@@ -249,6 +252,7 @@ impl NativeEditorApp {
             geojson_maps: HashMap::new(),
             geojson_render_meshes: HashMap::new(),
             globe_labels: load_builtin_labels(Path::new(env!("CARGO_MANIFEST_DIR"))),
+            starfield: Starfield::load(Path::new(env!("CARGO_MANIFEST_DIR"))),
             marine_label_textures: HashMap::new(),
             scene_path,
             camera: NativeCamera::default(),
@@ -860,6 +864,22 @@ impl NativeEditorApp {
         texture
     }
 
+    pub(crate) fn viewport_stars(&self, width: f32, height: f32) -> Vec<ViewportStar> {
+        let (right, up) = self.camera.view_axes();
+        self.starfield.project(
+            self.camera.forward(),
+            right,
+            up,
+            width,
+            height,
+            CAMERA_FOV_DEGREES,
+        )
+    }
+
+    pub(crate) fn star_count(&self) -> usize {
+        self.starfield.count()
+    }
+
     pub(crate) fn object_toon_material(
         &self,
         target: &NativeEditorTarget,
@@ -1176,7 +1196,7 @@ impl NativeEditorApp {
                         })
                         .fold(0.0_f32, f32::max);
                     if radius_ndc > 0.0 {
-                        push_atmosphere_quad(
+                        push_atmosphere_ring(
                             &mut atmosphere_vertices,
                             center_clip,
                             center_ndc,
@@ -1288,7 +1308,23 @@ impl NativeEditorApp {
 
                 if !material.line_only {
                     let color = [base_color[0], base_color[1], base_color[2], 1.0];
-                    if !use_analytic_sphere_normals {
+                    if use_analytic_sphere_normals {
+                        // Reuse the exact projected Earth inverted hull as the
+                        // atmosphere. Its expansion is measured in screen pixels,
+                        // so the glow remains attached to the limb at every zoom.
+                        let atmosphere_color = [0.72, 0.88, 1.00, 0.18];
+                        for slot in 0..3 {
+                            let local = mesh.vertices[tri[slot]].normalized();
+                            hulls.push(GpuVertex::with_terrain_surface(
+                                lerp_clip(projected_hull[slot], projected_triangle[slot], 0.18),
+                                atmosphere_color,
+                                normals[slot],
+                                [local.x, local.y, local.z],
+                                material.shade_bands,
+                                material.band_thresholds,
+                            ));
+                        }
+                    } else {
                         for slot in 0..3 {
                             hulls.push(GpuVertex::new(
                                 projected_hull[slot],
@@ -1575,6 +1611,7 @@ fn build_scene_state(scene_path: &Path) -> Result<NativeEditorApp, Box<dyn Error
     let elevation_point_count = elevation_points.len();
     let geojson_render_meshes = build_geojson_render_meshes(&geojson_maps, &elevation_points);
     let globe_labels = load_builtin_labels(Path::new(env!("CARGO_MANIFEST_DIR")));
+    let starfield = Starfield::load(Path::new(env!("CARGO_MANIFEST_DIR")));
     let mesh_count = meshes.len();
     let geojson_count = geojson_maps.len();
 
@@ -1595,6 +1632,7 @@ fn build_scene_state(scene_path: &Path) -> Result<NativeEditorApp, Box<dyn Error
         geojson_maps,
         geojson_render_meshes,
         globe_labels,
+        starfield,
         marine_label_textures: HashMap::new(),
         scene_path: scene_path.to_path_buf(),
         camera: NativeCamera::default(),
@@ -1652,38 +1690,23 @@ fn bias_clip_toward_camera(position: [f32; 4], ndc_bias: f32) -> [f32; 4] {
     ]
 }
 
-fn push_atmosphere_quad(
-    vertices: &mut Vec<GpuVertex>,
-    center_clip: [f32; 4],
-    center_ndc: [f32; 2],
-    radius_ndc: f32,
-    color: [f32; 4],
+fn push_atmosphere_ring(
+    _vertices: &mut Vec<GpuVertex>,
+    _center_clip: [f32; 4],
+    _center_ndc: [f32; 2],
+    _radius_ndc: f32,
+    _color: [f32; 4],
 ) {
-    let expand = 1.14;
-    let radius = radius_ndc * expand;
-    let z = center_clip[2];
-    let w = center_clip[3];
-    let corners = [
-        ([-1.0_f32, -1.0_f32], [-radius, -radius]),
-        ([1.0_f32, -1.0_f32], [radius, -radius]),
-        ([1.0_f32, 1.0_f32], [radius, radius]),
-        ([-1.0_f32, 1.0_f32], [-radius, radius]),
-    ];
-    let clip = corners.map(|(uv, offset)| {
-        let ndc_x = center_ndc[0] + offset[0];
-        let ndc_y = center_ndc[1] + offset[1];
-        let position = [ndc_x * w, ndc_y * w, z, w];
-        GpuVertex::with_normal(
-            position,
-            color,
-            [uv[0] * expand, uv[1] * expand, 0.0],
-            [1.0; 3],
-            [0.0, 1.0],
-        )
-    });
-    for index in [0usize, 1, 2, 0, 2, 3] {
-        vertices.push(clip[index]);
-    }
+    // Atmosphere now reuses the Earth inverted hull geometry below.
+}
+
+fn lerp_clip(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
+    [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+        a[3] + (b[3] - a[3]) * t,
+    ]
 }
 
 fn push_bordered_screen_space_stroke(
